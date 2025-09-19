@@ -1,0 +1,172 @@
+services:
+  # ==========================================
+  # Main databases (for development/production)
+  # ==========================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: mcp-postgres
+    profiles: ["dev", "prod"]
+    environment:
+      POSTGRES_DB: testdb
+      POSTGRES_USER: testuser
+      POSTGRES_PASSWORD: testpass
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U testuser -d testdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - mcp-network
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8-alpine
+    container_name: mcp-clickhouse
+    profiles: ["dev", "prod"]
+    environment:
+      CLICKHOUSE_DB: testdb
+      CLICKHOUSE_USER: testuser
+      CLICKHOUSE_PASSWORD: testpass
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    ports:
+      - "8123:8123"  # HTTP interface
+      - "9000:9000"  # Native protocol port
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - ./docker/clickhouse/init:/docker-entrypoint-initdb.d:ro
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - mcp-network
+
+  # ==========================================
+  # Test databases (with tmpfs for ephemeral data)
+  # ==========================================
+  postgres-test:
+    image: postgres:16-alpine
+    container_name: mcp-postgres-test
+    profiles: ["test"]
+    environment:
+      POSTGRES_DB: testdb
+      POSTGRES_USER: testuser
+      POSTGRES_PASSWORD: testpass
+    ports:
+      - "5432:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    volumes:
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U testuser -d testdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - mcp-network
+
+  clickhouse-test:
+    image: clickhouse/clickhouse-server:24.8-alpine
+    container_name: mcp-clickhouse-test
+    profiles: ["test"]
+    environment:
+      CLICKHOUSE_DB: testdb
+      CLICKHOUSE_USER: testuser
+      CLICKHOUSE_PASSWORD: testpass
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    ports:
+      - "8123:8123"  # HTTP interface
+      - "9000:9000"  # Native protocol port
+    tmpfs:
+      - /var/lib/clickhouse
+    volumes:
+      - ./docker/clickhouse/init:/docker-entrypoint-initdb.d:ro
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - mcp-network
+
+  # ==========================================
+  # SSH tunnel test infrastructure
+  # ==========================================
+  ssh-bastion:
+    build:
+      context: ./docker/ssh
+    container_name: mcp-ssh-bastion
+    profiles: ["test", "ssh"]
+    ports:
+      - "2222:22"  # SSH accessible from host
+    networks:
+      - mcp-network
+      - private-network
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "22"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Private databases only accessible via SSH tunnel
+  postgres-private:
+    image: postgres:16-alpine
+    container_name: mcp-postgres-private
+    profiles: ["test", "ssh"]
+    environment:
+      POSTGRES_DB: testdb
+      POSTGRES_USER: testuser
+      POSTGRES_PASSWORD: testpass
+    networks:
+      - private-network  # NOT on mcp-network - only accessible via SSH
+    volumes:
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U testuser -d testdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  clickhouse-private:
+    image: clickhouse/clickhouse-server:24.8-alpine
+    container_name: mcp-clickhouse-private
+    profiles: ["test", "ssh"]
+    environment:
+      CLICKHOUSE_DB: testdb
+      CLICKHOUSE_USER: testuser
+      CLICKHOUSE_PASSWORD: testpass
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    networks:
+      - private-network  # NOT on mcp-network - only accessible via SSH
+    volumes:
+      - ./docker/clickhouse/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+  clickhouse_data:
+
+networks:
+  mcp-network:
+    driver: bridge
+  private-network:
+    driver: bridge
+    internal: true  # No external routing - truly isolated

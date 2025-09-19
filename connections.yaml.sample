@@ -1,0 +1,249 @@
+# MCP Read-Only SQL Server - Connection Configuration Sample
+# This file demonstrates all connection variations and options
+# Copy to connections.yaml and customize for your environment
+
+# ============================================================================
+# BASIC CONNECTIONS
+# ============================================================================
+
+# Simple PostgreSQL connection with defaults
+- connection_name: basic_postgres
+  description: Basic PostgreSQL connection
+  type: postgresql
+  servers:
+    - "localhost:5432"
+  db: myapp
+  username: readonly_user
+  # Password will be read from DB_PASSWORD_BASIC_POSTGRES environment variable
+  # Implementation defaults to 'cli' when not specified
+
+# Simple ClickHouse connection
+- connection_name: basic_clickhouse
+  description: Basic ClickHouse connection
+  type: clickhouse
+  servers:
+    - "localhost:9000"  # Native protocol port (not HTTP 8123)
+  db: events
+  username: analyst
+  # Password from DB_PASSWORD_BASIC_CLICKHOUSE env var
+
+# ============================================================================
+# CLUSTER CONFIGURATIONS (Multiple Servers)
+# ============================================================================
+
+# PostgreSQL cluster (uses first server only - no load balancing)
+- connection_name: postgres_cluster
+  description: PostgreSQL cluster - will connect to first available node
+  type: postgresql
+  implementation: python
+  servers:
+    - "pg-node-1.example.com:5432"
+    - "pg-node-2.example.com:5432"
+    - "pg-node-3.example.com:5432"
+  db: production  # For multiple databases, create separate connections
+  username: app_reader
+  # NOTE: Currently always uses first server - no load balancing implemented
+
+# ClickHouse cluster (uses first server only - no load balancing)
+- connection_name: clickhouse_cluster
+  description: ClickHouse cluster - will connect to first available node
+  type: clickhouse
+  implementation: python
+  servers:
+    - "ch-1.example.com:9000"
+    - "ch-2.example.com:9000"
+  db: metrics  # For multiple databases, create separate connections
+  username: reader
+
+# ============================================================================
+# SSH TUNNEL CONNECTIONS
+# ============================================================================
+
+# Connection through SSH tunnel with private key
+- connection_name: remote_postgres_ssh
+  description: Remote PostgreSQL via SSH tunnel
+  type: postgresql
+  implementation: python
+  servers:
+    - "10.0.1.50:5432"  # Internal IP only accessible via SSH
+  db: postgres  # Specify the database to connect to
+  username: db_user
+  ssh_tunnel:
+    host: bastion.example.com
+    port: 22  # Optional, defaults to 22
+    user: tunnel_user
+    private_key: ~/.ssh/id_rsa  # Path to private key
+    remote_host: 10.0.1.50  # Optional, defaults to localhost
+    remote_port: 5432  # Optional, defaults to server port
+  # Password from DB_PASSWORD_REMOTE_POSTGRES_SSH env var
+  # SSH password (if needed) from SSH_PASSWORD_REMOTE_POSTGRES_SSH env var
+
+# SSH tunnel with password authentication
+- connection_name: remote_clickhouse_ssh
+  description: ClickHouse through SSH with password
+  type: clickhouse
+  servers:
+    - "internal-clickhouse:9000"
+  db: analytics
+  username: analyst
+  ssh_tunnel:
+    host: jump-server.example.com
+    user: ssh_user
+    # No private_key specified, will use password from SSH_PASSWORD_REMOTE_CLICKHOUSE_SSH env var
+
+# ============================================================================
+# SECURITY-LIMITED CONNECTIONS
+# ============================================================================
+
+# Strict security limits for sensitive data
+- connection_name: restricted_postgres
+  description: Highly restricted connection for sensitive data
+  type: postgresql
+  implementation: python
+  servers:
+    - "sensitive.example.com:5432"
+  db: sensitive_data  # Connect to specific database
+  username: auditor
+  # Strict security limits (stricter than defaults)
+  query_timeout: 2            # Max 2 seconds per query (default: 10)
+  connection_timeout: 2       # Max 2 seconds to connect (default: 5)
+  max_result_bytes: 1024      # Max 1KB results (default: 5KB)
+
+# Moderate limits for general use
+- connection_name: limited_analytics
+  description: Analytics with reasonable limits
+  type: clickhouse
+  implementation: python
+  servers:
+    - "analytics.example.com:9000"
+  db: analytics
+  username: analyst
+  query_timeout: 60           # 1 minute for complex queries (default: 10)
+  connection_timeout: 10      # 10 seconds to connect (default: 5)
+  max_result_bytes: 20971520  # 20MB for larger datasets (default: 5KB)
+
+# Very strict limits for public/untrusted queries
+- connection_name: public_readonly
+  description: Public access with minimal limits
+  type: postgresql
+  servers:
+    - "public.example.com:5432"
+  db: public_data
+  username: public_reader
+  query_timeout: 1            # 1 second max (default: 10)
+  connection_timeout: 1       # Quick connect only (default: 5)
+  max_result_bytes: 512       # 512 bytes max (default: 5KB)
+
+# ============================================================================
+# CLI IMPLEMENTATION CONNECTIONS
+# ============================================================================
+
+# PostgreSQL using psql command-line tool
+- connection_name: legacy_postgres_cli
+  description: Legacy system using psql CLI
+  type: postgresql
+  implementation: cli  # Uses psql command instead of Python library
+  servers:
+    - "legacy.example.com:5432"
+  db: legacy_db
+  username: cli_user
+  # Requires psql to be installed and in PATH
+  # Password from DB_PASSWORD_LEGACY_POSTGRES_CLI env var
+
+# ClickHouse using clickhouse-client
+- connection_name: clickhouse_cli
+  description: ClickHouse using CLI client
+  type: clickhouse
+  implementation: cli  # Uses clickhouse-client command
+  servers:
+    - "localhost:9000"
+  db: test
+  username: cli_user
+  # Requires clickhouse-client to be installed and in PATH
+
+# ============================================================================
+# MIXED CONFIGURATIONS
+# ============================================================================
+
+# Complex configuration with all options
+- connection_name: full_featured
+  description: Example with all features enabled
+  type: postgresql
+  implementation: python
+  servers:
+    - "primary.example.com:5432"
+    - "secondary.example.com:5432"
+  db: production  # For multiple databases, create separate connections
+  username: power_user
+  # Security limits (reasonable for production)
+  query_timeout: 30           # 30 seconds (default: 10)
+  connection_timeout: 10      # 10 seconds (default: 5)
+  max_result_bytes: 10485760  # 10MB (default: 5KB)
+  # SSH tunnel
+  ssh_tunnel:
+    host: bastion.example.com
+    port: 2222  # Non-standard SSH port
+    user: tunnel_user
+    private_key: ~/.ssh/production_key
+    remote_host: primary.example.com
+    remote_port: 5432
+
+# ============================================================================
+# LOCAL DEVELOPMENT
+# ============================================================================
+
+# Local PostgreSQL for development
+- connection_name: local_postgres
+  description: Local PostgreSQL for development
+  type: postgresql
+  servers:
+    - "localhost"  # Port defaults to 5432
+  db: postgres  # Specify the database to connect to
+  username: postgres
+  # Password from DB_PASSWORD_LOCAL_POSTGRES env var
+
+# Docker PostgreSQL
+- connection_name: docker_postgres
+  description: PostgreSQL in Docker
+  type: postgresql
+  servers:
+    - "localhost:5433"  # Non-standard port for Docker
+  db: testdb
+  username: testuser
+
+# ============================================================================
+# ENVIRONMENT VARIABLES REFERENCE
+# ============================================================================
+# For each connection, passwords are read from environment variables:
+#
+# Database password: DB_PASSWORD_<CONNECTION_NAME>
+# Examples:
+#   DB_PASSWORD_BASIC_POSTGRES=secretpass123
+#   DB_PASSWORD_POSTGRES_CLUSTER=cluster_pass
+#   DB_PASSWORD_RESTRICTED_POSTGRES=secure_pass
+#
+# SSH password (if not using key): SSH_PASSWORD_<CONNECTION_NAME>
+# Examples:
+#   SSH_PASSWORD_REMOTE_CLICKHOUSE_SSH=ssh_pass
+#   SSH_PASSWORD_FULL_FEATURED=tunnel_pass
+#
+# Connection names are converted to uppercase with hyphens replaced by underscores
+# Example: "my-connection" becomes "DB_PASSWORD_MY_CONNECTION"
+#
+# ============================================================================
+# NOTES
+# ============================================================================
+# 1. Default implementation is 'cli' if not specified
+# 2. Default ports: PostgreSQL=5432, ClickHouse=9000 (native protocol)
+# 3. Default security limits:
+#    - query_timeout: 10 seconds
+#    - connection_timeout: 5 seconds
+#    - max_result_bytes: 5120 bytes (5KB)
+# 4. The 'db' field is optional (defaults: postgres for PostgreSQL, default for ClickHouse)
+# 5. Multiple servers: Currently always uses first server (no load balancing/failover)
+# 6. Passwords: MUST be set via environment variables - any password in YAML is ignored
+# 7. All queries are forced to be read-only at multiple levels
+# 8. CLI implementations require the respective tools installed:
+#    - PostgreSQL: psql
+#    - ClickHouse: clickhouse-client
+# 9. Never commit actual passwords to this file - use environment variables

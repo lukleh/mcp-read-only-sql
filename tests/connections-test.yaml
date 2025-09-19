@@ -1,0 +1,27 @@
+- connection_name: test_postgres
+  description: Local PostgreSQL for testing
+  type: postgresql
+  implementation: python
+  servers:
+    - "localhost:5432"
+  db: testdb
+  username: testuser
+
+- connection_name: test_clickhouse
+  description: Local ClickHouse for testing
+  type: clickhouse
+  implementation: python
+  servers:
+    - "localhost:9000"
+  db: testdb
+  username: testuser
+
+- connection_name: test_clickhouse_cluster
+  description: Local ClickHouse cluster simulation
+  type: clickhouse
+  implementation: python
+  servers:
+    - "localhost:9000"
+    - "localhost:9000"  # Same server, simulating cluster
+  db: testdb
+  username: testuser
