@@ -60,8 +60,11 @@ echo ""
 # Use python -u for unbuffered output
 # --tb=short for readable error messages
 # --color=yes for colored dots (green=pass, red=fail)
-# The output will show dots in real-time as tests run
-PYTHONUNBUFFERED=1 uv run python -u -m pytest --tb=short --color=yes --durations=1 "$@"
+# Emit JUnit XML alongside console output for CI reporting
+mkdir -p test-results
+PYTHONUNBUFFERED=1 uv run python -u -m pytest \
+    --tb=short --color=yes --durations=1 \
+    --junitxml=test-results/pytest.xml "$@"
 exit_code=$?
 
 # Clean up test Docker

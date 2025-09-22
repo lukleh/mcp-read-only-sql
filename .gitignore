@@ -26,6 +26,7 @@ uv.lock
 .pytest_cache/
 .coverage
 htmlcov/
+test-results/
 
 # Connections
 connections.yaml

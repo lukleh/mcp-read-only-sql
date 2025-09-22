@@ -1,5 +1,7 @@
 # MCP Read-Only SQL Server
 
+[![Tests](https://github.com/lukleh/mcp-read-only-sql/actions/workflows/test.yml/badge.svg)](https://github.com/lukleh/mcp-read-only-sql/actions/workflows/test.yml)
+
 A secure MCP (Model Context Protocol) server that provides **read-only** SQL access to PostgreSQL and ClickHouse databases with built-in safety features.
 
 ## Security
