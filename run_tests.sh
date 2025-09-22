@@ -14,11 +14,11 @@ echo ""
 echo -e "${BLUE}Setting up test Docker environment...${NC}"
 
 # Stop any existing containers
-docker-compose --profile test down 2>/dev/null
+docker compose --profile test down 2>/dev/null || docker-compose --profile test down 2>/dev/null || true
 
 # Start test containers with tmpfs (in-memory) storage
 # This includes test databases and SSH infrastructure
-docker-compose --profile test up -d
+docker compose --profile test up -d || docker-compose --profile test up -d
 
 # Copy SSH key from container for CLI tests
 sleep 3  # Give SSH container time to generate keys
@@ -32,14 +32,14 @@ sleep 5
 docker exec mcp-postgres-test pg_isready -U testuser -d testdb >/dev/null 2>&1
 if [ $? -ne 0 ]; then
     echo -e "${RED}PostgreSQL is not ready${NC}"
-    docker-compose --profile test logs postgres-test
+    docker compose --profile test logs postgres-test || docker-compose --profile test logs postgres-test
     exit 1
 fi
 
 docker exec mcp-clickhouse-test clickhouse-client --query "SELECT 1" >/dev/null 2>&1
 if [ $? -ne 0 ]; then
     echo -e "${RED}ClickHouse is not ready${NC}"
-    docker-compose --profile test logs clickhouse-test
+    docker compose --profile test logs clickhouse-test || docker-compose --profile test logs clickhouse-test
     exit 1
 fi
 
@@ -70,7 +70,7 @@ exit_code=$?
 # Clean up test Docker
 echo ""
 echo -e "${BLUE}Cleaning up test Docker environment...${NC}"
-docker-compose --profile test down
+docker compose --profile test down || docker-compose --profile test down
 
 # Show summary
 echo ""

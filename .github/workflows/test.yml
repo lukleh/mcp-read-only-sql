@@ -45,11 +45,6 @@ jobs:
         # Install sshpass for SSH password authentication tests
         sudo apt-get install -y sshpass
 
-    - name: Install Docker Compose plugin
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y docker-compose-plugin
-
     - name: Run tests
       run: |
         # Run the test script
@@ -70,4 +65,4 @@ jobs:
     - name: Clean up
       if: always()
       run: |
-        docker-compose --profile test down
+        docker compose --profile test down
