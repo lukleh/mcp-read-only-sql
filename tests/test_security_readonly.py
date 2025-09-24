@@ -13,6 +13,7 @@ from src.connectors.postgresql.cli import PostgreSQLCLIConnector
 from src.connectors.clickhouse.python import ClickHousePythonConnector
 from src.connectors.clickhouse.cli import ClickHouseCLIConnector
 from clickhouse_connect.driver.exceptions import ClickHouseError
+from src.utils.sql_guard import sanitize_read_only_sql, ReadOnlyQueryError
 
 from tests.sql_statement_lists import (
     CLICKHOUSE_DDL_STATEMENTS,
@@ -176,7 +177,7 @@ async def test_postgresql_cli_blocks_multi_statement_escape(postgres_config):
     connector = PostgreSQLCLIConnector(postgres_config)
 
     malicious_query = "COMMIT; INSERT INTO users (username) VALUES ('oops')"
-    with pytest.raises(ValueError) as exc_info:
+    with pytest.raises(ReadOnlyQueryError) as exc_info:
         await connector.execute_query(malicious_query)
 
     assert "multiple sql statements" in str(exc_info.value).lower()
@@ -188,7 +189,7 @@ async def test_postgresql_cli_blocks_transaction_control(postgres_config):
     connector = PostgreSQLCLIConnector(postgres_config)
 
     for statement in POSTGRESQL_TRANSACTION_STATEMENTS:
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ReadOnlyQueryError) as exc_info:
             await connector.execute_query(statement)
         assert "transaction control" in str(exc_info.value).lower()
 
@@ -196,21 +197,19 @@ async def test_postgresql_cli_blocks_transaction_control(postgres_config):
 def test_postgresql_cli_query_sanitizer_allows_trailing_semicolon():
     """Trailing semicolons and whitespace should remain valid."""
     query = "SELECT 1;   "
-    assert (
-        PostgreSQLCLIConnector._prepare_user_query(query) == "SELECT 1;"
-    )
+    assert sanitize_read_only_sql(query) == "SELECT 1;"
 
 
 def test_postgresql_cli_query_sanitizer_handles_literals():
     """Semicolons inside string literals must not trigger multi-statement rejections."""
     query = "SELECT 'value;still literal'"
-    assert PostgreSQLCLIConnector._prepare_user_query(query) == query
+    assert sanitize_read_only_sql(query) == query
 
 
 @pytest.mark.parametrize("query", POSTGRESQL_ALLOWED_LITERAL_QUERIES)
 def test_postgresql_cli_query_sanitizer_allows_keywords_inside_literals(query):
     """Ensure keywords inside string literals are preserved."""
-    assert PostgreSQLCLIConnector._prepare_user_query(query) == query
+    assert sanitize_read_only_sql(query) == query
 
 
 @pytest.mark.anyio
@@ -572,10 +571,13 @@ async def test_postgresql_python_blocks_write_statements(statement, postgres_con
 
     connector = PostgreSQLPythonConnector(postgres_config)
 
-    with pytest.raises(RuntimeError) as exc_info:
+    with pytest.raises((ReadOnlyQueryError, RuntimeError)) as exc_info:
         await connector.execute_query(statement)
 
-    assert "postgresql" in str(exc_info.value).lower()
+    if isinstance(exc_info.value, ReadOnlyQueryError):
+        assert "transaction" in str(exc_info.value).lower()
+    else:
+        assert "postgresql" in str(exc_info.value).lower()
 
 
 def test_clickhouse_python_sets_readonly_setting(monkeypatch, clickhouse_config):

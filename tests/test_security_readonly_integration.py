@@ -8,6 +8,7 @@ from src.connectors.postgresql.cli import PostgreSQLCLIConnector
 from src.connectors.postgresql.python import PostgreSQLPythonConnector
 from src.connectors.clickhouse.cli import ClickHouseCLIConnector
 from src.connectors.clickhouse.python import ClickHousePythonConnector
+from src.utils.sql_guard import ReadOnlyQueryError
 
 from tests.sql_statement_lists import (
     CLICKHOUSE_ALLOWED_LITERAL_QUERIES,
@@ -101,6 +102,19 @@ async def test_postgres_real_allows_selects_with_keywords(implementation, query)
 
     result = await connector.execute_query(query)
     assert "INSERT" in result, "Keyword inside literal should be preserved"
+
+
+@pytest.mark.anyio
+@pytest.mark.security
+@pytest.mark.docker
+@pytest.mark.parametrize("implementation", ["python", "cli"])
+async def test_postgres_real_blocks_transaction_escape(implementation):
+    connector = _build_postgres_connector(implementation)
+    await _verify_connection(connector, "PostgreSQL")
+
+    payload = "SET transaction_read_only TO false ; DROP TABLE newtable"
+    with pytest.raises(ReadOnlyQueryError):
+        await connector.execute_query(payload)
 
 
 @pytest.mark.anyio

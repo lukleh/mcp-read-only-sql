@@ -1,11 +1,11 @@
 import asyncio
 import logging
 import os
-import re
 from contextlib import suppress
 from typing import Optional
 
 from ..base_cli import BaseCLIConnector
+from ...utils.sql_guard import sanitize_read_only_sql, ReadOnlyQueryError
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +18,7 @@ class PostgreSQLCLIConnector(BaseCLIConnector):
 
     async def execute_query(self, query: str, database: Optional[str] = None) -> str:
         """Execute a read-only query using psql and return raw TSV output"""
-        sanitized_query = self._prepare_user_query(query)
+        sanitized_query = sanitize_read_only_sql(query)
         server = self._select_server()
 
         async with self._get_ssh_tunnel() as local_port:
@@ -162,202 +162,10 @@ class PostgreSQLCLIConnector(BaseCLIConnector):
 
             except FileNotFoundError:
                 raise FileNotFoundError("psql: command not found. Please install PostgreSQL client tools.")
+            except ReadOnlyQueryError as exc:
+                raise ReadOnlyQueryError(str(exc))
             except Exception as e:
                 logger.error(f"Query execution error: {e}")
-                # Re-raise with psql prefix if not already prefixed
                 if not str(e).startswith("psql:"):
                     raise RuntimeError(f"psql: {e}")
                 raise
-
-    @staticmethod
-    def _prepare_user_query(query: str) -> str:
-        """Ensure the user query cannot break out of the enforced read-only transaction."""
-        if query is None:
-            raise ValueError("Query must not be None")
-
-        stripped = query.strip()
-        if not stripped:
-            raise ValueError("Query must not be empty")
-
-        PostgreSQLCLIConnector._ensure_single_statement(stripped)
-        PostgreSQLCLIConnector._reject_transaction_control(stripped)
-
-        return stripped
-
-    @staticmethod
-    def _ensure_single_statement(query: str) -> None:
-        """Disallow multiple SQL statements to prevent transaction escape."""
-        semicolons = PostgreSQLCLIConnector._find_semicolons_outside_literals(query)
-        if not semicolons:
-            return
-
-        # Allow a single trailing semicolon (after optional whitespace/comments)
-        if len(semicolons) > 1:
-            raise ValueError("Multiple SQL statements are not allowed in read-only mode")
-
-        last_semicolon = semicolons[0]
-        if not PostgreSQLCLIConnector._only_trailing_semicolon(query, last_semicolon):
-            raise ValueError("Multiple SQL statements are not allowed in read-only mode")
-
-    @staticmethod
-    def _reject_transaction_control(query: str) -> None:
-        """Reject standalone transaction control commands that could end the guard."""
-        upper = query.lstrip().upper()
-
-        transaction_patterns = [
-            r"^(COMMIT)(\s|;|$)",
-            r"^(ROLLBACK)(\s|;|$)",
-            r"^(ABORT)(\s|;|$)",
-            r"^(END)(\s|;|$)",
-            r"^(BEGIN)(\s|;|$)",
-            r"^(START\s+TRANSACTION)(\s|;|$)",
-            r"^(SET\s+TRANSACTION)(\s|;|$)",
-            r"^(SET\s+SESSION\s+CHARACTERISTICS)(\s|;|$)",
-            r"^(SAVEPOINT)(\s|;|$)",
-            r"^(RELEASE\s+SAVEPOINT)(\s|;|$)",
-            r"^(ROLLBACK\s+TO\s+SAVEPOINT)(\s|;|$)",
-            r"^(PREPARE\s+TRANSACTION)(\s|;|$)",
-            r"^(COMMIT\s+PREPARED)(\s|;|$)",
-            r"^(ROLLBACK\s+PREPARED)(\s|;|$)",
-        ]
-
-        for pattern in transaction_patterns:
-            if re.match(pattern, upper):
-                raise ValueError("Transaction control statements are not allowed in read-only mode")
-
-    @staticmethod
-    def _only_trailing_semicolon(query: str, index: int) -> bool:
-        """Return True if all code after the semicolon is whitespace or comments."""
-        tail = query[index + 1:]
-        stripped_tail = PostgreSQLCLIConnector._remove_comments(tail).strip()
-        return stripped_tail == ""
-
-    @staticmethod
-    def _remove_comments(sql: str) -> str:
-        """Remove SQL comments to help with tail checks."""
-        result = []
-        length = len(sql)
-        i = 0
-        in_block = 0
-        while i < length:
-            ch = sql[i]
-            nxt = sql[i + 1] if i + 1 < length else ""
-            if in_block:
-                if ch == "*" and nxt == "/":
-                    in_block -= 1
-                    i += 2
-                elif ch == "/" and nxt == "*":
-                    in_block += 1
-                    i += 2
-                else:
-                    i += 1
-                continue
-            if ch == "-" and nxt == "-":
-                # Skip rest of line
-                i += 2
-                while i < length and sql[i] not in "\r\n":
-                    i += 1
-                continue
-            if ch == "/" and nxt == "*":
-                in_block = 1
-                i += 2
-                continue
-            result.append(ch)
-            i += 1
-        return "".join(result)
-
-    @staticmethod
-    def _find_semicolons_outside_literals(query: str) -> list[int]:
-        """Locate semicolons that are not inside strings or comments."""
-        semicolons = []
-        length = len(query)
-        i = 0
-        in_single = False
-        in_double = False
-        in_line_comment = False
-        in_block_comment = 0
-        dollar_tag = None
-
-        while i < length:
-            ch = query[i]
-            nxt = query[i + 1] if i + 1 < length else ""
-
-            if in_line_comment:
-                if ch in "\r\n":
-                    in_line_comment = False
-                i += 1
-                continue
-
-            if in_block_comment:
-                if ch == "*" and nxt == "/":
-                    in_block_comment -= 1
-                    i += 2
-                    continue
-                if ch == "/" and nxt == "*":
-                    in_block_comment += 1
-                    i += 2
-                    continue
-                i += 1
-                continue
-
-            if dollar_tag:
-                if query.startswith(dollar_tag, i):
-                    i += len(dollar_tag)
-                    dollar_tag = None
-                else:
-                    i += 1
-                continue
-
-            if in_single:
-                if ch == "'":
-                    if nxt == "'":
-                        i += 2
-                        continue
-                    in_single = False
-                i += 1
-                continue
-
-            if in_double:
-                if ch == '"':
-                    if nxt == '"':
-                        i += 2
-                        continue
-                    in_double = False
-                i += 1
-                continue
-
-            if ch == "-" and nxt == "-":
-                in_line_comment = True
-                i += 2
-                continue
-
-            if ch == "/" and nxt == "*":
-                in_block_comment = 1
-                i += 2
-                continue
-
-            if ch == "'":
-                in_single = True
-                i += 1
-                continue
-
-            if ch == '"':
-                in_double = True
-                i += 1
-                continue
-
-            if ch == "$":
-                tag_end = i + 1
-                while tag_end < length and (query[tag_end].isalnum() or query[tag_end] == "_"):
-                    tag_end += 1
-                if tag_end < length and query[tag_end] == "$":
-                    dollar_tag = query[i:tag_end + 1]
-                    i = tag_end + 1
-                    continue
-
-            if ch == ";":
-                semicolons.append(i)
-
-            i += 1
-
-        return semicolons

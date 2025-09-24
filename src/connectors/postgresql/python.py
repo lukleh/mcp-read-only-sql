@@ -8,6 +8,7 @@ from psycopg2.extras import RealDictCursor
 
 from ..base import BaseConnector
 from ...utils.tsv_formatter import format_tsv_line
+from ...utils.sql_guard import sanitize_read_only_sql
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +21,7 @@ class PostgreSQLPythonConnector(BaseConnector):
 
     async def execute_query(self, query: str, database: Optional[str] = None) -> str:
         """Execute a read-only query using psycopg2"""
+        sanitized_query = sanitize_read_only_sql(query)
         server = self._select_server()
 
         try:
@@ -46,7 +48,7 @@ class PostgreSQLPythonConnector(BaseConnector):
                         host,
                         port,
                         db_name,
-                        query,
+                        sanitized_query,
                         self.max_result_bytes
                     ),
                     timeout=total_timeout
