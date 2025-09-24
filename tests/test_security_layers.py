@@ -13,6 +13,7 @@ import pytest
 from src.config.parser import ConfigParser
 from src.connectors.postgresql.python import PostgreSQLPythonConnector
 from src.connectors.clickhouse.python import ClickHousePythonConnector
+from src.utils.sql_guard import ReadOnlyQueryError
 
 
 @pytest.fixture(scope="module")
@@ -97,21 +98,19 @@ class TestWriteOperationBlocking:
     ])
     async def test_block_write_operations(self, postgres_connector, query, operation):
         """Test blocking of write operations"""
-        with pytest.raises(RuntimeError) as exc_info:
+        with pytest.raises((RuntimeError, ReadOnlyQueryError)) as exc_info:
             await postgres_connector.execute_query(query)
 
         error_msg = str(exc_info.value).lower()
-        # Error will be from database rejecting the operation in read-only mode
-        assert any(word in error_msg for word in ["read-only", "cannot execute", "permission", "denied"]), f"{operation} should be blocked"
+        assert any(word in error_msg for word in ["read-only", "cannot execute", "permission", "denied"]), (
+            f"{operation} should be blocked"
+        )
 
     async def test_block_multi_statement(self, postgres_connector):
         """Test blocking of multi-statement SQL injection"""
         query = "SELECT * FROM users; DELETE FROM users"
-        with pytest.raises(RuntimeError) as exc_info:
+        with pytest.raises(ReadOnlyQueryError):
             await postgres_connector.execute_query(query)
-
-        # Multi-statements should fail in read-only mode
-        error_msg = str(exc_info.value).lower()
 
     async def test_comment_in_query_allowed(self, postgres_connector):
         """Test that comments in queries are allowed (no pattern matching)"""
