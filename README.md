@@ -17,11 +17,13 @@ All write operations (INSERT, UPDATE, DELETE, etc.) are blocked at the database 
 ### How Read-Only Is Enforced
 
 - **PostgreSQL (Python)** – Connections are opened with `default_transaction_read_only=on`, sessions are set to read-only, and every statement runs with a configurable `statement_timeout`.
-- **PostgreSQL (CLI)** – Queries are wrapped in a transaction that issues `SET TRANSACTION READ ONLY;` before execution, so `psql` cannot apply writes even if a statement slips through.
-- **ClickHouse (Python)** – The driver sets `readonly=2` plus connection/query timeouts, forcing the server to reject any write or DDL attempt.
-- **ClickHouse (CLI)** – `clickhouse-client` is invoked with `--readonly=1`, which turns the session into a read-only context.
+- **PostgreSQL (CLI)** – Queries are wrapped in a transaction that issues `SET TRANSACTION READ ONLY;` before execution. Input is sanitized so only a single statement (plus optional trailing semicolon) is forwarded, transaction-control keywords are rejected up front, and all `psql` invocations include `--single-transaction`, `-v ON_ERROR_STOP=1`, and `PGOPTIONS=-c default_transaction_read_only=on` for defence in depth.
+- **ClickHouse (Python)** – The driver sets `readonly=1` plus connection/query timeouts, forcing the server to reject any write or DDL attempt.
+- **ClickHouse (CLI)** – `clickhouse-client` is invoked with `--readonly=1`, `--max_execution_time`, and connection timeouts, turning the session into a read-only context.
 
 The shared connector base also applies hard timeouts and result-size ceilings, giving the MCP server deterministic behaviour even if the database misbehaves.
+
+See [READ_ONLY_ENFORCEMENT_MATRIX.md](READ_ONLY_ENFORCEMENT_MATRIX.md) for a statement-by-statement view of every write-capable command and the tests that enforce it.
 
 ## Key Features
 
