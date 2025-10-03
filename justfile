@@ -34,6 +34,15 @@ test-connection connection="":
         uv run -- python -m src.tools.test_connection {{connection}}
     fi
 
+# Test SSH tunnel(s) connectivity only
+test-ssh-tunnel connection="":
+    #!/usr/bin/env bash
+    if [ -z "{{connection}}" ]; then
+        uv run -- python -m src.tools.test_ssh_tunnel
+    else
+        uv run -- python -m src.tools.test_ssh_tunnel {{connection}}
+    fi
+
 # Run tests with Docker isolation
 test:
     ./run_tests.sh
