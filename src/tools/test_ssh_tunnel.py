@@ -50,16 +50,27 @@ async def test_ssh_tunnels(config_path: str, connection_name: Optional[str] = No
         print(f"Testing SSH tunnels for {len(ssh_connections)} connection(s)...\n")
 
         for conn_config in ssh_connections:
-            name = conn_config.get("connection_name", "unknown")
+            # Required fields
+            try:
+                name = conn_config["connection_name"]
+                ssh_config = conn_config["ssh_tunnel"]
+                ssh_host = ssh_config["host"]
+                ssh_user = ssh_config["user"]
+            except KeyError as e:
+                print(f"❌ Configuration error: missing required field {e}")
+                all_success = False
+                continue
+
+            # Optional fields with proper defaults
             impl = conn_config.get("implementation", "cli")
-            ssh_config = conn_config.get("ssh_tunnel")
             servers = conn_config.get("servers", [])
+            ssh_port = ssh_config.get("port", 22)  # Optional, defaults to 22
 
             print(f"Testing connection: {name}")
             print(f"  Implementation: {impl}")
-            print(f"  SSH Host: {ssh_config.get('host', 'unknown')}")
-            print(f"  SSH User: {ssh_config.get('user', 'unknown')}")
-            print(f"  SSH Port: {ssh_config.get('port', 22)}")
+            print(f"  SSH Host: {ssh_host}")
+            print(f"  SSH User: {ssh_user}")
+            print(f"  SSH Port: {ssh_port}")
 
             # Get authentication method
             if ssh_config.get('password'):

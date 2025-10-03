@@ -42,8 +42,18 @@ async def test_connection(config_path: str, connection_name: Optional[str] = Non
         all_success = True
 
         for conn_config in connections:
-            name = conn_config.get("connection_name", "unknown")
-            db_type = conn_config.get("type", "unknown")
+            # Required fields
+            try:
+                name = conn_config["connection_name"]
+                db_type = conn_config["type"]
+                # username is required but we don't display it here, just verify it exists
+                _ = conn_config["username"]
+            except KeyError as e:
+                print(f"❌ Configuration error in connection: missing required field {e}")
+                all_success = False
+                continue
+
+            # Optional fields with proper defaults
             impl = conn_config.get("implementation", "cli")
             servers = conn_config.get("servers", [])
 
@@ -51,8 +61,16 @@ async def test_connection(config_path: str, connection_name: Optional[str] = Non
             print(f"  Type: {db_type}")
             print(f"  Implementation: {impl}")
 
+            # SSH tunnel is optional, but if present, host is required
             if conn_config.get("ssh_tunnel"):
-                print(f"  SSH Tunnel: {conn_config['ssh_tunnel'].get('host', 'unknown')}")
+                ssh_config = conn_config["ssh_tunnel"]
+                try:
+                    ssh_host = ssh_config["host"]
+                    print(f"  SSH Tunnel: {ssh_host}")
+                except KeyError:
+                    print(f"  ❌ SSH tunnel configured but missing required 'host' field")
+                    all_success = False
+                    continue
 
             # Get list of servers to test
             servers_to_test = []
