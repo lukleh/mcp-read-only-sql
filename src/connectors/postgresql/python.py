@@ -19,21 +19,21 @@ class PostgreSQLPythonConnector(BaseConnector):
     def _get_default_port(self) -> int:
         return 5432
 
-    async def execute_query(self, query: str, database: Optional[str] = None) -> str:
+    async def execute_query(self, query: str, database: Optional[str] = None, server: Optional[str] = None) -> str:
         """Execute a read-only query using psycopg2"""
         sanitized_query = sanitize_read_only_sql(query)
-        server = self._select_server()
+        selected_server = self._select_server(server)
 
         try:
-            async with self._get_ssh_tunnel() as local_port:
+            async with self._get_ssh_tunnel(server) as local_port:
                 total_timeout = self.connection_timeout + self.query_timeout
                 # Use SSH tunnel port if available
                 if local_port:
                     host = "127.0.0.1"
                     port = local_port
                 else:
-                    host = server["host"]
-                    port = server["port"]
+                    host = selected_server.host
+                    port = selected_server.port
 
                 # Use specified database or configured database
                 db_name = database or self.database

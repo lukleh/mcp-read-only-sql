@@ -17,7 +17,8 @@ class TestSSHTimeout:
     @pytest.mark.timeout(10)  # Kill test after 10 seconds to prevent hanging
     async def test_ssh_timeout_with_unreachable_host(self):
         """Test that SSH times out properly with unreachable host"""
-        config = {
+        from conftest import make_connection
+        config = make_connection({
             "connection_name": "ssh_timeout_test",
             "type": "postgresql",
             "servers": [{"host": "internal-db", "port": 5432}],
@@ -32,7 +33,7 @@ class TestSSHTimeout:
                 "password": "tunnelpass",
                 "ssh_timeout": 2  # 2 second timeout for faster test
             }
-        }
+        })
 
         # Test Python implementation
         connector = PostgreSQLPythonConnector(config)
@@ -52,7 +53,8 @@ class TestSSHTimeout:
     @pytest.mark.timeout(10)  # Kill test after 10 seconds
     async def test_cli_ssh_timeout_with_unreachable_host(self):
         """Test that CLI SSH times out properly with unreachable host"""
-        config = {
+        from conftest import make_connection
+        config = make_connection({
             "connection_name": "ssh_timeout_test_cli",
             "type": "postgresql",
             "servers": [{"host": "internal-db", "port": 5432}],
@@ -67,7 +69,7 @@ class TestSSHTimeout:
                 "private_key": "/tmp/test_key",  # CLI uses key auth
                 "ssh_timeout": 2  # 2 second timeout for faster test
             }
-        }
+        })
 
         # Test CLI implementation
         connector = PostgreSQLCLIConnector(config)
@@ -84,7 +86,8 @@ class TestSSHTimeout:
     @pytest.mark.timeout(10)  # Kill test after 10 seconds
     async def test_default_ssh_timeout(self):
         """Test that default SSH timeout is 5 seconds"""
-        config = {
+        from conftest import make_connection
+        config = make_connection({
             "connection_name": "default_timeout_test",
             "type": "postgresql",
             "servers": [{"host": "internal-db", "port": 5432}],
@@ -99,7 +102,7 @@ class TestSSHTimeout:
                 "password": "tunnelpass"
                 # No ssh_timeout specified, should use default of 5s
             }
-        }
+        })
 
         connector = PostgreSQLPythonConnector(config)
 

@@ -9,6 +9,9 @@ from pathlib import Path
 from tests.conftest import call_tool, execute_query, list_connections
 
 
+pytestmark = pytest.mark.filterwarnings("ignore::pytest.PytestUnraisableExceptionWarning")
+
+
 @pytest.mark.anyio
 class TestServerBasics:
     """Test basic server functionality through MCP protocol"""
@@ -55,6 +58,22 @@ class TestServerBasics:
         result = await mcp_client.call_tool("run_query_read_only", arguments={"query": "SELECT 1"})
         # Should have error in result
         assert result.isError or (result.content and "error" in str(result.content[0]).lower())
+
+    async def test_run_query_with_server_override(self, mcp_client):
+        """Server parameter should route query to the requested host."""
+        result = await execute_query(
+            mcp_client,
+            "test_connection",
+            "SELECT 1",
+            server="127.0.0.1"
+        )
+
+        if result.get("success"):
+            assert result.get("rows")
+            assert result["rows"][0][0] == '1'
+        else:
+            error_msg = result.get("error", "").lower()
+            assert "127.0.0.1" in error_msg or "connection refused" in error_msg
 
 
 @pytest.mark.anyio
@@ -107,7 +126,7 @@ class TestResolvedEndpoints:
         conn = connections[0]
         assert conn["name"] == "ssh_conn"
         # Should surface the remote database host, not localhost
-        assert conn["servers"] == "remote-db.example.com:5432"
+        assert conn["servers"] == "remote-db.example.com"
         assert conn.get("user") == "tester"
 
 
@@ -246,3 +265,87 @@ class TestSecurityLimits:
         assert "type" in conn
         # These fields might not be exposed in list_connections
         assert conn["type"] == "postgresql"
+
+
+@pytest.mark.anyio
+class TestServerParameter:
+    """Test the optional server parameter for server selection"""
+
+    @pytest.fixture
+    def multi_server_config_file(self, tmp_path):
+        """Create config with multiple servers per connection"""
+        config_content = """
+- connection_name: multi_server_conn
+  type: postgresql
+  implementation: cli
+  servers:
+    - "server1.example.com:5432"
+    - "server2.example.com:5432"
+    - "server3.example.com:5433"
+  db: testdb
+  username: user
+  password: pass
+"""
+        config_file = tmp_path / "multi_server_config.yaml"
+        config_file.write_text(config_content)
+        return str(config_file)
+
+    @pytest.fixture
+    async def multi_server_client(self, multi_server_config_file):
+        """Client for multi-server connection"""
+        from mcp import StdioServerParameters, ClientSession
+        from mcp.client.stdio import stdio_client
+
+        server_params = StdioServerParameters(
+            command="uv",
+            args=["run", "python", "-m", "src.server", multi_server_config_file]
+        )
+
+        async with stdio_client(server_params) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                yield session
+
+    async def test_server_parameter_not_found(self, multi_server_client):
+        """Test that specifying non-existent server returns error"""
+        result = await call_tool(
+            multi_server_client,
+            "run_query_read_only",
+            {
+                "connection_name": "multi_server_conn",
+                "query": "SELECT 1",
+                "server": "nonexistent.example.com"
+            }
+        )
+
+        assert not result.get("success", False)
+        error = result.get("error", "")
+        assert "not found" in error.lower()
+        assert "nonexistent.example.com" in error
+        assert "server1.example.com" in error  # Should list available servers
+
+    async def test_server_parameter_invalid_port(self, multi_server_client):
+        """Test that invalid port format returns error"""
+        result = await call_tool(
+            multi_server_client,
+            "run_query_read_only",
+            {
+                "connection_name": "multi_server_conn",
+                "query": "SELECT 1",
+                "server": "server1.example.com:invalid"
+            }
+        )
+
+        assert not result.get("success", False)
+        error = result.get("error", "")
+        assert "hostname" in error.lower()
+        assert "port" in error.lower()
+
+    async def test_server_parameter_tool_signature(self, multi_server_client):
+        """Test that server parameter is in tool signature"""
+        tools = await multi_server_client.list_tools()
+        run_query_tool = next(t for t in tools.tools if t.name == "run_query_read_only")
+
+        # Check tool description mentions server parameter
+        assert "server" in run_query_tool.description.lower() or \
+               (run_query_tool.inputSchema and "server" in str(run_query_tool.inputSchema).lower())

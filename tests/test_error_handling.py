@@ -14,56 +14,60 @@ from src.connectors.clickhouse.cli import ClickHouseCLIConnector
 @pytest.fixture
 def postgres_python_conn():
     """PostgreSQL Python connector with valid config"""
-    config = {
+    from conftest import make_connection
+    config = make_connection({
         "connection_name": "test_pg",
         "type": "postgresql",
         "servers": [{"host": "localhost", "port": 5432}],
         "db": "testdb",
         "username": "testuser",
         "password": "testpass"
-    }
+    })
     return PostgreSQLPythonConnector(config)
 
 
 @pytest.fixture
 def postgres_cli_conn():
     """PostgreSQL CLI connector with valid config"""
-    config = {
+    from conftest import make_connection
+    config = make_connection({
         "connection_name": "test_pg_cli",
         "type": "postgresql",
         "servers": [{"host": "localhost", "port": 5432}],
         "db": "testdb",
         "username": "testuser",
         "password": "testpass"
-    }
+    })
     return PostgreSQLCLIConnector(config)
 
 
 @pytest.fixture
 def clickhouse_python_conn():
     """ClickHouse Python connector with valid config"""
-    config = {
+    from conftest import make_connection
+    config = make_connection({
         "connection_name": "test_ch",
         "type": "clickhouse",
         "servers": [{"host": "localhost", "port": 9000}],
         "db": "testdb",
         "username": "testuser",
         "password": "testpass"
-    }
+    })
     return ClickHousePythonConnector(config)
 
 
 @pytest.fixture
 def clickhouse_cli_conn():
     """ClickHouse CLI connector with valid config"""
-    config = {
+    from conftest import make_connection
+    config = make_connection({
         "connection_name": "test_ch_cli",
         "type": "clickhouse",
         "servers": [{"host": "localhost", "port": 9000}],
         "db": "testdb",
         "username": "testuser",
         "password": "testpass"
-    }
+    })
     return ClickHouseCLIConnector(config)
 
 
@@ -74,7 +78,9 @@ class TestConnectionErrors:
 
     async def test_wrong_host(self):
         """Test connection to non-existent host"""
-        config = {
+        from conftest import make_connection
+
+        config = make_connection({
             "connection_name": "bad_host",
             "type": "postgresql",
             "servers": [{"host": "non.existent.host", "port": 5432}],
@@ -82,7 +88,7 @@ class TestConnectionErrors:
             "username": "testuser",
             "password": "testpass",
             "connection_timeout": 2
-        }
+        })
         connector = PostgreSQLPythonConnector(config)
 
         with pytest.raises(RuntimeError) as exc_info:
@@ -94,7 +100,9 @@ class TestConnectionErrors:
 
     async def test_wrong_port(self):
         """Test connection to wrong port"""
-        config = {
+        from conftest import make_connection
+
+        config = make_connection({
             "connection_name": "bad_port",
             "type": "postgresql",
             "servers": [{"host": "localhost", "port": 9999}],  # Wrong port
@@ -102,7 +110,7 @@ class TestConnectionErrors:
             "username": "testuser",
             "password": "testpass",
             "connection_timeout": 2
-        }
+        })
         connector = PostgreSQLPythonConnector(config)
 
         with pytest.raises(RuntimeError) as exc_info:
@@ -113,14 +121,16 @@ class TestConnectionErrors:
 
     async def test_wrong_credentials(self):
         """Test connection with wrong credentials"""
-        config = {
+        from conftest import make_connection
+
+        config = make_connection({
             "connection_name": "bad_creds",
             "type": "postgresql",
             "servers": [{"host": "localhost", "port": 5432}],
             "db": "testdb",
             "username": "wronguser",
             "password": "wrongpass"
-        }
+        })
         connector = PostgreSQLPythonConnector(config)
 
         with pytest.raises(RuntimeError) as exc_info:
@@ -133,7 +143,8 @@ class TestConnectionErrors:
     async def test_cli_connection_error(self, postgres_cli_conn):
         """Test CLI connector handles connection errors"""
         # Temporarily break the connection by using wrong port
-        postgres_cli_conn.servers = [{"host": "localhost", "port": 9999}]
+        from src.config.connection import Server
+        postgres_cli_conn.servers = [Server(host="localhost", port=9999)]
 
         with pytest.raises(RuntimeError) as exc_info:
             await postgres_cli_conn.execute_query("SELECT 1")

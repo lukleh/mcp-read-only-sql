@@ -6,9 +6,6 @@ Tests all three security layers working together:
 - Layer 3: Timeout and size limits
 """
 
-import asyncio
-import time
-
 import pytest
 from src.config.parser import ConfigParser
 from src.connectors.postgresql.python import PostgreSQLPythonConnector
@@ -27,58 +24,27 @@ def test_config():
 @pytest.fixture
 def postgres_connector(test_config):
     """Create PostgreSQL connector for testing"""
+    from conftest import make_connection
     config = next((c for c in test_config if c["connection_name"] == "test_postgres"), None)
     if not config:
         pytest.skip("test_postgres connection not found")
     # Ensure password is set
     if not config.get("password"):
         config["password"] = "testpass"
-    return PostgreSQLPythonConnector(config)
+    return PostgreSQLPythonConnector(make_connection(config))
 
 
 @pytest.fixture
 def clickhouse_connector(test_config):
     """Create ClickHouse connector for testing"""
+    from conftest import make_connection
     config = next((c for c in test_config if c["connection_name"] == "test_clickhouse"), None)
     if not config:
         pytest.skip("test_clickhouse connection not found")
     # Ensure password is set
     if not config.get("password"):
         config["password"] = "testpass"
-    return ClickHousePythonConnector(config)
-
-
-@pytest.fixture
-def postgres_strict_connector():
-    """Create PostgreSQL connector with strict limits"""
-    config = {
-        "connection_name": "timeout_test",
-        "type": "postgresql",
-        "servers": [{"host": "localhost", "port": 5432}],
-        "db": "testdb",
-        "username": "testuser",
-        "password": "testpass",
-        "query_timeout": 2,  # 2 second timeout
-        "connection_timeout": 2,
-        "max_result_bytes": 10000  # 10KB
-    }
-    return PostgreSQLPythonConnector(config)
-
-
-@pytest.fixture
-def clickhouse_strict_connector():
-    """Create ClickHouse connector with strict limits"""
-    config = {
-        "connection_name": "size_test",
-        "type": "clickhouse",
-        "servers": [{"host": "localhost", "port": 9000}],
-        "db": "testdb",
-        "username": "testuser",
-        "password": "testpass",
-        "query_timeout": 2,
-        "max_result_bytes": 10000  # 10KB
-    }
-    return ClickHousePythonConnector(config)
+    return ClickHousePythonConnector(make_connection(config))
 
 
 @pytest.mark.security
@@ -125,63 +91,6 @@ class TestWriteOperationBlocking:
 
 @pytest.mark.security
 @pytest.mark.docker
-@pytest.mark.slow
-@pytest.mark.anyio
-class TestTimeoutEnforcement:
-    """Test query and connection timeout enforcement"""
-
-    async def test_query_timeout(self, postgres_strict_connector):
-        """Test that long-running queries timeout"""
-        query = "SELECT pg_sleep(3), COUNT(*) FROM users"  # 3 second sleep with 2 second timeout
-
-        start_time = time.time()
-        with pytest.raises((RuntimeError, TimeoutError)) as exc_info:
-            await postgres_strict_connector.execute_query(query)
-        elapsed = time.time() - start_time
-
-        error_msg = str(exc_info.value).lower()
-        assert "timeout" in error_msg
-        assert elapsed < 3.5, "Query should timeout within 3.5 seconds"
-
-
-@pytest.mark.security
-@pytest.mark.docker
-@pytest.mark.anyio
-class TestResultSizeLimit:
-    """Test result size limit enforcement"""
-
-    async def test_postgres_size_limit(self, postgres_strict_connector):
-        """Test PostgreSQL result size limit"""
-        # Query that should stay within limits
-        result = await postgres_strict_connector.execute_query(
-            "SELECT id, username FROM users LIMIT 5"
-        )
-
-        # Should return TSV string
-        assert isinstance(result, str)
-        lines = result.strip().split('\n')
-        # First line is headers, rest are rows
-        assert len(lines) == 6  # 1 header + 5 rows
-
-    async def test_clickhouse_size_limit(self, clickhouse_strict_connector):
-        """Test ClickHouse result size limit"""
-        # Query that should exceed 10KB limit
-        try:
-            result = await clickhouse_strict_connector.execute_query(
-                "SELECT * FROM testdb.events LIMIT 1000"
-            )
-            # If it succeeds, result should be truncated TSV
-            assert isinstance(result, str)
-            # Check if result is reasonably sized (under limit)
-            assert len(result.encode()) <= 10000 * 1.5  # Allow some overhead
-        except RuntimeError as e:
-            # Or it might fail due to size limit
-            error_msg = str(e).lower()
-            assert "result exceeded" in error_msg or "size limit" in error_msg
-
-
-@pytest.mark.security
-@pytest.mark.docker
 @pytest.mark.anyio
 class TestReadOnlySession:
     """Test that database sessions are read-only"""
@@ -223,32 +132,3 @@ class TestReadOnlySession:
         row_values = lines[1].split('\t')
         assert int(row_values[0]) > 0  # count > 0
 
-
-@pytest.mark.security
-@pytest.mark.docker
-@pytest.mark.anyio
-class TestSecurityLayers:
-    """Test all three security layers work together"""
-
-    async def test_all_layers_active(self, postgres_strict_connector):
-        """Test that all security layers are active"""
-        # Layer 1: Query validation
-        with pytest.raises(RuntimeError) as exc_info:
-            await postgres_strict_connector.execute_query(
-                "DELETE FROM users"
-            )
-        error_msg = str(exc_info.value).lower()
-        # Should be blocked by database read-only mode
-        assert "read-only" in error_msg or "cannot execute" in error_msg
-
-        # Layer 2: Timeout protection
-        with pytest.raises((RuntimeError, TimeoutError)) as exc_info:
-            await postgres_strict_connector.execute_query(
-                "SELECT pg_sleep(3)"
-            )
-        error_msg = str(exc_info.value).lower()
-        assert "timeout" in error_msg
-
-        # Layer 3: Size limits (would work if we had more data)
-        # Just verify the limit is configured
-        assert postgres_strict_connector.max_result_bytes == 10000

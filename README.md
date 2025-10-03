@@ -110,9 +110,15 @@ Execute read-only SQL queries on configured databases.
 ```json
 {
   "connection_name": "my_postgres",
-  "query": "SELECT * FROM users LIMIT 10"
+  "query": "SELECT * FROM users LIMIT 10",
+  "server": "db2.example.com"
 }
 ```
+
+**Parameters:**
+- `connection_name` (required): Identifier returned by list_connections
+- `query` (required): SQL text that must remain read-only
+- `server` (optional): Hostname to target a specific server. If not provided, uses the first server in the connection's list. 
 
 **Returns:** Tab-separated text (TSV) with a header row followed by data rows.
 The structured MCP payload mirrors the same TSV string. If results exceed
@@ -123,8 +129,8 @@ List all available database connections.
 
 **Returns:** Tab-separated text with columns `name`, `type`, `description`,
 `servers`, `database`, and `user`. The `servers` column lists comma-separated
-`host:port` pairs after resolving SSH/VPN tunnels, so entries reflect actual
-database endpoints.
+hostnames after resolving SSH/VPN tunnels, so entries reflect the endpoints the
+agent should reference.
 
 ## Implementation Matrix
 

@@ -18,15 +18,16 @@ class ClickHouseCLIConnector(BaseCLIConnector):
         return 9000
 
     @asynccontextmanager
-    async def _get_ssh_tunnel(self):
+    async def _get_ssh_tunnel(self, server: Optional[str] = None):
         """Override SSH tunnel to ensure we tunnel to native port for clickhouse-client"""
-        if self.ssh_config and self.ssh_config.get("enabled", True):
+        if self.ssh_config:
             # Get the server to connect to
-            server = self._select_server()
+            selected_server = self._select_server(server)
 
             # For ClickHouse CLI, we need native port (9000), not HTTP port (8123)
             # If config specifies port 8123, change it to 9000 for the SSH tunnel
-            remote_port = server["port"]
+            remote_port = selected_server.port
+            remote_host = selected_server.host
             if remote_port == 8123:
                 logger.debug(f"Changing SSH tunnel remote port from 8123 to 9000 for clickhouse-client")
                 remote_port = 9000
@@ -34,12 +35,7 @@ class ClickHouseCLIConnector(BaseCLIConnector):
                 logger.debug(f"Changing SSH tunnel remote port from 8443 to 9440 for clickhouse-client")
                 remote_port = 9440
 
-            # Add remote host/port to SSH config
-            ssh_config = self.ssh_config.copy()
-            ssh_config["remote_host"] = server["host"]
-            ssh_config["remote_port"] = remote_port
-
-            tunnel = CLISSHTunnel(ssh_config)
+            tunnel = CLISSHTunnel(self.ssh_config, remote_host, remote_port)
             local_port = await tunnel.start()
             try:
                 yield local_port
@@ -48,18 +44,18 @@ class ClickHouseCLIConnector(BaseCLIConnector):
         else:
             yield None
 
-    async def execute_query(self, query: str, database: Optional[str] = None) -> str:
+    async def execute_query(self, query: str, database: Optional[str] = None, server: Optional[str] = None) -> str:
         """Execute a read-only query using clickhouse-client and return raw TSV output"""
-        server = self._select_server()
+        selected_server = self._select_server(server)
 
-        async with self._get_ssh_tunnel() as local_port:
+        async with self._get_ssh_tunnel(server) as local_port:
             # Use SSH tunnel port if available
             if local_port:
                 host = "127.0.0.1"
                 port = local_port
             else:
-                host = server["host"]
-                port = server.get("port", self._get_default_port())
+                host = selected_server.host
+                port = selected_server.port
 
                 # For direct connections, if port is HTTP (8123/8443), convert to native
                 if port == 8123:
@@ -117,7 +113,7 @@ class ClickHouseCLIConnector(BaseCLIConnector):
                 truncated = False
 
                 loop = asyncio.get_event_loop()
-                deadline = loop.time() + self.connection_timeout + self.query_timeout
+                deadline = loop.time() + self.query_timeout
 
                 async def read_line_with_timeout():
                     remaining = deadline - loop.time()
@@ -153,7 +149,10 @@ class ClickHouseCLIConnector(BaseCLIConnector):
                     with suppress(asyncio.CancelledError):
                         stderr_task.cancel()
                         await stderr_task
-                    raise asyncio.TimeoutError(f"Query execution timed out after {self.query_timeout}s")
+                    # Wait for process to clean up subprocess transport
+                    with suppress(asyncio.TimeoutError):
+                        await asyncio.wait_for(process.wait(), timeout=1.0)
+                    raise TimeoutError(f"clickhouse-client: Query timeout after {self.query_timeout}s")
 
                 if truncated and process.returncode is None:
                     process.kill()
@@ -170,7 +169,10 @@ class ClickHouseCLIConnector(BaseCLIConnector):
                 else:
                     stderr = stderr_task.result()
 
-                if process.returncode != 0 and not truncated:
+                returncode = process.returncode
+                if returncode is None:
+                    logger.debug("clickhouse-client process still running after wait(); treating as successful termination")
+                if returncode not in (0, None) and not truncated:
                     error_msg = stderr.decode() if stderr else "Unknown error"
                     logger.error(f"clickhouse-client error: {error_msg}")
                     raise RuntimeError(f"clickhouse-client: {error_msg}")
@@ -190,6 +192,9 @@ class ClickHouseCLIConnector(BaseCLIConnector):
 
             except FileNotFoundError:
                 raise FileNotFoundError("clickhouse-client: command not found. Please install ClickHouse client tools.")
+            except asyncio.TimeoutError as exc:
+                logger.error(f"Query execution error: {exc}")
+                raise
             except Exception as e:
                 logger.error(f"Query execution error: {e}")
                 # Re-raise with clickhouse-client prefix if not already prefixed

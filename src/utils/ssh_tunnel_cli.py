@@ -20,15 +20,24 @@ class CLISSHTunnel:
 
     DEFAULT_SSH_TIMEOUT = 5  # seconds
 
-    def __init__(self, config: Dict[str, Any]):
-        self.ssh_host = config.get("host", "localhost")
-        self.ssh_port = config.get("port", 22)
-        self.ssh_user = config.get("user")
-        self.remote_host = config.get("remote_host", "localhost")
-        self.remote_port = config.get("remote_port", 5432)
-        self.ssh_key = config.get("private_key")  # Optional SSH key file path
-        self.ssh_password = config.get("password")  # Optional password (requires sshpass)
-        self.ssh_timeout = config.get("ssh_timeout", self.DEFAULT_SSH_TIMEOUT)
+    def __init__(self, ssh_config, remote_host: str, remote_port: int):
+        """
+        Initialize CLI SSH tunnel.
+
+        Args:
+            ssh_config: SSHTunnelConfig object (from config module)
+            remote_host: Remote database host to tunnel to
+            remote_port: Remote database port to tunnel to
+        """
+        self.ssh_config = ssh_config
+        self.ssh_host = ssh_config.host
+        self.ssh_user = ssh_config.user
+        self.ssh_port = ssh_config.port
+        self.remote_host = remote_host
+        self.remote_port = remote_port
+        self.ssh_key = ssh_config.private_key
+        self.ssh_password = ssh_config.password
+        self.ssh_timeout = ssh_config.ssh_timeout or self.DEFAULT_SSH_TIMEOUT
         self.ssh_process = None
         self.local_port = None
 

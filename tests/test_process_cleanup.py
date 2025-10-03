@@ -13,8 +13,9 @@ from src.connectors.clickhouse.cli import ClickHouseCLIConnector
 @pytest.mark.anyio
 async def test_postgresql_cli_process_cleanup_on_timeout():
     """Test that psql process is killed when timeout occurs"""
+    from conftest import make_connection
 
-    config = {
+    config = make_connection({
         "connection_name": "test_postgres",
         "type": "postgresql",
         "servers": [{"host": "localhost", "port": 5432}],
@@ -22,7 +23,7 @@ async def test_postgresql_cli_process_cleanup_on_timeout():
         "username": "testuser",
         "password": "testpass",
         "query_timeout": 0.1  # Very short timeout to trigger cancellation
-    }
+    })
 
     connector = PostgreSQLCLIConnector(config)
 
@@ -72,8 +73,9 @@ async def test_postgresql_cli_process_cleanup_on_timeout():
 @pytest.mark.anyio
 async def test_clickhouse_cli_process_cleanup_on_timeout():
     """Test that clickhouse-client process is killed when timeout occurs"""
+    from conftest import make_connection
 
-    config = {
+    config = make_connection({
         "connection_name": "test_clickhouse",
         "type": "clickhouse",
         "servers": [{"host": "localhost", "port": 9000}],
@@ -81,7 +83,7 @@ async def test_clickhouse_cli_process_cleanup_on_timeout():
         "username": "testuser",
         "password": "testpass",
         "query_timeout": 0.1  # Very short timeout
-    }
+    })
 
     connector = ClickHouseCLIConnector(config)
 

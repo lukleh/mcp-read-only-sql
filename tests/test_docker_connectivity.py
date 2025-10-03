@@ -21,25 +21,27 @@ def test_connections():
 @pytest.fixture
 def postgres_conn(test_connections):
     """Get PostgreSQL test connection"""
+    from conftest import make_connection
     config = next((c for c in test_connections if c["connection_name"] == "test_postgres"), None)
     if not config:
         pytest.skip("test_postgres connection not configured")
     # Ensure password is set for tests
     if not config.get("password"):
         config["password"] = "testpass"
-    return PostgreSQLPythonConnector(config)
+    return PostgreSQLPythonConnector(make_connection(config))
 
 
 @pytest.fixture
 def clickhouse_conn(test_connections):
     """Get ClickHouse test connection"""
+    from conftest import make_connection
     config = next((c for c in test_connections if c["connection_name"] == "test_clickhouse"), None)
     if not config:
         pytest.skip("test_clickhouse connection not configured")
     # Ensure password is set for tests
     if not config.get("password"):
         config["password"] = "testpass"
-    return ClickHousePythonConnector(config)
+    return ClickHousePythonConnector(make_connection(config))
 
 
 @pytest.mark.docker

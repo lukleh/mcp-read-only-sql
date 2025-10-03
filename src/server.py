@@ -11,7 +11,12 @@ from typing import Any, Dict, List, Optional
 
 from mcp.server.fastmcp import FastMCP
 
-from .config.parser import ConfigParser
+from .config import load_connections
+from .config.connection import (
+    DEFAULT_QUERY_TIMEOUT,
+    DEFAULT_CONNECTION_TIMEOUT,
+    DEFAULT_MAX_RESULT_BYTES,
+)
 from .connectors.base import BaseConnector
 from .connectors.postgresql.python import PostgreSQLPythonConnector
 from .connectors.postgresql.cli import PostgreSQLCLIConnector
@@ -20,6 +25,26 @@ from .connectors.clickhouse.cli import ClickHouseCLIConnector
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+def _display_hosts_for_connector(connector: BaseConnector) -> List[str]:
+    """Return unique display hostnames for a connector."""
+    servers: List[str] = []
+    local_hosts = {"localhost", "127.0.0.1", "::1"}
+
+    for server in connector.connection.servers:
+        host = server.host
+        display_host = host
+
+        if connector.ssh_config and host in local_hosts:
+            ssh_host = connector.ssh_config.host
+            if ssh_host:
+                display_host = ssh_host
+
+        if display_host not in servers:
+            servers.append(display_host)
+
+    return servers
 
 
 class ReadOnlySQLServer:
@@ -41,56 +66,54 @@ class ReadOnlySQLServer:
 
     def _load_connections(self):
         """Load all connections from config file"""
-        parser = ConfigParser(self.config_path)
-        config = parser.load_config()
+        try:
+            # Load and validate all connections
+            connections_config = load_connections(self.config_path)
 
-        errors = []
+            errors = []
 
-        for conn_config in config:
-            conn_name = conn_config["connection_name"]
-            conn_type = conn_config["type"]
-            implementation = conn_config.get("implementation", "cli")
+            # Create connectors from validated Connection objects
+            for conn_name, connection in connections_config.items():
+                try:
+                    if connection.db_type == "postgresql":
+                        if connection.implementation == "cli":
+                            self.connections[conn_name] = PostgreSQLCLIConnector(connection)
+                        else:
+                            self.connections[conn_name] = PostgreSQLPythonConnector(connection)
+                    elif connection.db_type == "clickhouse":
+                        if connection.implementation == "cli":
+                            self.connections[conn_name] = ClickHouseCLIConnector(connection)
+                        else:
+                            self.connections[conn_name] = ClickHousePythonConnector(connection)
 
-            try:
-                if conn_type == "postgresql":
-                    if implementation == "cli":
-                        self.connections[conn_name] = PostgreSQLCLIConnector(conn_config)
-                    else:
-                        self.connections[conn_name] = PostgreSQLPythonConnector(conn_config)
-                elif conn_type == "clickhouse":
-                    if implementation == "cli":
-                        self.connections[conn_name] = ClickHouseCLIConnector(conn_config)
-                    else:
-                        self.connections[conn_name] = ClickHousePythonConnector(conn_config)
-                else:
-                    errors.append(f"  - {conn_name}: Unknown type '{conn_type}' (must be 'postgresql' or 'clickhouse')")
-                    continue
+                    logger.info(f"Loaded connection: {conn_name} ({connection.db_type}, {connection.implementation})")
 
-                logger.info(f"Loaded connection: {conn_name} ({conn_type}, {implementation})")
+                except ImportError as e:
+                    errors.append(f"  - {conn_name}: Missing dependency - {e}")
+                except Exception as e:
+                    errors.append(f"  - {conn_name}: {e}")
 
-            except ImportError as e:
-                errors.append(f"  - {conn_name}: Missing dependency - {e}")
-            except ValueError as e:
-                errors.append(f"  - {conn_name}: Configuration error - {e}")
-            except Exception as e:
-                errors.append(f"  - {conn_name}: {e}")
+            if errors:
+                error_msg = "Failed to load some connections:\n" + "\n".join(errors)
+                logger.error(error_msg)
+                raise RuntimeError(error_msg)
 
-        if errors:
-            error_msg = "Failed to load connections:\n" + "\n".join(errors)
-            logger.error(error_msg)
-            raise RuntimeError(error_msg)
+        except Exception as e:
+            logger.error(f"Failed to load connections: {e}")
+            raise
 
     def _setup_tools(self):
         """Setup MCP tools using FastMCP decorators"""
 
         @self.mcp.tool()
-        async def run_query_read_only(connection_name: str, query: str) -> str:
+        async def run_query_read_only(connection_name: str, query: str, server: Optional[str] = None) -> str:
             """
             Execute a read-only SQL statement on a configured connection.
 
             Args:
                 connection_name: Identifier returned by list_connections
                 query: SQL text that must remain read-only
+                server: Optional hostname to target a specific server.
 
             Returns:
                 TSV string where the first line contains column headers and
@@ -103,7 +126,7 @@ class ReadOnlySQLServer:
             connector = self.connections[connection_name]
             # Use the hard timeout wrapper to prevent hanging
             # This will return TSV string on success or raise exception on error
-            result = await connector.execute_query_with_timeout(query)
+            result = await connector.execute_query_with_timeout(query, server=server)
             return result
 
         @self.mcp.tool()
@@ -113,56 +136,33 @@ class ReadOnlySQLServer:
 
             Returns:
                 TSV string with header columns: name, type, description, servers, database, user.
-                Servers are comma-separated host:port pairs showing the resolved database
-                endpoints (SSH/VPN adjustments applied) loaded at startup.
+                Servers are comma-separated hostnames showing the resolved database endpoints
+                (SSH/VPN adjustments applied) loaded at startup.
             """
             conn_list = []
 
             for conn_name, connector in self.connections.items():
-                conn_type = connector.config.get("type", "unknown")
-                implementation = connector.config.get("implementation", "cli")
+                # Type is required - if connector exists, it must have a type
+                conn_type = connector.connection.db_type
+                implementation = connector.connection.implementation
 
-                servers = []
-                local_hosts = {"localhost", "127.0.0.1", "::1"}
-                for server in connector.config.get("servers", []):
-                    if isinstance(server, dict):
-                        host = server.get("host")
-                        port = server.get("port")
-                    else:
-                        host = server
-                        port = None
-
-                    display_host = host
-                    if connector.ssh_config and host in local_hosts:
-                        ssh_host = connector.ssh_config.get("remote_host") or connector.ssh_config.get("host")
-                        if ssh_host:
-                            display_host = ssh_host
-
-                    if conn_type == "clickhouse" and port is not None:
-                        if implementation == "python":
-                            effective_port = 8123 if port == 9000 else 8443 if port == 9440 else port
-                        else:
-                            effective_port = 9000 if port == 8123 else 9440 if port == 8443 else port
-                    else:
-                        effective_port = port if port is not None else connector._get_default_port()
-
-                    servers.append(f"{display_host}:{effective_port}")
+                servers = _display_hosts_for_connector(connector)
 
                 conn_info = {
                     "name": conn_name,
                     "type": conn_type,
-                    "description": connector.config.get("description", ""),
+                    "description": connector.connection.description or "",
                     "servers": servers,
                     "database": connector.database,
                     "user": connector.username or ""
                 }
 
                 # Add security limits if configured
-                if connector.query_timeout != connector.DEFAULT_QUERY_TIMEOUT:
+                if connector.query_timeout != DEFAULT_QUERY_TIMEOUT:
                     conn_info["query_timeout"] = connector.query_timeout
-                if connector.connection_timeout != connector.DEFAULT_CONNECTION_TIMEOUT:
+                if connector.connection_timeout != DEFAULT_CONNECTION_TIMEOUT:
                     conn_info["connection_timeout"] = connector.connection_timeout
-                if connector.max_result_bytes != connector.DEFAULT_MAX_RESULT_BYTES:
+                if connector.max_result_bytes != DEFAULT_MAX_RESULT_BYTES:
                     conn_info["max_result_bytes"] = connector.max_result_bytes
 
                 conn_list.append(conn_info)

@@ -27,7 +27,8 @@ class TestCLISSHTunnels:
 
     async def test_postgresql_cli_with_ssh_tunnel(self):
         """Test PostgreSQL CLI connector through SSH tunnel"""
-        config = {
+        from conftest import make_connection
+        config = make_connection({
             "connection_name": "pg_cli_ssh",
             "type": "postgresql",
             "servers": [{"host": "mcp-postgres-private", "port": 5432}],
@@ -41,7 +42,7 @@ class TestCLISSHTunnels:
                 "user": "tunnel",
                 "private_key": "/tmp/docker_test_key"  # Use key instead of password for CLI
             }
-        }
+        })
         connector = PostgreSQLCLIConnector(config)
 
         # Execute query through SSH tunnel
@@ -58,7 +59,8 @@ class TestCLISSHTunnels:
         if shutil.which("sshpass") is None:
             pytest.skip("sshpass not installed; skipping CLI password tunnel test")
 
-        config = {
+        from conftest import make_connection
+        config = make_connection({
             "connection_name": "pg_cli_ssh_password",
             "type": "postgresql",
             "servers": [{"host": "mcp-postgres-private", "port": 5432}],
@@ -72,7 +74,7 @@ class TestCLISSHTunnels:
                 "user": "tunnel",
                 "password": "tunnelpass"
             }
-        }
+        })
 
         connector = PostgreSQLCLIConnector(config)
         result = await connector.execute_query("SELECT COUNT(*) as count FROM users")
@@ -85,7 +87,8 @@ class TestCLISSHTunnels:
 
     async def test_clickhouse_cli_with_ssh_tunnel(self):
         """Test ClickHouse CLI connector through SSH tunnel"""
-        config = {
+        from conftest import make_connection
+        config = make_connection({
             "connection_name": "ch_cli_ssh",
             "type": "clickhouse",
             "servers": [{"host": "mcp-clickhouse-private", "port": 9000}],
@@ -99,7 +102,7 @@ class TestCLISSHTunnels:
                 "user": "tunnel",
                 "private_key": "/tmp/docker_test_key"
             }
-        }
+        })
         connector = ClickHouseCLIConnector(config)
 
         # Execute query through SSH tunnel
@@ -113,7 +116,8 @@ class TestCLISSHTunnels:
 
     async def test_cli_ssh_tunnel_cleanup(self):
         """Test that SSH tunnels are properly cleaned up after use"""
-        config = {
+        from conftest import make_connection
+        config = make_connection({
             "connection_name": "pg_cli_ssh_cleanup",
             "type": "postgresql",
             "servers": [{"host": "mcp-postgres-private", "port": 5432}],
@@ -127,7 +131,7 @@ class TestCLISSHTunnels:
                 "user": "tunnel",
                 "private_key": "/tmp/docker_test_key"
             }
-        }
+        })
         connector = PostgreSQLCLIConnector(config)
 
         # Execute multiple queries to ensure tunnel reuse works
@@ -144,7 +148,8 @@ class TestCLISSHTunnels:
 
     async def test_cli_ssh_with_wrong_credentials(self):
         """Test CLI connector handles SSH authentication failure gracefully"""
-        config = {
+        from conftest import make_connection
+        config = make_connection({
             "connection_name": "bad_ssh_cli",
             "type": "postgresql",
             "servers": [{"host": "mcp-postgres-private", "port": 5432}],
@@ -158,7 +163,7 @@ class TestCLISSHTunnels:
                 "user": "wronguser",
                 "password": "wrongpass"
             }
-        }
+        })
         connector = PostgreSQLCLIConnector(config)
 
         # SSH authentication should fail, raising an exception
@@ -172,7 +177,8 @@ class TestCLISSHTunnels:
 
     async def test_cli_ssh_disabled(self):
         """Test CLI connectors work normally when SSH is disabled"""
-        config = {
+        from conftest import make_connection
+        config = make_connection({
             "connection_name": "no_ssh_cli",
             "type": "postgresql",
             "servers": [{"host": "localhost", "port": 5432}],
@@ -186,7 +192,7 @@ class TestCLISSHTunnels:
                 "user": "tunnel",
                 "password": "tunnelpass"
             }
-        }
+        })
         connector = PostgreSQLCLIConnector(config)
 
         # Should connect directly without SSH
@@ -200,7 +206,8 @@ class TestCLISSHTunnels:
 
     async def test_cli_ssh_complex_query(self):
         """Test complex queries work through CLI SSH tunnel"""
-        config = {
+        from conftest import make_connection
+        config = make_connection({
             "connection_name": "complex_ssh_cli",
             "type": "postgresql",
             "servers": [{"host": "mcp-postgres-private", "port": 5432}],
@@ -214,7 +221,7 @@ class TestCLISSHTunnels:
                 "user": "tunnel",
                 "private_key": "/tmp/docker_test_key"
             }
-        }
+        })
         connector = PostgreSQLCLIConnector(config)
 
         # Complex query with joins and aggregations
