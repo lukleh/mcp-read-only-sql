@@ -61,15 +61,20 @@ class BaseConnector(ABC):
         self.max_result_bytes = config.get("max_result_bytes", self.DEFAULT_MAX_RESULT_BYTES)
 
     @asynccontextmanager
-    async def _get_ssh_tunnel(self):
-        """Context manager for SSH tunnel"""
+    async def _get_ssh_tunnel(self, server: Optional[str] = None):
+        """
+        Context manager for SSH tunnel
+
+        Args:
+            server: Optional server specification to tunnel to
+        """
         if self.ssh_config and self.ssh_config.get("enabled", True):
             # Get the server to connect to
-            server = self._select_server()
+            selected_server = self._select_server(server)
             # Add remote host/port to SSH config
             ssh_config = self.ssh_config.copy()
-            ssh_config["remote_host"] = server["host"]
-            ssh_config["remote_port"] = server["port"]
+            ssh_config["remote_host"] = selected_server["host"]
+            ssh_config["remote_port"] = selected_server["port"]
 
             tunnel = SSHTunnel(ssh_config)
             local_port = await tunnel.start()
@@ -80,11 +85,54 @@ class BaseConnector(ABC):
         else:
             yield None
 
-    def _select_server(self) -> Dict[str, Any]:
-        """Get the first server from the list"""
+    def _select_server(self, server: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Select a server from the configured list.
+
+        Args:
+            server: Optional server specification in format "host:port" or "host".
+                   If None, uses the first server in the list.
+
+        Returns:
+            Dict with 'host' and 'port' keys
+
+        Raises:
+            ValueError: If specified server is not found in configured servers
+        """
         if not self.servers:
             return {"host": "localhost", "port": self._get_default_port()}
-        return self.servers[0]  # Always use the first server
+
+        # If no server specified, use first one (default behavior)
+        if server is None:
+            return self.servers[0]
+
+        # Parse the server specification
+        if ':' in server:
+            requested_host, requested_port = server.rsplit(':', 1)
+            try:
+                requested_port = int(requested_port)
+            except ValueError:
+                raise ValueError(f"Invalid port in server specification: {server}")
+        else:
+            requested_host = server
+            requested_port = None
+
+        # Find matching server in configured list
+        for srv in self.servers:
+            srv_host = srv["host"]
+            srv_port = srv["port"]
+
+            # Match by host and port (if port specified)
+            if srv_host == requested_host:
+                if requested_port is None or srv_port == requested_port:
+                    return srv
+
+        # No match found
+        available = [f"{s['host']}:{s['port']}" for s in self.servers]
+        raise ValueError(
+            f"Server '{server}' not found in connection '{self.name}'. "
+            f"Available servers: {', '.join(available)}"
+        )
 
     def _get_default_port(self) -> int:
         """Get default port for the database type"""
@@ -118,26 +166,38 @@ class BaseConnector(ABC):
 
         return size
 
-    async def execute_query_with_timeout(self, query: str, database: Optional[str] = None) -> str:
+    async def execute_query_with_timeout(self, query: str, database: Optional[str] = None, server: Optional[str] = None) -> str:
         """
         Execute a query with hard timeout protection.
 
         This method wraps the actual execute_query implementation with a hard timeout
         to prevent the MCP server from hanging indefinitely.
 
+        Args:
+            query: SQL query to execute
+            database: Optional database to use (overrides configured database)
+            server: Optional server specification (format "host:port" or "host")
+
         Returns TSV string on success, raises exception on error.
         """
         # Call the actual implementation with hard timeout
         result = await with_hard_timeout(
-            self.execute_query(query, database),
+            self.execute_query(query, database, server),
             self.hard_timeout,
             f"execute_query({query[:50]}...)"
         )
         return result
 
     @abstractmethod
-    async def execute_query(self, query: str, database: Optional[str] = None) -> str:
-        """Execute a read-only query and return TSV results (implementation-specific)"""
+    async def execute_query(self, query: str, database: Optional[str] = None, server: Optional[str] = None) -> str:
+        """
+        Execute a read-only query and return TSV results (implementation-specific)
+
+        Args:
+            query: SQL query to execute
+            database: Optional database to use (overrides configured database)
+            server: Optional server specification (format "host:port" or "host")
+        """
         pass
 
     async def test_connection(self) -> bool:

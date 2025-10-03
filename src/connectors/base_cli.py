@@ -21,8 +21,13 @@ class BaseCLIConnector(BaseConnector):
         self._ssh_tunnel = None
 
     @asynccontextmanager
-    async def _get_ssh_tunnel(self):
-        """Context manager for SSH tunnel using system SSH"""
+    async def _get_ssh_tunnel(self, server: Optional[str] = None):
+        """
+        Context manager for SSH tunnel using system SSH
+
+        Args:
+            server: Optional server specification to tunnel to
+        """
         if self.ssh_config and self.ssh_config.get("enabled", True):
             if "password" in self.ssh_config and "private_key" in self.ssh_config:
                 logger.info(
@@ -30,12 +35,12 @@ class BaseCLIConnector(BaseConnector):
                 )
 
             # Get the server to connect to
-            server = self._select_server()
+            selected_server = self._select_server(server)
 
             # Add remote host/port to SSH config
             ssh_config = self.ssh_config.copy()
-            ssh_config["remote_host"] = server["host"]
-            ssh_config["remote_port"] = server["port"]
+            ssh_config["remote_host"] = selected_server["host"]
+            ssh_config["remote_port"] = selected_server["port"]
 
             tunnel = CLISSHTunnel(ssh_config)
             local_port = await tunnel.start()

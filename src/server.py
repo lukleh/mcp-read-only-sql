@@ -84,13 +84,15 @@ class ReadOnlySQLServer:
         """Setup MCP tools using FastMCP decorators"""
 
         @self.mcp.tool()
-        async def run_query_read_only(connection_name: str, query: str) -> str:
+        async def run_query_read_only(connection_name: str, query: str, server: Optional[str] = None) -> str:
             """
             Execute a read-only SQL statement on a configured connection.
 
             Args:
                 connection_name: Identifier returned by list_connections
                 query: SQL text that must remain read-only
+                server: Optional server specification in format "host:port" or "host".
+                       If not provided, uses the first server in the connection's list.
 
             Returns:
                 TSV string where the first line contains column headers and
@@ -103,7 +105,7 @@ class ReadOnlySQLServer:
             connector = self.connections[connection_name]
             # Use the hard timeout wrapper to prevent hanging
             # This will return TSV string on success or raise exception on error
-            result = await connector.execute_query_with_timeout(query)
+            result = await connector.execute_query_with_timeout(query, server=server)
             return result
 
         @self.mcp.tool()

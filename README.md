@@ -110,9 +110,15 @@ Execute read-only SQL queries on configured databases.
 ```json
 {
   "connection_name": "my_postgres",
-  "query": "SELECT * FROM users LIMIT 10"
+  "query": "SELECT * FROM users LIMIT 10",
+  "server": "db2.example.com:5432"
 }
 ```
+
+**Parameters:**
+- `connection_name` (required): Identifier returned by list_connections
+- `query` (required): SQL text that must remain read-only
+- `server` (optional): Server specification in format "host:port" or "host". If not provided, uses the first server in the connection's list.
 
 **Returns:** Tab-separated text (TSV) with a header row followed by data rows.
 The structured MCP payload mirrors the same TSV string. If results exceed

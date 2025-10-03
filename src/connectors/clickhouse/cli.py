@@ -18,15 +18,15 @@ class ClickHouseCLIConnector(BaseCLIConnector):
         return 9000
 
     @asynccontextmanager
-    async def _get_ssh_tunnel(self):
+    async def _get_ssh_tunnel(self, server: Optional[str] = None):
         """Override SSH tunnel to ensure we tunnel to native port for clickhouse-client"""
         if self.ssh_config and self.ssh_config.get("enabled", True):
             # Get the server to connect to
-            server = self._select_server()
+            selected_server = self._select_server(server)
 
             # For ClickHouse CLI, we need native port (9000), not HTTP port (8123)
             # If config specifies port 8123, change it to 9000 for the SSH tunnel
-            remote_port = server["port"]
+            remote_port = selected_server["port"]
             if remote_port == 8123:
                 logger.debug(f"Changing SSH tunnel remote port from 8123 to 9000 for clickhouse-client")
                 remote_port = 9000
@@ -36,7 +36,7 @@ class ClickHouseCLIConnector(BaseCLIConnector):
 
             # Add remote host/port to SSH config
             ssh_config = self.ssh_config.copy()
-            ssh_config["remote_host"] = server["host"]
+            ssh_config["remote_host"] = selected_server["host"]
             ssh_config["remote_port"] = remote_port
 
             tunnel = CLISSHTunnel(ssh_config)
@@ -48,18 +48,18 @@ class ClickHouseCLIConnector(BaseCLIConnector):
         else:
             yield None
 
-    async def execute_query(self, query: str, database: Optional[str] = None) -> str:
+    async def execute_query(self, query: str, database: Optional[str] = None, server: Optional[str] = None) -> str:
         """Execute a read-only query using clickhouse-client and return raw TSV output"""
-        server = self._select_server()
+        selected_server = self._select_server(server)
 
-        async with self._get_ssh_tunnel() as local_port:
+        async with self._get_ssh_tunnel(server) as local_port:
             # Use SSH tunnel port if available
             if local_port:
                 host = "127.0.0.1"
                 port = local_port
             else:
-                host = server["host"]
-                port = server.get("port", self._get_default_port())
+                host = selected_server["host"]
+                port = selected_server.get("port", self._get_default_port())
 
                 # For direct connections, if port is HTTP (8123/8443), convert to native
                 if port == 8123:
