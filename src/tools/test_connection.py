@@ -45,6 +45,7 @@ async def test_connection(config_path: str, connection_name: Optional[str] = Non
             name = conn_config.get("connection_name", "unknown")
             db_type = conn_config.get("type", "unknown")
             impl = conn_config.get("implementation", "cli")
+            servers = conn_config.get("servers", [])
 
             print(f"Testing connection: {name}")
             print(f"  Type: {db_type}")
@@ -53,61 +54,89 @@ async def test_connection(config_path: str, connection_name: Optional[str] = Non
             if conn_config.get("ssh_tunnel"):
                 print(f"  SSH Tunnel: {conn_config['ssh_tunnel'].get('host', 'unknown')}")
 
-            # Select connector
-            connector = None
-            try:
-                if db_type == "postgresql":
-                    if impl == "python":
-                        connector = PostgreSQLPythonConnector(conn_config)
+            # Get list of servers to test
+            servers_to_test = []
+            if servers:
+                for server in servers:
+                    if isinstance(server, dict):
+                        servers_to_test.append(f"{server['host']}:{server['port']}")
                     else:
-                        connector = PostgreSQLCLIConnector(conn_config)
-                elif db_type == "clickhouse":
-                    if impl == "python":
-                        connector = ClickHousePythonConnector(conn_config)
-                    else:
-                        connector = ClickHouseCLIConnector(conn_config)
+                        servers_to_test.append(server)
+            else:
+                servers_to_test.append("default")
+
+            print(f"  Servers: {', '.join(servers_to_test)}")
+            print()
+
+            # Test each server
+            for i, server_spec in enumerate(servers_to_test, 1):
+                if len(servers_to_test) > 1:
+                    print(f"  [{i}/{len(servers_to_test)}] Testing server: {server_spec}")
                 else:
-                    print(f"  ❌ Unknown database type: {db_type}")
+                    print(f"  Testing server: {server_spec}")
+
+                # Select connector
+                connector = None
+                try:
+                    if db_type == "postgresql":
+                        if impl == "python":
+                            connector = PostgreSQLPythonConnector(conn_config)
+                        else:
+                            connector = PostgreSQLCLIConnector(conn_config)
+                    elif db_type == "clickhouse":
+                        if impl == "python":
+                            connector = ClickHousePythonConnector(conn_config)
+                        else:
+                            connector = ClickHouseCLIConnector(conn_config)
+                    else:
+                        print(f"    ❌ Unknown database type: {db_type}")
+                        all_success = False
+                        continue
+
+                    # Test with a simple query, using server parameter if not default
+                    if db_type == "postgresql":
+                        if server_spec != "default":
+                            result = await connector.execute_query("SELECT version()", server=server_spec)
+                        else:
+                            result = await connector.execute_query("SELECT version()")
+                    else:  # clickhouse
+                        if server_spec != "default":
+                            result = await connector.execute_query("SELECT version()", server=server_spec)
+                        else:
+                            result = await connector.execute_query("SELECT version()")
+
+                    # Parse result to show version
+                    lines = result.strip().split('\n')
+                    if len(lines) > 1:
+                        version_line = lines[1].strip()  # Skip header
+                        print(f"    ✅ Connected successfully")
+                        print(f"    Database version: {version_line}")
+                    else:
+                        print(f"    ✅ Connected successfully")
+
+                except FileNotFoundError as e:
+                    print(f"    ❌ CLI tool not found: {e}")
                     all_success = False
-                    continue
+                except TimeoutError as e:
+                    print(f"    ❌ Connection timeout: {e}")
+                    all_success = False
+                except Exception as e:
+                    error_msg = str(e)
+                    # Clean up error messages
+                    if "password authentication failed" in error_msg.lower():
+                        print(f"    ❌ Authentication failed - check username/password")
+                    elif "could not connect" in error_msg.lower() or "connection refused" in error_msg.lower():
+                        print(f"    ❌ Cannot connect to server - check host/port")
+                    elif "database" in error_msg.lower() and "does not exist" in error_msg.lower():
+                        print(f"    ❌ Database not found - check database name")
+                    elif "read-only" in error_msg.lower():
+                        # This is actually success - we connected but query was blocked
+                        print(f"    ✅ Connected successfully (read-only enforcement working)")
+                    else:
+                        print(f"    ❌ Connection failed: {error_msg[:200]}")
+                    all_success = False
 
-                # Test with a simple query
-                print("  Testing query...")
-                if db_type == "postgresql":
-                    result = await connector.execute_query("SELECT version()")
-                else:  # clickhouse
-                    result = await connector.execute_query("SELECT version()")
-
-                # Parse result to show version
-                lines = result.strip().split('\n')
-                if len(lines) > 1:
-                    version_line = lines[1].strip()  # Skip header
-                    print(f"  ✅ Connected successfully")
-                    print(f"  Database version: {version_line}")
-                else:
-                    print(f"  ✅ Connected successfully")
-
-            except FileNotFoundError as e:
-                print(f"  ❌ CLI tool not found: {e}")
-                all_success = False
-            except TimeoutError as e:
-                print(f"  ❌ Connection timeout: {e}")
-                all_success = False
-            except Exception as e:
-                error_msg = str(e)
-                # Clean up error messages
-                if "password authentication failed" in error_msg.lower():
-                    print(f"  ❌ Authentication failed - check username/password")
-                elif "could not connect" in error_msg.lower() or "connection refused" in error_msg.lower():
-                    print(f"  ❌ Cannot connect to server - check host/port")
-                elif "database" in error_msg.lower() and "does not exist" in error_msg.lower():
-                    print(f"  ❌ Database not found - check database name")
-                elif "read-only" in error_msg.lower():
-                    # This is actually success - we connected but query was blocked
-                    print(f"  ✅ Connected successfully (read-only enforcement working)")
-                else:
-                    print(f"  ❌ Connection failed: {error_msg[:200]}")
-                all_success = False
+                print()
 
             print()
 
