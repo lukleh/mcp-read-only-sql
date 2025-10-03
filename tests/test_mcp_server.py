@@ -260,12 +260,9 @@ class TestServerParameter:
   type: postgresql
   implementation: cli
   servers:
-    - host: server1.example.com
-      port: 5432
-    - host: server2.example.com
-      port: 5432
-    - host: server3.example.com
-      port: 5433
+    - "server1.example.com:5432"
+    - "server2.example.com:5432"
+    - "server3.example.com:5433"
   db: testdb
   username: user
   password: pass
