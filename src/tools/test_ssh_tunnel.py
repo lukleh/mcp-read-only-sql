@@ -10,7 +10,7 @@ from typing import Optional
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from src.config.parser import ConfigParser
-from src.utils.ssh_tunnel import SSHTunnel
+from src.utils.ssh_tunnel_cli import CLISSHTunnel
 
 
 async def test_ssh_tunnels(config_path: str, connection_name: Optional[str] = None) -> bool:
@@ -100,7 +100,7 @@ async def test_ssh_tunnels(config_path: str, connection_name: Optional[str] = No
 
                 tunnel = None
                 try:
-                    tunnel = SSHTunnel(tunnel_config)
+                    tunnel = CLISSHTunnel(tunnel_config)
                     local_port = await tunnel.start()
 
                     print(f"    ✅ SSH tunnel established successfully")

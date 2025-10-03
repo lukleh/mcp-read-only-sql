@@ -63,13 +63,41 @@ class SSHTunnel:
                     "port": ssh_port,
                     "username": ssh_user,
                     "timeout": self.ssh_timeout,  # Use our SSH timeout for connection
+                    "look_for_keys": True,  # Allow using keys from ~/.ssh/
+                    "allow_agent": True,  # Allow using SSH agent
                 }
 
                 # Configure authentication
                 if "private_key" in self.config:
                     key_file = self.config["private_key"]
-                    # Load the private key - let exceptions propagate
-                    private_key = paramiko.RSAKey.from_private_key_file(key_file)
+                    # Auto-detect key type and load it
+                    # Try different key types in order (most common first)
+                    private_key = None
+                    key_load_errors = []
+
+                    # List of key types to try
+                    key_types = [paramiko.Ed25519Key, paramiko.ECDSAKey, paramiko.RSAKey]
+                    # Add DSSKey if it exists (removed in newer Paramiko versions)
+                    if hasattr(paramiko, 'DSSKey'):
+                        key_types.append(paramiko.DSSKey)
+
+                    for key_class in key_types:
+                        try:
+                            private_key = key_class.from_private_key_file(key_file)
+                            logger.debug(f"Loaded SSH key as {key_class.__name__}")
+                            break
+                        except paramiko.SSHException as e:
+                            key_load_errors.append(f"{key_class.__name__}: {e}")
+                            continue
+                        except Exception as e:
+                            # Catch any other exception (e.g., file format issues)
+                            key_load_errors.append(f"{key_class.__name__}: {e}")
+                            continue
+
+                    if private_key is None:
+                        error_details = "; ".join(key_load_errors)
+                        raise ValueError(f"Could not load SSH private key from {key_file}. Tried: {error_details}")
+
                     connect_kwargs["pkey"] = private_key
                 elif "password" in self.config:
                     connect_kwargs["password"] = self.config["password"]
