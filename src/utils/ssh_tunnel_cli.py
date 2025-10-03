@@ -21,9 +21,17 @@ class CLISSHTunnel:
     DEFAULT_SSH_TIMEOUT = 5  # seconds
 
     def __init__(self, config: Dict[str, Any]):
-        self.ssh_host = config.get("host", "localhost")
+        # Required fields
+        if "host" not in config:
+            raise ValueError("SSH tunnel configuration missing required field 'host'")
+        if "user" not in config:
+            raise ValueError("SSH tunnel configuration missing required field 'user'")
+
+        self.ssh_host = config["host"]
+        self.ssh_user = config["user"]
+
+        # Optional fields with defaults
         self.ssh_port = config.get("port", 22)
-        self.ssh_user = config.get("user")
         self.remote_host = config.get("remote_host", "localhost")
         self.remote_port = config.get("remote_port", 5432)
         self.ssh_key = config.get("private_key")  # Optional SSH key file path

@@ -121,7 +121,8 @@ class ReadOnlySQLServer:
             conn_list = []
 
             for conn_name, connector in self.connections.items():
-                conn_type = connector.config.get("type", "unknown")
+                # Type is required - if connector exists, it must have a type
+                conn_type = connector.config["type"]
                 implementation = connector.config.get("implementation", "cli")
 
                 servers = []
