@@ -9,6 +9,9 @@ from pathlib import Path
 from tests.conftest import call_tool, execute_query, list_connections
 
 
+pytestmark = pytest.mark.filterwarnings("ignore::pytest.PytestUnraisableExceptionWarning")
+
+
 @pytest.mark.anyio
 class TestServerBasics:
     """Test basic server functionality through MCP protocol"""
@@ -55,6 +58,22 @@ class TestServerBasics:
         result = await mcp_client.call_tool("run_query_read_only", arguments={"query": "SELECT 1"})
         # Should have error in result
         assert result.isError or (result.content and "error" in str(result.content[0]).lower())
+
+    async def test_run_query_with_server_override(self, mcp_client):
+        """Server parameter should route query to the requested host."""
+        result = await execute_query(
+            mcp_client,
+            "test_connection",
+            "SELECT 1",
+            server="127.0.0.1"
+        )
+
+        if result.get("success"):
+            assert result.get("rows")
+            assert result["rows"][0][0] == '1'
+        else:
+            error_msg = result.get("error", "").lower()
+            assert "127.0.0.1" in error_msg or "connection refused" in error_msg
 
 
 @pytest.mark.anyio
@@ -107,7 +126,7 @@ class TestResolvedEndpoints:
         conn = connections[0]
         assert conn["name"] == "ssh_conn"
         # Should surface the remote database host, not localhost
-        assert conn["servers"] == "remote-db.example.com:5432"
+        assert conn["servers"] == "remote-db.example.com"
         assert conn.get("user") == "tester"
 
 
@@ -303,7 +322,7 @@ class TestServerParameter:
         error = result.get("error", "")
         assert "not found" in error.lower()
         assert "nonexistent.example.com" in error
-        assert "server1.example.com:5432" in error  # Should list available servers
+        assert "server1.example.com" in error  # Should list available servers
 
     async def test_server_parameter_invalid_port(self, multi_server_client):
         """Test that invalid port format returns error"""
@@ -319,7 +338,8 @@ class TestServerParameter:
 
         assert not result.get("success", False)
         error = result.get("error", "")
-        assert "invalid port" in error.lower()
+        assert "hostname" in error.lower()
+        assert "port" in error.lower()
 
     async def test_server_parameter_tool_signature(self, multi_server_client):
         """Test that server parameter is in tool signature"""

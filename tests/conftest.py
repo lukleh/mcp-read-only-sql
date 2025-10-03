@@ -16,6 +16,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 from src.config import Connection
+from src.connectors.base import BaseConnector
 
 
 # Helper function to create Connection objects from dict configs
@@ -31,6 +32,24 @@ def make_connection(config_dict: Dict[str, Any]) -> Connection:
         Connection object
     """
     return Connection(config_dict)
+
+
+class RecordingConnector(BaseConnector):
+    """In-memory connector that records selected servers for assertions."""
+
+    def __init__(self, connection: Connection):
+        super().__init__(connection)
+        self.last_selected = None
+
+    async def execute_query(self, query: str, database=None, server=None) -> str:
+        selected = self._select_server(server)
+        self.last_selected = selected
+        return "ok"
+
+
+def make_recording_connector(config_dict: Dict[str, Any]) -> RecordingConnector:
+    """Convenience helper returning a RecordingConnector from a raw dict config."""
+    return RecordingConnector(make_connection(config_dict))
 
 
 # Common test config fixtures - return Connection objects
@@ -76,6 +95,7 @@ def test_config_file(tmp_path):
   implementation: cli
   servers:
     - "localhost:5432"
+    - "127.0.0.1:5432"
   db: testdb
   username: testuser
   password: testpass
@@ -288,7 +308,12 @@ async def call_tool(session: ClientSession, tool_name: str, arguments: Dict[str,
     return {"success": False, "error": "No result returned"}
 
 
-async def execute_query(session: ClientSession, connection_name: str, query: str) -> Dict[str, Any]:
+async def execute_query(
+    session: ClientSession,
+    connection_name: str,
+    query: str,
+    server: str | None = None,
+) -> Dict[str, Any]:
     """
     Helper to execute a SQL query.
 
@@ -300,10 +325,14 @@ async def execute_query(session: ClientSession, connection_name: str, query: str
     Returns:
         Query result as dict
     """
-    return await call_tool(session, "run_query_read_only", {
+    payload = {
         "connection_name": connection_name,
         "query": query
-    })
+    }
+    if server is not None:
+        payload["server"] = server
+
+    return await call_tool(session, "run_query_read_only", payload)
 
 
 async def list_connections(session: ClientSession) -> list:

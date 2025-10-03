@@ -79,8 +79,8 @@ class BaseConnector(ABC):
         Select a server from the configured list.
 
         Args:
-            server: Optional server specification in format "host:port" or "host".
-                   If None, uses the first server in the list.
+            server: Optional server hostname. If None or empty, uses the first server
+                   in the list.
 
         Returns:
             Server object
@@ -95,29 +95,45 @@ class BaseConnector(ABC):
         if server is None:
             return self.servers[0]
 
-        # Parse the server specification
-        if ':' in server:
-            requested_host, requested_port = server.rsplit(':', 1)
-            try:
-                requested_port = int(requested_port)
-            except ValueError:
-                raise ValueError(f"Invalid port in server specification: {server}")
-        else:
-            requested_host = server
-            requested_port = None
+        # Parse the server specification (hostnames only)
+        server_str = server.strip()
+        if not server_str:
+            return self.servers[0]
 
-        # Find matching server in configured list
+        requested_host = server_str
+
+        # Direct host match (supports IPv6 literals containing colons)
         for srv in self.servers:
-            # Match by host and port (if port specified)
             if srv.host == requested_host:
-                if requested_port is None or srv.port == requested_port:
-                    return srv
+                return srv
+
+        if ':' in server_str:
+            raise ValueError(
+                f"Server specification '{server_str}' must be a hostname without port"
+            )
+
+        # Allow SSH display host to map back to localhost-style canonical hosts
+        if self.ssh_config:
+            ssh_host = self.ssh_config.host
+            local_hosts = {"localhost", "127.0.0.1", "::1"}
+            if requested_host == ssh_host:
+                for srv in self.servers:
+                    if srv.host in local_hosts:
+                        return srv
 
         # No match found
-        available = [f"{s.host}:{s.port}" for s in self.servers]
+        available_hosts: List[str] = []
+        local_hosts = {"localhost", "127.0.0.1", "::1"}
+        for srv in self.servers:
+            display_host = srv.host
+            if self.ssh_config and srv.host in local_hosts and self.ssh_config.host:
+                display_host = self.ssh_config.host
+            if display_host not in available_hosts:
+                available_hosts.append(display_host)
+
         raise ValueError(
             f"Server '{server}' not found in connection '{self.name}'. "
-            f"Available servers: {', '.join(available)}"
+            f"Available servers: {', '.join(available_hosts)}"
         )
 
     def _get_default_port(self) -> int:
@@ -162,7 +178,7 @@ class BaseConnector(ABC):
         Args:
             query: SQL query to execute
             database: Optional database to use (overrides configured database)
-            server: Optional server specification (format "host:port" or "host")
+            server: Optional server hostname
 
         Returns TSV string on success, raises exception on error.
         """
@@ -182,7 +198,7 @@ class BaseConnector(ABC):
         Args:
             query: SQL query to execute
             database: Optional database to use (overrides configured database)
-            server: Optional server specification (format "host:port" or "host")
+            server: Optional server hostname
         """
         pass
 

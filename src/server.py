@@ -27,6 +27,26 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+def _display_hosts_for_connector(connector: BaseConnector) -> List[str]:
+    """Return unique display hostnames for a connector."""
+    servers: List[str] = []
+    local_hosts = {"localhost", "127.0.0.1", "::1"}
+
+    for server in connector.connection.servers:
+        host = server.host
+        display_host = host
+
+        if connector.ssh_config and host in local_hosts:
+            ssh_host = connector.ssh_config.host
+            if ssh_host:
+                display_host = ssh_host
+
+        if display_host not in servers:
+            servers.append(display_host)
+
+    return servers
+
+
 class ReadOnlySQLServer:
     """MCP Read-Only SQL Server using FastMCP"""
 
@@ -93,8 +113,7 @@ class ReadOnlySQLServer:
             Args:
                 connection_name: Identifier returned by list_connections
                 query: SQL text that must remain read-only
-                server: Optional server specification in format "host:port" or "host".
-                       If not provided, uses the first server in the connection's list.
+                server: Optional hostname to target a specific server.
 
             Returns:
                 TSV string where the first line contains column headers and
@@ -117,8 +136,8 @@ class ReadOnlySQLServer:
 
             Returns:
                 TSV string with header columns: name, type, description, servers, database, user.
-                Servers are comma-separated host:port pairs showing the resolved database
-                endpoints (SSH/VPN adjustments applied) loaded at startup.
+                Servers are comma-separated hostnames showing the resolved database endpoints
+                (SSH/VPN adjustments applied) loaded at startup.
             """
             conn_list = []
 
@@ -127,28 +146,7 @@ class ReadOnlySQLServer:
                 conn_type = connector.connection.db_type
                 implementation = connector.connection.implementation
 
-                servers = []
-                local_hosts = {"localhost", "127.0.0.1", "::1"}
-                for server in connector.connection.servers:
-                    # Server is now a Server object, not a dict
-                    host = server.host
-                    port = server.port
-
-                    display_host = host
-                    if connector.ssh_config and host in local_hosts:
-                        ssh_host = connector.ssh_config.host
-                        if ssh_host:
-                            display_host = ssh_host
-
-                    if conn_type == "clickhouse" and port is not None:
-                        if implementation == "python":
-                            effective_port = 8123 if port == 9000 else 8443 if port == 9440 else port
-                        else:
-                            effective_port = 9000 if port == 8123 else 9440 if port == 8443 else port
-                    else:
-                        effective_port = port if port is not None else connector._get_default_port()
-
-                    servers.append(f"{display_host}:{effective_port}")
+                servers = _display_hosts_for_connector(connector)
 
                 conn_info = {
                     "name": conn_name,
