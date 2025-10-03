@@ -149,6 +149,9 @@ class ClickHouseCLIConnector(BaseCLIConnector):
                     with suppress(asyncio.CancelledError):
                         stderr_task.cancel()
                         await stderr_task
+                    # Wait for process to clean up subprocess transport
+                    with suppress(asyncio.TimeoutError):
+                        await asyncio.wait_for(process.wait(), timeout=1.0)
                     raise TimeoutError(f"clickhouse-client: Query timeout after {self.query_timeout}s")
 
                 if truncated and process.returncode is None:
