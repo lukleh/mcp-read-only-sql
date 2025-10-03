@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from src.config.parser import ConfigParser
 from src.utils.ssh_tunnel_cli import CLISSHTunnel
+from src.utils.ssh_tunnel import SSHTunnel
 
 
 async def test_ssh_tunnels(config_path: str, connection_name: Optional[str] = None) -> bool:
@@ -50,10 +51,12 @@ async def test_ssh_tunnels(config_path: str, connection_name: Optional[str] = No
 
         for conn_config in ssh_connections:
             name = conn_config.get("connection_name", "unknown")
+            impl = conn_config.get("implementation", "cli")
             ssh_config = conn_config.get("ssh_tunnel")
             servers = conn_config.get("servers", [])
 
             print(f"Testing connection: {name}")
+            print(f"  Implementation: {impl}")
             print(f"  SSH Host: {ssh_config.get('host', 'unknown')}")
             print(f"  SSH User: {ssh_config.get('user', 'unknown')}")
             print(f"  SSH Port: {ssh_config.get('port', 22)}")
@@ -100,7 +103,11 @@ async def test_ssh_tunnels(config_path: str, connection_name: Optional[str] = No
 
                 tunnel = None
                 try:
-                    tunnel = CLISSHTunnel(tunnel_config)
+                    # Use the appropriate SSH tunnel implementation
+                    if impl == "python":
+                        tunnel = SSHTunnel(tunnel_config)
+                    else:
+                        tunnel = CLISSHTunnel(tunnel_config)
                     local_port = await tunnel.start()
 
                     print(f"    ✅ SSH tunnel established successfully")
