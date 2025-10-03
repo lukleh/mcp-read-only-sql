@@ -123,23 +123,23 @@ async def test_ssh_tunnels(config_path: str, connection_name: Optional[str] = No
                     error_msg = str(e)
                     # Clean up error messages
                     if "authentication" in error_msg.lower():
-                        print(f"    ❌ SSH authentication failed")
-                        if "private_key" in tunnel_config:
-                            print(f"    Check SSH key: {tunnel_config.get('private_key')}")
+                        print("    ❌ SSH authentication failed")
+                        if ssh_config.private_key:
+                            print(f"    Check SSH key: {ssh_config.private_key}")
                         else:
-                            print(f"    Check SSH password environment variable")
+                            print("    Check SSH password environment variable")
                     elif "refused" in error_msg.lower():
-                        print(f"    ❌ Connection refused by SSH server")
-                        print(f"    Check if SSH service is running on {ssh_config.get('host')}")
+                        print("    ❌ Connection refused by SSH server")
+                        print(f"    Check if SSH service is running on {ssh_config.host}")
                     elif "host key" in error_msg.lower():
-                        print(f"    ❌ Host key verification failed")
-                        print(f"    You may need to SSH to {ssh_config.get('host')} manually first")
+                        print("    ❌ Host key verification failed")
+                        print(f"    You may need to SSH to {ssh_config.host} manually first")
                     elif "unpack requires a buffer" in error_msg.lower():
-                        print(f"    ❌ SSH connection failed - network unreachable")
-                        print(f"    Check if you're connected to VPN or can reach {ssh_config.get('host')}")
+                        print("    ❌ SSH connection failed - network unreachable")
+                        print(f"    Check if you're connected to VPN or can reach {ssh_config.host}")
                     elif "no route to host" in error_msg.lower() or "network is unreachable" in error_msg.lower():
-                        print(f"    ❌ Network unreachable: {ssh_config.get('host')}")
-                        print(f"    Check VPN connection or network access")
+                        print(f"    ❌ Network unreachable: {ssh_config.host}")
+                        print("    Check VPN connection or network access")
                     else:
                         print(f"    ❌ SSH tunnel failed: {error_msg[:200]}")
                     all_success = False

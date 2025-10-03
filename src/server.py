@@ -76,6 +76,7 @@ class ReadOnlySQLServer:
             if errors:
                 error_msg = "Failed to load some connections:\n" + "\n".join(errors)
                 logger.error(error_msg)
+                raise RuntimeError(error_msg)
 
         except Exception as e:
             logger.error(f"Failed to load connections: {e}")

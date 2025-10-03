@@ -156,6 +156,7 @@ class Connection:
             raise ValueError("Connection configuration missing required field 'username'")
 
         # Validate type
+        conn_name = config["connection_name"]
         db_type = config["type"]
         if db_type not in ("postgresql", "clickhouse"):
             raise ValueError(f"Invalid database type: '{db_type}'. Must be 'postgresql' or 'clickhouse'")
@@ -178,7 +179,7 @@ class Connection:
         else:
             # Auto-detect password from environment using naming convention
             # DB_PASSWORD_{CONNECTION_NAME_UPPER_WITH_UNDERSCORES}
-            conn_name_env = config["connection_name"].upper().replace('-', '_')
+            conn_name_env = conn_name.upper().replace('-', '_')
             password_env_var = f"DB_PASSWORD_{conn_name_env}"
             password = env_dict.get(password_env_var, "")
             # Note: Empty password is allowed (for compatibility with existing configs)
@@ -194,9 +195,24 @@ class Connection:
 
         # Parse SSH tunnel if present
         ssh_tunnel = None
-        if "ssh_tunnel" in config:
+        if "ssh_tunnel" in config and config["ssh_tunnel"] is not None:
+            ssh_config_data = dict(config["ssh_tunnel"])
+
+            # If no private key is provided, attempt to hydrate password from the
+            # legacy SSH_PASSWORD_<CONNECTION_NAME> environment variable.
+            if not ssh_config_data.get("private_key"):
+                has_password_fields = any(
+                    field in ssh_config_data for field in ("password", "password_env")
+                )
+                if not has_password_fields:
+                    conn_name_env = conn_name.upper().replace('-', '_')
+                    ssh_password_env = f"SSH_PASSWORD_{conn_name_env}"
+                    password_from_env = env_dict.get(ssh_password_env)
+                    if password_from_env:
+                        ssh_config_data["password"] = password_from_env
+
             try:
-                ssh_tunnel = SSHTunnelConfig.from_dict(config["ssh_tunnel"], env)
+                ssh_tunnel = SSHTunnelConfig.from_dict(ssh_config_data, env)
             except ValueError as e:
                 raise ValueError(f"SSH tunnel configuration error: {e}")
 

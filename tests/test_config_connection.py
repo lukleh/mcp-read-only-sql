@@ -303,6 +303,30 @@ class TestConnection:
 
         assert conn.password == ""
 
+    def test_connection_ssh_password_env_fallback(self):
+        """SSH password falls back to SSH_PASSWORD_<NAME> when no key is provided"""
+        env = {
+            "DB_PASSWORD_TEST": "dbpass",
+            "SSH_PASSWORD_TEST": "sshpass",
+        }
+
+        conn = Connection({
+            "connection_name": "test",
+            "type": "postgresql",
+            "servers": [{"host": "localhost", "port": 5432}],
+            "db": "testdb",
+            "username": "testuser",
+            "ssh_tunnel": {
+                "host": "bastion.example.com",
+                "user": "tunneluser",
+                # No password/key fields provided so fallback should trigger
+            },
+        }, env=env)
+
+        assert conn.ssh_tunnel is not None
+        assert conn.ssh_tunnel.password == "sshpass"
+        assert conn.ssh_tunnel.private_key is None
+
     def test_connection_string_servers(self):
         """Test connection parses string servers"""
         env = {"DB_PASSWORD_TEST": "pass"}
