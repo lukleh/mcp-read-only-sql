@@ -14,7 +14,8 @@ from src.utils.timeout_wrapper import HardTimeoutError
 @pytest.fixture
 def postgres_fast_hard_timeout():
     """Create PostgreSQL connector with very short timeouts for hard timeout test"""
-    config = {
+    from conftest import make_connection
+    config = make_connection({
         "connection_name": "hard_timeout_test",
         "type": "postgresql",
         "servers": [{"host": "localhost", "port": 5432}],
@@ -24,13 +25,14 @@ def postgres_fast_hard_timeout():
         "query_timeout": 1,  # 1 second query timeout
         "connection_timeout": 1,  # 1 second connection timeout
         # hard_timeout will be calculated as sum: 1 + 1 + 5 (default SSH) = 7 seconds
-    }
+    })
     return PostgreSQLPythonConnector(config)
 
 @pytest.fixture
 def postgres_hard_timeout_test():
     """Create PostgreSQL connector to test hard timeout separately"""
-    config = {
+    from conftest import make_connection
+    config = make_connection({
         "connection_name": "hard_timeout_only",
         "type": "postgresql",
         "servers": [{"host": "localhost", "port": 5432}],
@@ -41,14 +43,15 @@ def postgres_hard_timeout_test():
         "connection_timeout": 1,  # 1 second connection timeout
         # hard_timeout will be calculated as sum: 30 + 1 + 5 = 36 seconds
         # But we'll mock a situation where hard timeout needs to trigger
-    }
+    })
     return PostgreSQLPythonConnector(config)
 
 
 @pytest.fixture
 def postgres_cli_hard_timeout():
     """Create PostgreSQL CLI connector with short timeouts"""
-    config = {
+    from conftest import make_connection
+    config = make_connection({
         "connection_name": "hard_timeout_test",
         "type": "postgresql",
         "servers": [{"host": "localhost", "port": 5432}],
@@ -58,7 +61,7 @@ def postgres_cli_hard_timeout():
         "query_timeout": 1,  # 1 second query timeout
         "connection_timeout": 1,  # 1 second connection timeout
         # hard_timeout will be calculated as sum: 1 + 1 + 5 (default SSH) = 7 seconds
-    }
+    })
     return PostgreSQLCLIConnector(config)
 
 
@@ -85,7 +88,8 @@ class TestHardTimeout:
     async def test_actual_hard_timeout(self):
         """Test that hard timeout works as absolute limit"""
         # Create connector with query timeout disabled to test hard timeout alone
-        config = {
+        from conftest import make_connection
+        config = make_connection({
             "connection_name": "hard_timeout_only",
             "type": "postgresql",
             "servers": [{"host": "localhost", "port": 5432}],
@@ -95,7 +99,7 @@ class TestHardTimeout:
             "query_timeout": 100,  # Very long query timeout
             "connection_timeout": 1,  # 1 second connection timeout
             # hard_timeout = 100 + 1 + 5 = 106 seconds
-        }
+        })
         connector = PostgreSQLPythonConnector(config)
         # Override hard timeout for testing
         connector.hard_timeout = 2  # Force a 2-second hard timeout
@@ -140,7 +144,8 @@ class TestHardTimeout:
     async def test_connection_timeout(self):
         """Test that connection timeout works properly"""
         # Try to connect to a non-existent server
-        config = {
+        from conftest import make_connection
+        config = make_connection({
             "connection_name": "unreachable",
             "type": "postgresql",
             "servers": [{"host": "192.168.255.255", "port": 5432}],  # Unreachable
@@ -150,7 +155,7 @@ class TestHardTimeout:
             "connection_timeout": 1,  # 1 second connection timeout
             "query_timeout": 1,  # 1 second query timeout
             # hard_timeout will be 1 + 1 + 5 = 7 seconds
-        }
+        })
         connector = PostgreSQLPythonConnector(config)
 
         start_time = time.time()

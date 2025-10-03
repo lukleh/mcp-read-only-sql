@@ -27,8 +27,8 @@ class PostgreSQLCLIConnector(BaseCLIConnector):
                 host = "127.0.0.1"
                 port = local_port
             else:
-                host = selected_server["host"]
-                port = selected_server["port"]
+                host = selected_server.host
+                port = selected_server.port
 
             # Use specified database or configured database
             db_name = database or self.database
@@ -61,9 +61,7 @@ class PostgreSQLCLIConnector(BaseCLIConnector):
             env = os.environ.copy()
             env["PGPASSWORD"] = self.password
             env["PGCONNECT_TIMEOUT"] = str(self.connection_timeout)
-            existing_pgoptions = env.get("PGOPTIONS", "").strip()
-            readonly_option = "-c default_transaction_read_only=on"
-            env["PGOPTIONS"] = f"{existing_pgoptions} {readonly_option}".strip()
+            env["PGOPTIONS"] = "-c default_transaction_read_only=on"
 
             try:
                 process = await asyncio.create_subprocess_exec(
@@ -84,7 +82,8 @@ class PostgreSQLCLIConnector(BaseCLIConnector):
                 truncated = False
 
                 loop = asyncio.get_event_loop()
-                deadline = loop.time() + self.connection_timeout + self.query_timeout
+                # Rely on PostgreSQL connection and statement timeouts; enforce query timeout here
+                deadline = loop.time() + self.query_timeout
 
                 async def read_line_with_timeout():
                     remaining = deadline - loop.time()
@@ -125,7 +124,7 @@ class PostgreSQLCLIConnector(BaseCLIConnector):
                     with suppress(asyncio.CancelledError):
                         stderr_task.cancel()
                         await stderr_task
-                    raise asyncio.TimeoutError(f"Query execution timed out after {self.query_timeout}s")
+                    raise TimeoutError(f"psql: Query timeout after {self.query_timeout}s")
 
                 if truncated and process.returncode is None:
                     process.kill()
@@ -142,7 +141,10 @@ class PostgreSQLCLIConnector(BaseCLIConnector):
                 else:
                     stderr = stderr_task.result()
 
-                if process.returncode != 0 and not truncated:
+                returncode = process.returncode
+                if returncode is None:
+                    logger.debug("psql process still running after wait(); treating as successful termination")
+                if returncode not in (0, None) and not truncated:
                     error_msg = stderr.decode() if stderr else "Unknown error"
                     logger.error(f"psql error: {error_msg}")
                     raise RuntimeError(f"psql: {error_msg}")
@@ -164,6 +166,9 @@ class PostgreSQLCLIConnector(BaseCLIConnector):
                 raise FileNotFoundError("psql: command not found. Please install PostgreSQL client tools.")
             except ReadOnlyQueryError as exc:
                 raise ReadOnlyQueryError(str(exc))
+            except asyncio.TimeoutError as exc:
+                logger.error(f"Query execution error: {exc}")
+                raise
             except Exception as e:
                 logger.error(f"Query execution error: {e}")
                 if not str(e).startswith("psql:"):

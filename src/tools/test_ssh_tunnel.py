@@ -9,7 +9,7 @@ from typing import Optional
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from src.config.parser import ConfigParser
+from src.config import load_connections
 from src.utils.ssh_tunnel_cli import CLISSHTunnel
 from src.utils.ssh_tunnel import SSHTunnel
 
@@ -18,15 +18,15 @@ async def test_ssh_tunnels(config_path: str, connection_name: Optional[str] = No
     """Test SSH tunnel connectivity for connections"""
 
     try:
-        parser = ConfigParser(config_path)
-        connections = parser.load_config()
+        # Load validated connections
+        all_connections = load_connections(config_path)
 
-        if not connections:
+        if not all_connections:
             print("❌ No connections found in configuration")
             return False
 
         # Filter to connections with SSH tunnels
-        ssh_connections = [c for c in connections if c.get("ssh_tunnel")]
+        ssh_connections = {name: conn for name, conn in all_connections.items() if conn.ssh_tunnel}
 
         if not ssh_connections:
             print("❌ No connections with SSH tunnels found in configuration")
@@ -34,68 +34,43 @@ async def test_ssh_tunnels(config_path: str, connection_name: Optional[str] = No
 
         # Filter to specific connection if requested
         if connection_name:
-            ssh_connections = [c for c in ssh_connections if c.get("connection_name") == connection_name]
-            if not ssh_connections:
+            if connection_name not in ssh_connections:
                 print(f"❌ Connection not found or has no SSH tunnel: {connection_name}")
                 print("\nConnections with SSH tunnels:")
-                parser_again = ConfigParser(config_path)
-                all_conns = parser_again.load_config()
-                ssh_conns = [c for c in all_conns if c.get("ssh_tunnel")]
-                for conn in ssh_conns:
-                    print(f"  - {conn.get('connection_name')}")
+                for name in ssh_connections.keys():
+                    print(f"  - {name}")
                 return False
+            # Filter to just the requested connection
+            ssh_connections = {connection_name: ssh_connections[connection_name]}
 
         all_success = True
 
         print(f"Testing SSH tunnels for {len(ssh_connections)} connection(s)...\n")
 
-        for conn_config in ssh_connections:
-            # Required fields
-            try:
-                name = conn_config["connection_name"]
-                ssh_config = conn_config["ssh_tunnel"]
-                ssh_host = ssh_config["host"]
-                ssh_user = ssh_config["user"]
-            except KeyError as e:
-                print(f"❌ Configuration error: missing required field {e}")
-                all_success = False
-                continue
-
-            # Optional fields with proper defaults
-            impl = conn_config.get("implementation", "cli")
-            servers = conn_config.get("servers", [])
-            ssh_port = ssh_config.get("port", 22)  # Optional, defaults to 22
+        for name, connection in ssh_connections.items():
+            ssh_config = connection.ssh_tunnel
+            impl = connection.implementation
+            servers = connection.servers
 
             print(f"Testing connection: {name}")
             print(f"  Implementation: {impl}")
-            print(f"  SSH Host: {ssh_host}")
-            print(f"  SSH User: {ssh_user}")
-            print(f"  SSH Port: {ssh_port}")
+            print(f"  SSH Host: {ssh_config.host}")
+            print(f"  SSH User: {ssh_config.user}")
+            print(f"  SSH Port: {ssh_config.port}")
 
             # Get authentication method
-            if ssh_config.get('password'):
+            if ssh_config.password:
                 auth_method = "password"
-            elif ssh_config.get('private_key'):
-                key_path = ssh_config.get('private_key')
-                auth_method = f"key ({key_path})"
+            elif ssh_config.private_key:
+                auth_method = f"key ({ssh_config.private_key})"
             else:
                 auth_method = "unknown"
             print(f"  Auth: {auth_method}")
 
             # Test each remote server
-            servers_to_test = []
-            if servers:
-                for server in servers:
-                    if isinstance(server, dict):
-                        servers_to_test.append((server['host'], server['port']))
-                    elif ':' in server:
-                        host, port = server.rsplit(':', 1)
-                        servers_to_test.append((host, int(port)))
-                    else:
-                        # Default port will be used, but we need to know the type
-                        servers_to_test.append((server, 5432))  # Default assumption
-            else:
-                servers_to_test.append(("localhost", 5432))
+            servers_to_test = [(server.host, server.port) for server in servers]
+            if not servers_to_test:
+                servers_to_test = [("localhost", 5432)]
 
             print(f"  Remote servers: {', '.join([f'{h}:{p}' for h, p in servers_to_test])}")
             print()
@@ -107,23 +82,18 @@ async def test_ssh_tunnels(config_path: str, connection_name: Optional[str] = No
                 else:
                     print(f"  Testing tunnel to: {remote_host}:{remote_port}")
 
-                # Prepare SSH config for this specific remote
-                tunnel_config = ssh_config.copy()
-                tunnel_config['remote_host'] = remote_host
-                tunnel_config['remote_port'] = remote_port
-
                 tunnel = None
                 try:
                     # Use the appropriate SSH tunnel implementation
                     if impl == "python":
-                        tunnel = SSHTunnel(tunnel_config)
+                        tunnel = SSHTunnel(ssh_config, remote_host, remote_port)
                     else:
-                        tunnel = CLISSHTunnel(tunnel_config)
+                        tunnel = CLISSHTunnel(ssh_config, remote_host, remote_port)
                     local_port = await tunnel.start()
 
                     print(f"    ✅ SSH tunnel established successfully")
                     print(f"    Local port: {local_port}")
-                    print(f"    Tunnel: localhost:{local_port} -> {ssh_config.get('host')} -> {remote_host}:{remote_port}")
+                    print(f"    Tunnel: localhost:{local_port} -> {ssh_config.host} -> {remote_host}:{remote_port}")
 
                     # Clean up
                     await tunnel.stop()

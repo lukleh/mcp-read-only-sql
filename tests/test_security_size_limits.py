@@ -12,7 +12,8 @@ from src.connectors.clickhouse.python import ClickHousePythonConnector
 @pytest.fixture
 def postgres_size_limit_connector():
     """Create PostgreSQL connector with 10KB size limit"""
-    config = {
+    from conftest import make_connection
+    config = make_connection({
         "connection_name": "size_test",
         "type": "postgresql",
         "servers": [{"host": "localhost", "port": 5432}],
@@ -20,14 +21,15 @@ def postgres_size_limit_connector():
         "username": "testuser",
         "password": "testpass",
         "max_result_bytes": 10000  # 10KB limit
-    }
+    })
     return PostgreSQLPythonConnector(config)
 
 
 @pytest.fixture
 def clickhouse_size_limit_connector():
     """Create ClickHouse connector with 10KB size limit"""
-    config = {
+    from conftest import make_connection
+    config = make_connection({
         "connection_name": "size_test",
         "type": "clickhouse",
         "servers": [{"host": "localhost", "port": 9000}],
@@ -35,7 +37,7 @@ def clickhouse_size_limit_connector():
         "username": "testuser",
         "password": "testpass",
         "max_result_bytes": 10000  # 10KB limit
-    }
+    })
     return ClickHousePythonConnector(config)
 
 

@@ -18,7 +18,8 @@ class TestServerSelection:
 
     def test_select_server_default(self):
         """Test that _select_server returns first server by default"""
-        config = {
+        from conftest import make_connection
+        config = make_connection({
             "connection_name": "test",
             "type": "postgresql",
             "servers": [
@@ -27,17 +28,19 @@ class TestServerSelection:
                 {"host": "server3.example.com", "port": 5433},
             ],
             "db": "test_db",
-            "username": "test"
-        }
+            "username": "test",
+            "password": "test"
+        })
         connector = MockConnector(config)
         server = connector._select_server()
 
-        assert server["host"] == "server1.example.com"
-        assert server["port"] == 5432
+        assert server.host == "server1.example.com"
+        assert server.port == 5432
 
     def test_select_server_by_host_only(self):
         """Test selecting server by host only (matches first with that host)"""
-        config = {
+        from conftest import make_connection
+        config = make_connection({
             "connection_name": "test",
             "type": "postgresql",
             "servers": [
@@ -46,17 +49,19 @@ class TestServerSelection:
                 {"host": "server2.example.com", "port": 5433},
             ],
             "db": "test_db",
-            "username": "test"
-        }
+            "username": "test",
+            "password": "test"
+        })
         connector = MockConnector(config)
         server = connector._select_server("server2.example.com")
 
-        assert server["host"] == "server2.example.com"
-        assert server["port"] == 5432  # First matching host
+        assert server.host == "server2.example.com"
+        assert server.port == 5432  # First matching host
 
     def test_select_server_by_host_and_port(self):
         """Test selecting server by exact host:port combination"""
-        config = {
+        from conftest import make_connection
+        config = make_connection({
             "connection_name": "test",
             "type": "postgresql",
             "servers": [
@@ -65,17 +70,19 @@ class TestServerSelection:
                 {"host": "server2.example.com", "port": 5433},
             ],
             "db": "test_db",
-            "username": "test"
-        }
+            "username": "test",
+            "password": "test"
+        })
         connector = MockConnector(config)
         server = connector._select_server("server2.example.com:5433")
 
-        assert server["host"] == "server2.example.com"
-        assert server["port"] == 5433
+        assert server.host == "server2.example.com"
+        assert server.port == 5433
 
     def test_select_server_not_found_by_host(self):
         """Test that ValueError is raised when server host not found"""
-        config = {
+        from conftest import make_connection
+        config = make_connection({
             "connection_name": "test_conn",
             "type": "postgresql",
             "servers": [
@@ -83,8 +90,9 @@ class TestServerSelection:
                 {"host": "server2.example.com", "port": 5432},
             ],
             "db": "test_db",
-            "username": "test"
-        }
+            "username": "test",
+            "password": "test"
+        })
         connector = MockConnector(config)
 
         with pytest.raises(ValueError) as exc_info:
@@ -98,7 +106,8 @@ class TestServerSelection:
 
     def test_select_server_not_found_by_port(self):
         """Test that ValueError is raised when host matches but port doesn't"""
-        config = {
+        from conftest import make_connection
+        config = make_connection({
             "connection_name": "test_conn",
             "type": "postgresql",
             "servers": [
@@ -106,8 +115,9 @@ class TestServerSelection:
                 {"host": "server2.example.com", "port": 5432},
             ],
             "db": "test_db",
-            "username": "test"
-        }
+            "username": "test",
+            "password": "test"
+        })
         connector = MockConnector(config)
 
         with pytest.raises(ValueError) as exc_info:
@@ -118,15 +128,17 @@ class TestServerSelection:
 
     def test_select_server_invalid_port_format(self):
         """Test that ValueError is raised for invalid port in specification"""
-        config = {
+        from conftest import make_connection
+        config = make_connection({
             "connection_name": "test",
             "type": "postgresql",
             "servers": [
                 {"host": "server1.example.com", "port": 5432},
             ],
             "db": "test_db",
-            "username": "test"
-        }
+            "username": "test",
+            "password": "test"
+        })
         connector = MockConnector(config)
 
         with pytest.raises(ValueError) as exc_info:
@@ -136,39 +148,40 @@ class TestServerSelection:
 
     def test_select_server_with_colon_in_host(self):
         """Test handling of multiple colons (rsplit should use rightmost)"""
-        config = {
+        from conftest import make_connection
+        config = make_connection({
             "connection_name": "test",
             "type": "postgresql",
             "servers": [
                 {"host": "2001:db8::1", "port": 5432},
             ],
             "db": "test_db",
-            "username": "test"
-        }
+            "username": "test",
+            "password": "test"
+        })
         connector = MockConnector(config)
         server = connector._select_server("2001:db8::1:5432")
 
-        assert server["host"] == "2001:db8::1"
-        assert server["port"] == 5432
+        assert server.host == "2001:db8::1"
+        assert server.port == 5432
 
     def test_select_server_no_servers_configured(self):
-        """Test default localhost behavior when no servers configured"""
-        config = {
-            "connection_name": "test",
-            "type": "postgresql",
-            "servers": [],
-            "db": "test_db",
-            "username": "test"
-        }
-        connector = MockConnector(config)
-        server = connector._select_server()
-
-        assert server["host"] == "localhost"
-        assert server["port"] == 5432  # MockConnector's default port
+        """Test that configuration rejects empty server lists"""
+        from conftest import make_connection
+        with pytest.raises(ValueError, match="missing required field 'servers'"):
+            make_connection({
+                "connection_name": "test",
+                "type": "postgresql",
+                "servers": [],
+                "db": "test_db",
+                "username": "test",
+                "password": "test"
+            })
 
     def test_select_server_none_parameter(self):
         """Test that None parameter explicitly uses default (first server)"""
-        config = {
+        from conftest import make_connection
+        config = make_connection({
             "connection_name": "test",
             "type": "postgresql",
             "servers": [
@@ -176,17 +189,19 @@ class TestServerSelection:
                 {"host": "server2.example.com", "port": 5432},
             ],
             "db": "test_db",
-            "username": "test"
-        }
+            "username": "test",
+            "password": "test"
+        })
         connector = MockConnector(config)
         server = connector._select_server(None)
 
-        assert server["host"] == "server1.example.com"
-        assert server["port"] == 5432
+        assert server.host == "server1.example.com"
+        assert server.port == 5432
 
     def test_select_server_multiple_matches_returns_first(self):
         """Test that when multiple servers match host, first is returned"""
-        config = {
+        from conftest import make_connection
+        config = make_connection({
             "connection_name": "test",
             "type": "postgresql",
             "servers": [
@@ -195,13 +210,14 @@ class TestServerSelection:
                 {"host": "db.example.com", "port": 5434},
             ],
             "db": "test_db",
-            "username": "test"
-        }
+            "username": "test",
+            "password": "test"
+        })
         connector = MockConnector(config)
         server = connector._select_server("db.example.com")
 
-        assert server["host"] == "db.example.com"
-        assert server["port"] == 5432  # First matching
+        assert server.host == "db.example.com"
+        assert server.port == 5432  # First matching
 
 
 class TestServerSelectionClickHouse:
@@ -209,7 +225,8 @@ class TestServerSelectionClickHouse:
 
     def test_select_clickhouse_http_port(self):
         """Test selecting ClickHouse server with HTTP port"""
-        config = {
+        from conftest import make_connection
+        config = make_connection({
             "connection_name": "test",
             "type": "clickhouse",
             "servers": [
@@ -217,17 +234,19 @@ class TestServerSelectionClickHouse:
                 {"host": "ch2.example.com", "port": 9000},
             ],
             "db": "default",
-            "username": "test"
-        }
+            "username": "test",
+            "password": "test"
+        })
         connector = MockConnector(config)
         server = connector._select_server("ch1.example.com:8123")
 
-        assert server["host"] == "ch1.example.com"
-        assert server["port"] == 8123
+        assert server.host == "ch1.example.com"
+        assert server.port == 8123
 
     def test_select_clickhouse_native_port(self):
         """Test selecting ClickHouse server with native port"""
-        config = {
+        from conftest import make_connection
+        config = make_connection({
             "connection_name": "test",
             "type": "clickhouse",
             "servers": [
@@ -235,10 +254,11 @@ class TestServerSelectionClickHouse:
                 {"host": "ch2.example.com", "port": 9000},
             ],
             "db": "default",
-            "username": "test"
-        }
+            "username": "test",
+            "password": "test"
+        })
         connector = MockConnector(config)
         server = connector._select_server("ch2.example.com:9000")
 
-        assert server["host"] == "ch2.example.com"
-        assert server["port"] == 9000
+        assert server.host == "ch2.example.com"
+        assert server.port == 9000

@@ -4,6 +4,7 @@ import asyncio
 import sys
 from contextlib import asynccontextmanager
 
+from ..config import Connection, Server, SSHTunnelConfig
 from ..utils.ssh_tunnel import SSHTunnel
 from ..utils.timeout_wrapper import with_hard_timeout, HardTimeoutError
 
@@ -21,44 +22,35 @@ class DataSizeLimitError(Exception):
 class BaseConnector(ABC):
     """Base class for database connectors"""
 
-    # Default limits
-    DEFAULT_QUERY_TIMEOUT = 10  # seconds (database-level)
-    DEFAULT_CONNECTION_TIMEOUT = 5  # seconds (database-level)
+    # Default SSH timeout (used when not in Connection config)
     DEFAULT_SSH_TIMEOUT = 5  # seconds (SSH connection)
-    DEFAULT_MAX_RESULT_BYTES = 5 * 1024  # 5 KB
 
-    def __init__(self, config: Dict[str, Any]):
-        self.config = config
-        self.name = config.get("connection_name", "unnamed")
-        self.servers = config.get("servers", [])
+    def __init__(self, connection: Connection):
+        """
+        Initialize connector with validated Connection object.
 
-        # Get database with proper defaults based on type
-        self.database = config.get("db")
-        if not self.database:
-            # Use type-specific default database
-            conn_type = config.get("type", "").lower()
-            if conn_type == "postgresql":
-                self.database = "postgres"
-            elif conn_type == "clickhouse":
-                self.database = "default"
-            else:
-                # For unknown types, still require explicit database
-                raise ValueError(f"Database 'db' is required for connection {self.name}")
-
-        self.username = config.get("username", "")
-        self.password = config.get("password", "")
-        self.ssh_config = config.get("ssh_tunnel")
+        Args:
+            connection: Validated Connection object
+        """
+        self.connection = connection
+        self.name = connection.name
+        self.servers = connection.servers
+        self.database = connection.database
+        self.username = connection.username
+        self.password = connection.password
+        self.ssh_config = connection.ssh_tunnel
         self.ssh_tunnel = None
 
-        # Security settings
-        self.query_timeout = config.get("query_timeout", self.DEFAULT_QUERY_TIMEOUT)
-        self.connection_timeout = config.get("connection_timeout", self.DEFAULT_CONNECTION_TIMEOUT)
-        self.ssh_timeout = self.DEFAULT_SSH_TIMEOUT
-        if self.ssh_config:
-            self.ssh_timeout = self.ssh_config.get("ssh_timeout", self.DEFAULT_SSH_TIMEOUT)
+        # Timeouts and limits
+        self.query_timeout = connection.query_timeout
+        self.connection_timeout = connection.connection_timeout
+        if self.ssh_config and self.ssh_config.ssh_timeout:
+            self.ssh_timeout = self.ssh_config.ssh_timeout
+        else:
+            self.ssh_timeout = self.DEFAULT_SSH_TIMEOUT
         # Hard timeout is the sum of all component timeouts
         self.hard_timeout = self.ssh_timeout + self.connection_timeout + self.query_timeout
-        self.max_result_bytes = config.get("max_result_bytes", self.DEFAULT_MAX_RESULT_BYTES)
+        self.max_result_bytes = connection.max_result_bytes
 
     @asynccontextmanager
     async def _get_ssh_tunnel(self, server: Optional[str] = None):
@@ -68,15 +60,12 @@ class BaseConnector(ABC):
         Args:
             server: Optional server specification to tunnel to
         """
-        if self.ssh_config and self.ssh_config.get("enabled", True):
+        if self.ssh_config:
             # Get the server to connect to
             selected_server = self._select_server(server)
-            # Add remote host/port to SSH config
-            ssh_config = self.ssh_config.copy()
-            ssh_config["remote_host"] = selected_server["host"]
-            ssh_config["remote_port"] = selected_server["port"]
 
-            tunnel = SSHTunnel(ssh_config)
+            # Pass SSHTunnelConfig and remote server info to tunnel
+            tunnel = SSHTunnel(self.ssh_config, selected_server.host, selected_server.port)
             local_port = await tunnel.start()
             try:
                 yield local_port
@@ -85,7 +74,7 @@ class BaseConnector(ABC):
         else:
             yield None
 
-    def _select_server(self, server: Optional[str] = None) -> Dict[str, Any]:
+    def _select_server(self, server: Optional[str] = None) -> Server:
         """
         Select a server from the configured list.
 
@@ -94,13 +83,13 @@ class BaseConnector(ABC):
                    If None, uses the first server in the list.
 
         Returns:
-            Dict with 'host' and 'port' keys
+            Server object
 
         Raises:
             ValueError: If specified server is not found in configured servers
         """
         if not self.servers:
-            return {"host": "localhost", "port": self._get_default_port()}
+            raise ValueError(f"Connection '{self.name}' has no servers configured")
 
         # If no server specified, use first one (default behavior)
         if server is None:
@@ -119,16 +108,13 @@ class BaseConnector(ABC):
 
         # Find matching server in configured list
         for srv in self.servers:
-            srv_host = srv["host"]
-            srv_port = srv["port"]
-
             # Match by host and port (if port specified)
-            if srv_host == requested_host:
-                if requested_port is None or srv_port == requested_port:
+            if srv.host == requested_host:
+                if requested_port is None or srv.port == requested_port:
                     return srv
 
         # No match found
-        available = [f"{s['host']}:{s['port']}" for s in self.servers]
+        available = [f"{s.host}:{s.port}" for s in self.servers]
         raise ValueError(
             f"Server '{server}' not found in connection '{self.name}'. "
             f"Available servers: {', '.join(available)}"

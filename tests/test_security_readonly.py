@@ -99,32 +99,6 @@ def _assert_readonly_error(exc_info, connector_name: str):
     ), f"{connector_name}: expected read-only style error, got: {error[:120]}"
 
 
-@pytest.fixture
-def postgres_config():
-    """PostgreSQL test configuration"""
-    return {
-        "connection_name": "test_postgres",
-        "type": "postgresql",
-        "servers": [{"host": "localhost", "port": 5432}],
-        "username": "testuser",
-        "password": "testpass",
-        "db": "testdb"
-    }
-
-
-@pytest.fixture
-def clickhouse_config():
-    """ClickHouse test configuration"""
-    return {
-        "connection_name": "test_clickhouse",
-        "type": "clickhouse",
-        "servers": [{"host": "localhost", "port": 9000}],
-        "username": "testuser",
-        "password": "testpass",
-        "db": "testdb"
-    }
-
-
 @pytest.mark.anyio
 async def test_postgresql_python_readonly(postgres_config):
     """Test PostgreSQL Python connector enforces read-only mode"""

@@ -14,9 +14,19 @@ class SSHTunnel:
 
     DEFAULT_SSH_TIMEOUT = 5  # seconds
 
-    def __init__(self, config: Dict[str, Any]):
-        self.config = config
-        self.ssh_timeout = config.get("ssh_timeout", self.DEFAULT_SSH_TIMEOUT)
+    def __init__(self, ssh_config, remote_host: str, remote_port: int):
+        """
+        Initialize SSH tunnel.
+
+        Args:
+            ssh_config: SSHTunnelConfig object (from config module)
+            remote_host: Remote database host to tunnel to
+            remote_port: Remote database port to tunnel to
+        """
+        self.ssh_config = ssh_config
+        self.remote_host = remote_host
+        self.remote_port = remote_port
+        self.ssh_timeout = ssh_config.ssh_timeout or self.DEFAULT_SSH_TIMEOUT
         self.ssh_client = None
         self.transport = None
         self.local_port = None
@@ -45,13 +55,13 @@ class SSHTunnel:
 
             tunnel_established = False
             try:
-                ssh_host = self.config.get("host", "")
-                ssh_port = self.config.get("port", 22)
-                ssh_user = self.config.get("user", "")
+                ssh_host = self.ssh_config.host
+                ssh_port = self.ssh_config.port
+                ssh_user = self.ssh_config.user
 
                 # Remote bind address (database server as seen from SSH host)
-                remote_host = self.config.get("remote_host", "localhost")
-                remote_port = self.config.get("remote_port", 5432)
+                remote_host = self.remote_host
+                remote_port = self.remote_port
 
                 # Create SSH client
                 self.ssh_client = paramiko.SSHClient()
@@ -68,8 +78,8 @@ class SSHTunnel:
                 }
 
                 # Configure authentication
-                if "private_key" in self.config:
-                    key_file = self.config["private_key"]
+                if self.ssh_config.private_key:
+                    key_file = self.ssh_config.private_key
                     # Auto-detect key type and load it
                     # Try different key types in order (most common first)
                     private_key = None
@@ -99,8 +109,8 @@ class SSHTunnel:
                         raise ValueError(f"Could not load SSH private key from {key_file}. Tried: {error_details}")
 
                     connect_kwargs["pkey"] = private_key
-                elif "password" in self.config:
-                    connect_kwargs["password"] = self.config["password"]
+                elif self.ssh_config.password:
+                    connect_kwargs["password"] = self.ssh_config.password
                 else:
                     raise ValueError("SSH tunnel requires either private_key or password")
 

@@ -26,7 +26,9 @@ class TestCLISystemSSH:
 
     async def test_postgresql_cli_with_system_ssh(self):
         """Test PostgreSQL CLI connector through system SSH tunnel"""
-        config = {
+        from conftest import make_connection
+
+        config = make_connection({
             "connection_name": "pg_cli_system_ssh",
             "type": "postgresql",
             "servers": [{"host": "mcp-postgres-private", "port": 5432}],
@@ -40,7 +42,7 @@ class TestCLISystemSSH:
                 "user": "tunnel",
                 "private_key": "/tmp/docker_test_key"  # Use key-based auth
             }
-        }
+        })
         connector = PostgreSQLCLIConnector(config)
 
         # Execute query through SSH tunnel
@@ -54,7 +56,9 @@ class TestCLISystemSSH:
 
     async def test_clickhouse_cli_with_system_ssh(self):
         """Test ClickHouse CLI connector through system SSH tunnel"""
-        config = {
+        from conftest import make_connection
+
+        config = make_connection({
             "connection_name": "ch_cli_system_ssh",
             "type": "clickhouse",
             "servers": [{"host": "mcp-clickhouse-private", "port": 9000}],
@@ -68,7 +72,7 @@ class TestCLISystemSSH:
                 "user": "tunnel",
                 "private_key": "/tmp/docker_test_key"
             }
-        }
+        })
         connector = ClickHouseCLIConnector(config)
 
         # Execute query through SSH tunnel
@@ -81,39 +85,31 @@ class TestCLISystemSSH:
         assert int(count_value) > 0  # Should have events
 
     async def test_system_ssh_without_private_key(self):
-        """Test that system SSH uses default SSH key when no private_key specified"""
-        # This test will fail unless ~/.ssh/id_rsa is set up for the test container
-        # We'll test that it at least attempts to use SSH
-        config = {
-            "connection_name": "pg_cli_default_ssh",
-            "type": "postgresql",
-            "servers": [{"host": "mcp-postgres-private", "port": 5432}],
-            "db": "testdb",
-            "username": "testuser",
-            "password": "testpass",
-            "ssh_tunnel": {
-                "enabled": True,
-                "host": "localhost",
-                "port": 2222,
-                "user": "tunnel"
-                # No private_key - should use ~/.ssh/id_rsa or other default
-            }
-        }
-        connector = PostgreSQLCLIConnector(config)
+        """Configurator must supply credentials when enabling SSH"""
+        from conftest import make_connection
 
-        # This will likely fail with auth error since we don't have the right key
-        # But it tests that the system SSH is being used
-        try:
-            result = await connector.execute_query("SELECT 1")
-            # If it works, great!
-            assert isinstance(result, str)  # Would be TSV if successful
-        except RuntimeError as e:
-            # Expected - no valid SSH key
-            assert "ssh" in str(e).lower() or "tunnel" in str(e).lower()
+        with pytest.raises(ValueError, match="requires either 'private_key' or 'password'"):
+            make_connection({
+                "connection_name": "pg_cli_default_ssh",
+                "type": "postgresql",
+                "servers": [{"host": "mcp-postgres-private", "port": 5432}],
+                "db": "testdb",
+                "username": "testuser",
+                "password": "testpass",
+                "ssh_tunnel": {
+                    "enabled": True,
+                    "host": "localhost",
+                    "port": 2222,
+                    "user": "tunnel"
+                    # Missing credentials should be rejected up front
+                }
+            })
 
     async def test_system_ssh_disabled(self):
         """Test CLI connectors work normally when SSH is disabled"""
-        config = {
+        from conftest import make_connection
+
+        config = make_connection({
             "connection_name": "no_ssh_cli",
             "type": "postgresql",
             "servers": [{"host": "localhost", "port": 5432}],
@@ -127,7 +123,7 @@ class TestCLISystemSSH:
                 "user": "tunnel",
                 "private_key": "/tmp/docker_test_key"
             }
-        }
+        })
         connector = PostgreSQLCLIConnector(config)
 
         # Should connect directly without SSH
@@ -141,7 +137,9 @@ class TestCLISystemSSH:
 
     async def test_system_ssh_multiple_queries(self):
         """Test multiple queries through system SSH tunnel"""
-        config = {
+        from conftest import make_connection
+
+        config = make_connection({
             "connection_name": "pg_multi_ssh",
             "type": "postgresql",
             "servers": [{"host": "mcp-postgres-private", "port": 5432}],
@@ -155,7 +153,7 @@ class TestCLISystemSSH:
                 "user": "tunnel",
                 "private_key": "/tmp/docker_test_key"
             }
-        }
+        })
         connector = PostgreSQLCLIConnector(config)
 
         # Execute multiple queries to test tunnel reuse

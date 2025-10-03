@@ -19,7 +19,8 @@ def count_tsv_rows(tsv_str):
 @pytest.fixture
 def postgres_cli_size_limit():
     """Create PostgreSQL CLI connector with 1KB size limit"""
-    config = {
+    from conftest import make_connection
+    config = make_connection({
         "connection_name": "cli_size_test",
         "type": "postgresql",
         "servers": [{"host": "localhost", "port": 5432}],
@@ -27,14 +28,15 @@ def postgres_cli_size_limit():
         "username": "testuser",
         "password": "testpass",
         "max_result_bytes": 1000  # 1KB limit (very small for testing)
-    }
+    })
     return PostgreSQLCLIConnector(config)
 
 
 @pytest.fixture
 def clickhouse_cli_size_limit():
     """Create ClickHouse CLI connector with 1KB size limit"""
-    config = {
+    from conftest import make_connection
+    config = make_connection({
         "connection_name": "cli_size_test",
         "type": "clickhouse",
         "servers": [{"host": "localhost", "port": 9000}],
@@ -42,7 +44,7 @@ def clickhouse_cli_size_limit():
         "username": "testuser",
         "password": "testpass",
         "max_result_bytes": 1000  # 1KB limit (very small for testing)
-    }
+    })
     return ClickHouseCLIConnector(config)
 
 

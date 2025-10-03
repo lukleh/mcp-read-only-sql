@@ -32,56 +32,60 @@ def parse_tsv(tsv_str):
 @pytest.fixture
 def postgres_python_conn():
     """PostgreSQL Python connector"""
-    config = {
+    from conftest import make_connection
+    config = make_connection({
         "connection_name": "test_pg",
         "type": "postgresql",
         "servers": [{"host": "localhost", "port": 5432}],
         "db": "testdb",
         "username": "testuser",
         "password": "testpass"
-    }
+    })
     return PostgreSQLPythonConnector(config)
 
 
 @pytest.fixture
 def postgres_cli_conn():
     """PostgreSQL CLI connector"""
-    config = {
+    from conftest import make_connection
+    config = make_connection({
         "connection_name": "test_pg",
         "type": "postgresql",
         "servers": [{"host": "localhost", "port": 5432}],
         "db": "testdb",
         "username": "testuser",
         "password": "testpass"
-    }
+    })
     return PostgreSQLCLIConnector(config)
 
 
 @pytest.fixture
 def clickhouse_python_conn():
     """ClickHouse Python connector"""
-    config = {
+    from conftest import make_connection
+    config = make_connection({
         "connection_name": "test_ch",
         "type": "clickhouse",
         "servers": [{"host": "localhost", "port": 9000}],
         "db": "testdb",
         "username": "testuser",
         "password": "testpass"
-    }
+    })
     return ClickHousePythonConnector(config)
 
 
 @pytest.fixture
 def clickhouse_cli_conn():
     """ClickHouse CLI connector"""
-    config = {
+    from conftest import make_connection
+    config = make_connection({
         "connection_name": "test_ch",
         "type": "clickhouse",
         "servers": [{"host": "localhost", "port": 9000}],
         "db": "testdb",
         "username": "testuser",
         "password": "testpass"
-    }
+    })
     return ClickHouseCLIConnector(config)
 
 

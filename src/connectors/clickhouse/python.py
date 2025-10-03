@@ -21,12 +21,13 @@ class ClickHousePythonConnector(BaseConnector):
     @asynccontextmanager
     async def _get_ssh_tunnel(self, server: Optional[str] = None):
         """Override SSH tunnel to ensure we tunnel to correct HTTP/HTTPS port for clickhouse-connect"""
-        if self.ssh_config and self.ssh_config.get("enabled", True):
+        if self.ssh_config:
             # Get the server to connect to
             selected_server = self._select_server(server)
 
             # Map native ports to HTTP/HTTPS ports for SSH tunnel
-            remote_port = selected_server["port"]
+            remote_port = selected_server.port
+            remote_host = selected_server.host
             if remote_port == 9000:
                 logger.debug(f"Changing SSH tunnel remote port from 9000 to 8123 for clickhouse-connect")
                 remote_port = 8123
@@ -35,13 +36,8 @@ class ClickHousePythonConnector(BaseConnector):
                 remote_port = 8443
             # Ports 8123 and 8443 stay as-is
 
-            # Add remote host/port to SSH config
-            ssh_config = self.ssh_config.copy()
-            ssh_config["remote_host"] = selected_server["host"]
-            ssh_config["remote_port"] = remote_port
-
             from ...utils.ssh_tunnel import SSHTunnel
-            tunnel = SSHTunnel(ssh_config)
+            tunnel = SSHTunnel(self.ssh_config, remote_host, remote_port)
             local_port = await tunnel.start()
             try:
                 yield local_port
@@ -53,7 +49,7 @@ class ClickHousePythonConnector(BaseConnector):
     async def execute_query(self, query: str, database: Optional[str] = None, server: Optional[str] = None) -> str:
         """Execute a read-only query using clickhouse-connect and return TSV"""
         selected_server = self._select_server(server)
-        original_port = selected_server["port"]  # Track the original port for protocol detection
+        original_port = selected_server.port  # Track the original port for protocol detection
 
         total_timeout = self.connection_timeout + self.query_timeout
 
@@ -66,8 +62,8 @@ class ClickHousePythonConnector(BaseConnector):
                     # Pass original port so we know if HTTPS is needed
                     is_ssh_tunnel = True
                 else:
-                    host = selected_server["host"]
-                    port = selected_server["port"]
+                    host = selected_server.host
+                    port = selected_server.port
                     is_ssh_tunnel = False
 
                 # Use specified database or configured database

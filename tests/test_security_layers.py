@@ -27,31 +27,34 @@ def test_config():
 @pytest.fixture
 def postgres_connector(test_config):
     """Create PostgreSQL connector for testing"""
+    from conftest import make_connection
     config = next((c for c in test_config if c["connection_name"] == "test_postgres"), None)
     if not config:
         pytest.skip("test_postgres connection not found")
     # Ensure password is set
     if not config.get("password"):
         config["password"] = "testpass"
-    return PostgreSQLPythonConnector(config)
+    return PostgreSQLPythonConnector(make_connection(config))
 
 
 @pytest.fixture
 def clickhouse_connector(test_config):
     """Create ClickHouse connector for testing"""
+    from conftest import make_connection
     config = next((c for c in test_config if c["connection_name"] == "test_clickhouse"), None)
     if not config:
         pytest.skip("test_clickhouse connection not found")
     # Ensure password is set
     if not config.get("password"):
         config["password"] = "testpass"
-    return ClickHousePythonConnector(config)
+    return ClickHousePythonConnector(make_connection(config))
 
 
 @pytest.fixture
 def postgres_strict_connector():
     """Create PostgreSQL connector with strict limits"""
-    config = {
+    from conftest import make_connection
+    config = make_connection({
         "connection_name": "timeout_test",
         "type": "postgresql",
         "servers": [{"host": "localhost", "port": 5432}],
@@ -61,14 +64,15 @@ def postgres_strict_connector():
         "query_timeout": 2,  # 2 second timeout
         "connection_timeout": 2,
         "max_result_bytes": 10000  # 10KB
-    }
+    })
     return PostgreSQLPythonConnector(config)
 
 
 @pytest.fixture
 def clickhouse_strict_connector():
     """Create ClickHouse connector with strict limits"""
-    config = {
+    from conftest import make_connection
+    config = make_connection({
         "connection_name": "size_test",
         "type": "clickhouse",
         "servers": [{"host": "localhost", "port": 9000}],
@@ -77,7 +81,7 @@ def clickhouse_strict_connector():
         "password": "testpass",
         "query_timeout": 2,
         "max_result_bytes": 10000  # 10KB
-    }
+    })
     return ClickHousePythonConnector(config)
 
 

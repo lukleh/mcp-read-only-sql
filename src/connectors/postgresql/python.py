@@ -32,8 +32,8 @@ class PostgreSQLPythonConnector(BaseConnector):
                     host = "127.0.0.1"
                     port = local_port
                 else:
-                    host = selected_server["host"]
-                    port = selected_server["port"]
+                    host = selected_server.host
+                    port = selected_server.port
 
                 # Use specified database or configured database
                 db_name = database or self.database

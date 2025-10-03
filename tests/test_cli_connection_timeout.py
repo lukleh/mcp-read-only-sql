@@ -18,7 +18,8 @@ class TestCLIConnectionTimeout:
 
     async def test_postgresql_cli_with_timeout(self):
         """Test PostgreSQL CLI connector with connection string timeout"""
-        config = {
+        from conftest import make_connection
+        config = make_connection({
             "connection_name": "pg_cli_timeout",
             "type": "postgresql",
             "servers": [{"host": "localhost", "port": 5432}],
@@ -26,7 +27,7 @@ class TestCLIConnectionTimeout:
             "username": "testuser",
             "password": "testpass",
             "connection_timeout": 2,
-        }
+        })
         connector = PostgreSQLCLIConnector(config)
 
         # Should connect successfully to real server
@@ -38,7 +39,8 @@ class TestCLIConnectionTimeout:
 
     async def test_clickhouse_cli_respects_timeout(self):
         """Test ClickHouse CLI connector respects connection timeout"""
-        config = {
+        from conftest import make_connection
+        config = make_connection({
             "connection_name": "ch_cli_timeout",
             "type": "clickhouse",
             "servers": [{"host": "localhost", "port": 9000}],
@@ -46,7 +48,7 @@ class TestCLIConnectionTimeout:
             "username": "testuser",
             "password": "testpass",
             "connection_timeout": 2,
-        }
+        })
         connector = ClickHouseCLIConnector(config)
 
         # Should connect successfully
@@ -58,7 +60,8 @@ class TestCLIConnectionTimeout:
 
     async def test_cli_unreachable_with_hard_timeout(self):
         """Test that hard timeout prevents hanging on unreachable hosts"""
-        config = {
+        from conftest import make_connection
+        config = make_connection({
             "connection_name": "unreachable",
             "type": "postgresql",
             "servers": [{"host": "10.255.255.1", "port": 5432}],  # Non-routable IP
@@ -67,7 +70,7 @@ class TestCLIConnectionTimeout:
             "password": "testpass",
             "connection_timeout": 1,
             "hard_timeout": 3,  # Hard timeout will kill it
-        }
+        })
         connector = PostgreSQLCLIConnector(config)
 
         start_time = time.time()

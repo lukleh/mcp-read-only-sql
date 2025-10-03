@@ -9,7 +9,7 @@ from typing import Optional
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from src.config.parser import ConfigParser
+from src.config import load_connections
 from src.connectors.postgresql.python import PostgreSQLPythonConnector
 from src.connectors.postgresql.cli import PostgreSQLCLIConnector
 from src.connectors.clickhouse.python import ClickHousePythonConnector
@@ -20,8 +20,8 @@ async def test_connection(config_path: str, connection_name: Optional[str] = Non
     """Test database connection(s)"""
 
     try:
-        parser = ConfigParser(config_path)
-        connections = parser.load_config()
+        # Load validated connections
+        connections = load_connections(config_path)
 
         if not connections:
             print("❌ No connections found in configuration")
@@ -29,59 +29,34 @@ async def test_connection(config_path: str, connection_name: Optional[str] = Non
 
         # Filter to specific connection if requested
         if connection_name:
-            connections = [c for c in connections if c.get("connection_name") == connection_name]
-            if not connections:
+            if connection_name not in connections:
                 print(f"❌ Connection not found: {connection_name}")
                 print("Available connections:")
-                parser_again = ConfigParser(config_path)
-                all_conns = parser_again.load_config()
-                for conn in all_conns:
-                    print(f"  - {conn.get('connection_name')}")
+                for name in connections.keys():
+                    print(f"  - {name}")
                 return False
+            # Filter to just the requested connection
+            connections = {connection_name: connections[connection_name]}
 
         all_success = True
 
-        for conn_config in connections:
-            # Required fields
-            try:
-                name = conn_config["connection_name"]
-                db_type = conn_config["type"]
-                # username is required but we don't display it here, just verify it exists
-                _ = conn_config["username"]
-            except KeyError as e:
-                print(f"❌ Configuration error in connection: missing required field {e}")
-                all_success = False
-                continue
-
-            # Optional fields with proper defaults
-            impl = conn_config.get("implementation", "cli")
-            servers = conn_config.get("servers", [])
+        for name, connection in connections.items():
+            db_type = connection.db_type
+            impl = connection.implementation
+            servers = connection.servers
 
             print(f"Testing connection: {name}")
             print(f"  Type: {db_type}")
             print(f"  Implementation: {impl}")
 
-            # SSH tunnel is optional, but if present, host is required
-            if conn_config.get("ssh_tunnel"):
-                ssh_config = conn_config["ssh_tunnel"]
-                try:
-                    ssh_host = ssh_config["host"]
-                    print(f"  SSH Tunnel: {ssh_host}")
-                except KeyError:
-                    print(f"  ❌ SSH tunnel configured but missing required 'host' field")
-                    all_success = False
-                    continue
+            # SSH tunnel info
+            if connection.ssh_tunnel:
+                print(f"  SSH Tunnel: {connection.ssh_tunnel.host}")
 
             # Get list of servers to test
-            servers_to_test = []
-            if servers:
-                for server in servers:
-                    if isinstance(server, dict):
-                        servers_to_test.append(f"{server['host']}:{server['port']}")
-                    else:
-                        servers_to_test.append(server)
-            else:
-                servers_to_test.append("default")
+            servers_to_test = [f"{server.host}:{server.port}" for server in servers]
+            if not servers_to_test:
+                servers_to_test = ["default"]
 
             print(f"  Servers: {', '.join(servers_to_test)}")
             print()
@@ -98,14 +73,14 @@ async def test_connection(config_path: str, connection_name: Optional[str] = Non
                 try:
                     if db_type == "postgresql":
                         if impl == "python":
-                            connector = PostgreSQLPythonConnector(conn_config)
+                            connector = PostgreSQLPythonConnector(connection)
                         else:
-                            connector = PostgreSQLCLIConnector(conn_config)
+                            connector = PostgreSQLCLIConnector(connection)
                     elif db_type == "clickhouse":
                         if impl == "python":
-                            connector = ClickHousePythonConnector(conn_config)
+                            connector = ClickHousePythonConnector(connection)
                         else:
-                            connector = ClickHouseCLIConnector(conn_config)
+                            connector = ClickHouseCLIConnector(connection)
                     else:
                         print(f"    ❌ Unknown database type: {db_type}")
                         all_success = False

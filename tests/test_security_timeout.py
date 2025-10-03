@@ -14,7 +14,8 @@ from src.connectors.clickhouse.python import ClickHousePythonConnector
 @pytest.fixture
 def postgres_timeout_connector():
     """Create PostgreSQL connector with 2 second timeout"""
-    config = {
+    from conftest import make_connection
+    config = make_connection({
         "connection_name": "timeout_test",
         "type": "postgresql",
         "servers": [{"host": "localhost", "port": 5432}],
@@ -23,14 +24,15 @@ def postgres_timeout_connector():
         "password": "testpass",
         "query_timeout": 2,  # 2 second timeout
         "connection_timeout": 2,
-    }
+    })
     return PostgreSQLPythonConnector(config)
 
 
 @pytest.fixture
 def clickhouse_timeout_connector():
     """Create ClickHouse connector with 2 second timeout"""
-    config = {
+    from conftest import make_connection
+    config = make_connection({
         "connection_name": "timeout_test",
         "type": "clickhouse",
         "servers": [{"host": "localhost", "port": 9000}],
@@ -38,7 +40,7 @@ def clickhouse_timeout_connector():
         "username": "testuser",
         "password": "testpass",
         "query_timeout": 2,  # 2 second timeout
-    }
+    })
     return ClickHousePythonConnector(config)
 
 
@@ -92,7 +94,8 @@ class TestTimeoutEnforcement:
     async def test_connection_timeout(self):
         """Test that connection attempts timeout when server is unreachable"""
         # Create a connector pointing to a non-existent server
-        config = {
+        from conftest import make_connection
+        config = make_connection({
             "connection_name": "unreachable_test",
             "type": "postgresql",
             "servers": [{"host": "192.168.255.255", "port": 5432}],  # Unreachable IP
@@ -100,7 +103,7 @@ class TestTimeoutEnforcement:
             "username": "testuser",
             "password": "testpass",
             "connection_timeout": 1,  # 1 second timeout
-        }
+        })
         connector = PostgreSQLPythonConnector(config)
 
         start_time = time.time()

@@ -15,6 +15,50 @@ from anyio import create_task_group
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+from src.config import Connection
+
+
+# Helper function to create Connection objects from dict configs
+def make_connection(config_dict: Dict[str, Any]) -> Connection:
+    """
+    Helper to create Connection objects from dict configs for tests.
+    This allows existing test fixtures that return dicts to work with the new Connection class.
+
+    Args:
+        config_dict: Dictionary configuration (old format)
+
+    Returns:
+        Connection object
+    """
+    return Connection(config_dict)
+
+
+# Common test config fixtures - return Connection objects
+@pytest.fixture
+def postgres_config():
+    """PostgreSQL test configuration as Connection object"""
+    return make_connection({
+        "connection_name": "test_postgres",
+        "type": "postgresql",
+        "servers": [{"host": "localhost", "port": 5432}],
+        "username": "testuser",
+        "password": "testpass",
+        "db": "testdb"
+    })
+
+
+@pytest.fixture
+def clickhouse_config():
+    """ClickHouse test configuration as Connection object"""
+    return make_connection({
+        "connection_name": "test_clickhouse",
+        "type": "clickhouse",
+        "servers": [{"host": "localhost", "port": 9000}],
+        "username": "testuser",
+        "password": "testpass",
+        "db": "testdb"
+    })
+
 
 # Configure anyio to use asyncio backend only
 @pytest.fixture(scope="session")

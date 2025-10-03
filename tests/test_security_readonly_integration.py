@@ -59,7 +59,8 @@ async def _verify_connection(connector, vendor: str):
 
 
 def _build_postgres_connector(implementation: str):
-    config = POSTGRES_BASE_CONFIG.copy()
+    from conftest import make_connection
+    config = make_connection(POSTGRES_BASE_CONFIG.copy())
     if implementation == "cli":
         if shutil.which("psql") is None:
             pytest.skip("psql command not available in PATH")
@@ -68,7 +69,8 @@ def _build_postgres_connector(implementation: str):
 
 
 def _build_clickhouse_connector(implementation: str):
-    config = CLICKHOUSE_BASE_CONFIG.copy()
+    from conftest import make_connection
+    config = make_connection(CLICKHOUSE_BASE_CONFIG.copy())
     if implementation == "cli":
         if shutil.which("clickhouse-client") is None:
             pytest.skip("clickhouse-client command not available in PATH")
