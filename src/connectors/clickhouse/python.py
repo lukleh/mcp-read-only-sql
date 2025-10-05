@@ -8,6 +8,7 @@ from clickhouse_connect.driver.exceptions import ClickHouseError
 
 from ..base import BaseConnector
 from ...utils.tsv_formatter import format_tsv_line
+from ...utils.ssh_tunnel_cli import CLISSHTunnel
 
 logger = logging.getLogger(__name__)
 
@@ -21,30 +22,53 @@ class ClickHousePythonConnector(BaseConnector):
     @asynccontextmanager
     async def _get_ssh_tunnel(self, server: Optional[str] = None):
         """Override SSH tunnel to ensure we tunnel to correct HTTP/HTTPS port for clickhouse-connect"""
-        if self.ssh_config:
-            # Get the server to connect to
-            selected_server = self._select_server(server)
+        if not self.ssh_config:
+            yield None
+            return
 
-            # Map native ports to HTTP/HTTPS ports for SSH tunnel
-            remote_port = selected_server.port
-            remote_host = selected_server.host
-            if remote_port == 9000:
-                logger.debug(f"Changing SSH tunnel remote port from 9000 to 8123 for clickhouse-connect")
-                remote_port = 8123
-            elif remote_port == 9440:
-                logger.debug(f"Changing SSH tunnel remote port from 9440 to 8443 for clickhouse-connect")
-                remote_port = 8443
-            # Ports 8123 and 8443 stay as-is
+        # Get the server to connect to
+        selected_server = self._select_server(server)
 
-            from ...utils.ssh_tunnel import SSHTunnel
-            tunnel = SSHTunnel(self.ssh_config, remote_host, remote_port)
+        # Map native ports to HTTP/HTTPS ports for SSH tunnel
+        remote_port = selected_server.port
+        remote_host = selected_server.host
+        if remote_port == 9000:
+            logger.debug("Changing SSH tunnel remote port from 9000 to 8123 for clickhouse-connect")
+            remote_port = 8123
+        elif remote_port == 9440:
+            logger.debug("Changing SSH tunnel remote port from 9440 to 8443 for clickhouse-connect")
+            remote_port = 8443
+        # Ports 8123 and 8443 stay as-is
+
+        from ...utils.ssh_tunnel import SSHTunnel
+
+        # Attempt Paramiko-based tunnel first
+        tunnel = SSHTunnel(self.ssh_config, remote_host, remote_port)
+        try:
             local_port = await tunnel.start()
+        except RuntimeError as exc:
+            message = str(exc)
+            if "SSH: Authentication failed" not in message:
+                raise
+            logger.info(
+                "SSH: Paramiko authentication failed for %s; falling back to system ssh tunnel", remote_host
+            )
+        except TimeoutError:
+            raise
+        else:
             try:
                 yield local_port
             finally:
                 await tunnel.stop()
-        else:
-            yield None
+            return
+
+        # Fall back to CLI-based tunnel (system ssh) if Paramiko cannot authenticate
+        cli_tunnel = CLISSHTunnel(self.ssh_config, remote_host, remote_port)
+        local_port = await cli_tunnel.start()
+        try:
+            yield local_port
+        finally:
+            await cli_tunnel.stop()
 
     async def execute_query(self, query: str, database: Optional[str] = None, server: Optional[str] = None) -> str:
         """Execute a read-only query using clickhouse-connect and return TSV"""

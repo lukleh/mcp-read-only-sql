@@ -40,6 +40,8 @@ async def test_connection(config_path: str, connection_name: Optional[str] = Non
 
         all_success = True
 
+        local_hosts = {"localhost", "127.0.0.1", "::1"}
+
         for name, connection in connections.items():
             db_type = connection.db_type
             impl = connection.implementation
@@ -54,19 +56,49 @@ async def test_connection(config_path: str, connection_name: Optional[str] = Non
                 print(f"  SSH Tunnel: {connection.ssh_tunnel.host}")
 
             # Get list of servers to test
-            servers_to_test = [f"{server.host}:{server.port}" for server in servers]
-            if not servers_to_test:
-                servers_to_test = ["default"]
+            server_entries = []
+            for server in servers:
+                display_host = server.host
+                if connection.ssh_tunnel and server.host in local_hosts:
+                    ssh_host = connection.ssh_tunnel.host
+                    if ssh_host:
+                        display_host = ssh_host
+                server_entries.append((display_host, server))
 
-            print(f"  Servers: {', '.join(servers_to_test)}")
+            # Deduplicate by display host so we don't attempt duplicate selections
+            seen_hosts = set()
+            unique_entries = []
+            for entry in server_entries:
+                if entry[0] not in seen_hosts:
+                    seen_hosts.add(entry[0])
+                    unique_entries.append(entry)
+
+            if not unique_entries:
+                servers_to_test = [("default", None)]
+            else:
+                servers_to_test = unique_entries
+
+            display_labels = []
+            for display_host, server in servers_to_test:
+                if server is None:
+                    display_labels.append("default")
+                    continue
+                canonical = f"{server.host}:{server.port}"
+                if display_host == server.host:
+                    display_labels.append(canonical)
+                else:
+                    display_labels.append(f"{display_host} (via {canonical})")
+
+            print(f"  Servers: {', '.join(display_labels)}")
             print()
 
             # Test each server
-            for i, server_spec in enumerate(servers_to_test, 1):
+            for i, (display_host, server) in enumerate(servers_to_test, 1):
+                label = display_labels[i - 1]
                 if len(servers_to_test) > 1:
-                    print(f"  [{i}/{len(servers_to_test)}] Testing server: {server_spec}")
+                    print(f"  [{i}/{len(servers_to_test)}] Testing server: {label}")
                 else:
-                    print(f"  Testing server: {server_spec}")
+                    print(f"  Testing server: {label}")
 
                 # Select connector
                 connector = None
@@ -87,16 +119,13 @@ async def test_connection(config_path: str, connection_name: Optional[str] = Non
                         continue
 
                     # Test with a simple query, using server parameter if not default
-                    if db_type == "postgresql":
-                        if server_spec != "default":
-                            result = await connector.execute_query("SELECT version()", server=server_spec)
-                        else:
-                            result = await connector.execute_query("SELECT version()")
-                    else:  # clickhouse
-                        if server_spec != "default":
-                            result = await connector.execute_query("SELECT version()", server=server_spec)
-                        else:
-                            result = await connector.execute_query("SELECT version()")
+                    query = "SELECT version()"
+                    server_param = None if display_host == "default" else display_host
+
+                    if server_param:
+                        result = await connector.execute_query(query, server=server_param)
+                    else:
+                        result = await connector.execute_query(query)
 
                     # Parse result to show version
                     lines = result.strip().split('\n')
@@ -115,15 +144,46 @@ async def test_connection(config_path: str, connection_name: Optional[str] = Non
                     all_success = False
                 except Exception as e:
                     error_msg = str(e)
+                    lowered = error_msg.lower()
+
+                    # Fallback for ClickHouse CLI hitting HTTP/HAProxy endpoints
+                    if (
+                        db_type == "clickhouse"
+                        and impl == "cli"
+                        and "unexpected packet" in lowered
+                    ):
+                        print("    ⚠️ Native protocol rejected; retrying with clickhouse-connect (HTTP)")
+                        try:
+                            fallback_connector = ClickHousePythonConnector(connection)
+                            if server_param:
+                                result = await fallback_connector.execute_query(query, server=server_param)
+                            else:
+                                result = await fallback_connector.execute_query(query)
+
+                            lines = result.strip().split('\n')
+                            if len(lines) > 1:
+                                version_line = lines[1].strip()
+                                print("    ✅ Connected successfully via HTTP implementation")
+                                print(f"    Database version: {version_line}")
+                            else:
+                                print("    ✅ Connected successfully via HTTP implementation")
+                            continue
+                        except Exception as fallback_exc:
+                            error_msg = str(fallback_exc)
+                            lowered = error_msg.lower()
+                            print(f"    ❌ Fallback via HTTP implementation failed: {error_msg[:200]}")
+                            all_success = False
+                            print()
+                            continue
+
                     # Clean up error messages
-                    if "password authentication failed" in error_msg.lower():
+                    if "password" in lowered and "failed" in lowered:
                         print(f"    ❌ Authentication failed - check username/password")
-                    elif "could not connect" in error_msg.lower() or "connection refused" in error_msg.lower():
+                    elif "could not connect" in lowered or "connection refused" in lowered:
                         print(f"    ❌ Cannot connect to server - check host/port")
-                    elif "database" in error_msg.lower() and "does not exist" in error_msg.lower():
+                    elif "database" in lowered and "does not exist" in lowered:
                         print(f"    ❌ Database not found - check database name")
-                    elif "read-only" in error_msg.lower():
-                        # This is actually success - we connected but query was blocked
+                    elif "read-only" in lowered:
                         print(f"    ✅ Connected successfully (read-only enforcement working)")
                     else:
                         print(f"    ❌ Connection failed: {error_msg[:200]}")
