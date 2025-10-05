@@ -57,18 +57,12 @@ class PostgreSQLCLIConnector(BaseCLIConnector):
                 "-c", wrapped_query   # Query to execute
             ]
 
-            # Set environment variables while preserving PATH
-            env = os.environ.copy()
-            env["PGPASSWORD"] = self.password
-            env["PGCONNECT_TIMEOUT"] = str(self.connection_timeout)
-            env["PGOPTIONS"] = "-c default_transaction_read_only=on"
-
-            try:
+            async def run_psql(env_vars):
                 process = await asyncio.create_subprocess_exec(
                     *cmd,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
-                    env=env
+                    env=env_vars
                 )
 
                 stdout = process.stdout
@@ -82,7 +76,6 @@ class PostgreSQLCLIConnector(BaseCLIConnector):
                 truncated = False
 
                 loop = asyncio.get_event_loop()
-                # Rely on PostgreSQL connection and statement timeouts; enforce query timeout here
                 deadline = loop.time() + self.query_timeout
 
                 async def read_line_with_timeout():
@@ -124,7 +117,6 @@ class PostgreSQLCLIConnector(BaseCLIConnector):
                     with suppress(asyncio.CancelledError):
                         stderr_task.cancel()
                         await stderr_task
-                    # Wait for process to clean up subprocess transport
                     with suppress(asyncio.TimeoutError):
                         await asyncio.wait_for(process.wait(), timeout=1.0)
                     raise TimeoutError(f"psql: Query timeout after {self.query_timeout}s")
@@ -165,15 +157,41 @@ class PostgreSQLCLIConnector(BaseCLIConnector):
 
                 return output
 
-            except FileNotFoundError:
-                raise FileNotFoundError("psql: command not found. Please install PostgreSQL client tools.")
-            except ReadOnlyQueryError as exc:
-                raise ReadOnlyQueryError(str(exc))
-            except asyncio.TimeoutError as exc:
-                logger.error(f"Query execution error: {exc}")
-                raise
-            except Exception as e:
-                logger.error(f"Query execution error: {e}")
-                if not str(e).startswith("psql:"):
-                    raise RuntimeError(f"psql: {e}")
-                raise
+            use_pgoptions = getattr(self.connection, "cli_requires_pgoptions", True)
+            attempts = [True] if not use_pgoptions else [True, False]
+
+            for first_attempt in attempts:
+                env = os.environ.copy()
+                env["PGPASSWORD"] = self.password
+                env["PGCONNECT_TIMEOUT"] = str(self.connection_timeout)
+                if first_attempt and use_pgoptions:
+                    env["PGOPTIONS"] = "-c default_transaction_read_only=on"
+                else:
+                    env.pop("PGOPTIONS", None)
+
+                try:
+                    return await run_psql(env)
+                except RuntimeError as exc:
+                    message = str(exc).lower()
+                    if (
+                        first_attempt
+                        and use_pgoptions
+                        and "unsupported startup parameter" in message
+                    ):
+                        logger.info(
+                            "psql: remote server rejected default_transaction_read_only; retrying without PGOPTIONS"
+                        )
+                        continue
+                    raise
+                except FileNotFoundError:
+                    raise FileNotFoundError("psql: command not found. Please install PostgreSQL client tools.")
+                except ReadOnlyQueryError as exc:
+                    raise ReadOnlyQueryError(str(exc))
+                except asyncio.TimeoutError as exc:
+                    logger.error(f"Query execution error: {exc}")
+                    raise
+                except Exception as e:
+                    logger.error(f"Query execution error: {e}")
+                    if not str(e).startswith("psql:"):
+                        raise RuntimeError(f"psql: {e}")
+                    raise
