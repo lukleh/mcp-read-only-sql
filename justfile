@@ -22,8 +22,15 @@ import-dbeaver-no-merge path="$HOME/Library/DBeaverData/workspace6/Clickhouse/.d
     uv run -- python -m src.config.dbeaver_import --no-merge {{path}}
 
 # Validate configuration file
-validate config="connections.yaml":
-    uv run -- python -m src.tools.validate_config {{config}}
+validate config="connections.yaml" maybe_flag="":
+    #!/usr/bin/env bash
+    if [ "{{config}}" = "check-env" ] || [ "{{config}}" = "--check-env" ]; then
+        uv run -- python -m src.tools.validate_config --check-env connections.yaml
+    elif [ "{{maybe_flag}}" = "check-env" ] || [ "{{maybe_flag}}" = "--check-env" ]; then
+        uv run -- python -m src.tools.validate_config {{config}} --check-env
+    else
+        uv run -- python -m src.tools.validate_config {{config}}
+    fi
 
 # Test database connection(s)
 test-connection connection="":
@@ -46,4 +53,3 @@ test-ssh-tunnel connection="":
 # Run tests with Docker isolation
 test:
     ./run_tests.sh
-
