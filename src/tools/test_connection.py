@@ -51,6 +51,13 @@ async def test_connection(config_path: str, connection_name: Optional[str] = Non
             print(f"  Type: {db_type}")
             print(f"  Implementation: {impl}")
 
+            if connection.password_env_var:
+                status = "found" if connection.password_env_found else "missing"
+                status_icon = "✅" if connection.password_env_found else "❌"
+                print(f"  Password env var: {connection.password_env_var} {status_icon} ({status})")
+            else:
+                print("  Password env var: n/a (inline password configured)")
+
             # SSH tunnel info
             if connection.ssh_tunnel:
                 print(f"  SSH Tunnel: {connection.ssh_tunnel.host}")

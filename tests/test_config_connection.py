@@ -251,6 +251,9 @@ class TestConnection:
         }, env=env)
 
         assert conn.password == "secret123"
+        assert conn.password_env_var == "DB_PASSWORD_MY_TEST_CONNECTION"
+        assert conn.password_env_found is True
+        assert conn.password_from_env is True
 
     def test_connection_password_explicit(self):
         """Test connection with explicit password"""
@@ -264,6 +267,9 @@ class TestConnection:
         })
 
         assert conn.password == "explicit_pass"
+        assert conn.password_env_var is None
+        assert conn.password_env_found is False
+        assert conn.password_from_env is False
 
     def test_connection_password_env_var(self):
         """Test connection with password_env"""
@@ -278,6 +284,9 @@ class TestConnection:
         }, env=env)
 
         assert conn.password == "custom_pass"
+        assert conn.password_env_var == "MY_CUSTOM_PASSWORD"
+        assert conn.password_env_found is True
+        assert conn.password_from_env is True
 
     def test_connection_password_missing_env_var(self):
         """Test connection fails when password_env not found"""
@@ -302,6 +311,9 @@ class TestConnection:
         }, env={})
 
         assert conn.password == ""
+        assert conn.password_env_var == "DB_PASSWORD_TEST"
+        assert conn.password_env_found is False
+        assert conn.password_from_env is False
 
     def test_connection_ssh_password_env_fallback(self):
         """SSH password falls back to SSH_PASSWORD_<NAME> when no key is provided"""

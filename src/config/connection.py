@@ -169,10 +169,15 @@ class Connection:
         # Load password
         env_dict = env if env is not None else os.environ
         password = None
+        password_env_var: Optional[str] = None
+        password_env_found = False
+        password_from_env = False
         if "password_env" in config:
             password_env_var = config["password_env"]
             password = env_dict.get(password_env_var)
-            if password is None:
+            password_from_env = True
+            password_env_found = password is not None
+            if not password_env_found:
                 raise ValueError(f"Password environment variable '{password_env_var}' not found")
         elif "password" in config:
             password = config["password"]
@@ -181,7 +186,12 @@ class Connection:
             # DB_PASSWORD_{CONNECTION_NAME_UPPER_WITH_UNDERSCORES}
             conn_name_env = conn_name.upper().replace('-', '_')
             password_env_var = f"DB_PASSWORD_{conn_name_env}"
-            password = env_dict.get(password_env_var, "")
+            password = env_dict.get(password_env_var)
+            if password is not None:
+                password_from_env = True
+                password_env_found = True
+            else:
+                password = ""
             # Note: Empty password is allowed (for compatibility with existing configs)
             # but authentication will likely fail at connection time
 
@@ -223,6 +233,9 @@ class Connection:
         self._database = config["db"]
         self._username = config["username"]
         self._password = password
+        self._password_env_var = password_env_var
+        self._password_env_found = password_env_found
+        self._password_from_env = password_from_env
         self._implementation = implementation
         self._ssh_tunnel = ssh_tunnel
         self._query_timeout = config.get("query_timeout", DEFAULT_QUERY_TIMEOUT)
@@ -259,6 +272,21 @@ class Connection:
     def password(self) -> str:
         """Database password (resolved from env if needed)"""
         return self._password
+
+    @property
+    def password_env_var(self) -> Optional[str]:
+        """Environment variable name used for the password, if any"""
+        return self._password_env_var
+
+    @property
+    def password_env_found(self) -> bool:
+        """Whether the password environment variable was present"""
+        return self._password_env_found
+
+    @property
+    def password_from_env(self) -> bool:
+        """Whether the password value originated from the environment"""
+        return self._password_from_env
 
     @property
     def implementation(self) -> str:
