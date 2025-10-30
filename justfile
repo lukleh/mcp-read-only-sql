@@ -14,11 +14,11 @@ run config="connections.yaml":
     uv run -- python -m src.server {{config}}
 
 # Import DBeaver connections
-import-dbeaver path="$HOME/Library/DBeaverData/workspace6/Clickhouse/.dbeaver":
+import-dbeaver path="$HOME/Library/DBeaverData/workspace6/General/.dbeaver":
     uv run -- python -m src.config.dbeaver_import {{path}}
 
 # Import DBeaver without merging clusters
-import-dbeaver-no-merge path="$HOME/Library/DBeaverData/workspace6/Clickhouse/.dbeaver":
+import-dbeaver-no-merge path="$HOME/Library/DBeaverData/workspace6/General/.dbeaver":
     uv run -- python -m src.config.dbeaver_import --no-merge {{path}}
 
 # Validate configuration file
