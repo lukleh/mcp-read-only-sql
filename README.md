@@ -34,11 +34,14 @@ See [READ_ONLY_ENFORCEMENT_MATRIX.md](READ_ONLY_ENFORCEMENT_MATRIX.md) for a sta
 - **Security built-in** - Timeouts, size limits, session controls
 - **DBeaver import** - Import existing connections easily
 
+## Prerequisites
+
+- [uv](https://github.com/astral-sh/uv) - Fast Python package installer and resolver
+- [just](https://github.com/casey/just) - Command runner (for project tasks)
+
 ## Quick Start
 
 ### 1. Install Dependencies
-
-Using [uv](https://github.com/astral-sh/uv):
 
 ```bash
 uv sync
@@ -55,9 +58,6 @@ cp connections.yaml.sample connections.yaml
 ```
 
 **Option B: Import from DBeaver**
-
-Using [just](https://github.com/casey/just):
-
 ```bash
 just import-dbeaver
 # This creates connections.yaml from your DBeaver workspace
