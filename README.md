@@ -85,6 +85,14 @@ claude mcp add mcp-read-only-sql -- uv --directory {PATH_TO_MCP_READ_ONLY_SQL} r
 
 Replace `{PATH_TO_MCP_READ_ONLY_SQL}` with the full path to where you cloned this repository (e.g., `/Users/yourname/projects/mcp-read-only-sql`).
 
+### 5. Add MCP to Codex
+
+```bash
+codex mcp add mcp-read-only-sql -- uv --directory {PATH_TO_MCP_READ_ONLY_SQL} run python -m src.server
+```
+
+Replace `{PATH_TO_MCP_READ_ONLY_SQL}` with the full path to where you cloned this repository (e.g., `/Users/yourname/projects/mcp-read-only-sql`).
+
 ## MCP Tools
 
 ### `run_query_read_only`
