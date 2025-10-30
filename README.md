@@ -77,16 +77,14 @@ just test-connection              # Test all connections
 just test-connection my_postgres  # Test specific connection
 ```
 
-### 4. Add MCP to Claude Code
+### 4. Add MCP Server to Your Client
 
+**For Claude Code:**
 ```bash
 claude mcp add mcp-read-only-sql -- uv --directory {PATH_TO_MCP_READ_ONLY_SQL} run python -m src.server
 ```
 
-Replace `{PATH_TO_MCP_READ_ONLY_SQL}` with the full path to where you cloned this repository (e.g., `/Users/yourname/projects/mcp-read-only-sql`).
-
-### 5. Add MCP to Codex
-
+**For Codex:**
 ```bash
 codex mcp add mcp-read-only-sql -- uv --directory {PATH_TO_MCP_READ_ONLY_SQL} run python -m src.server
 ```
