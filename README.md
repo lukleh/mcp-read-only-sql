@@ -38,6 +38,8 @@ See [READ_ONLY_ENFORCEMENT_MATRIX.md](READ_ONLY_ENFORCEMENT_MATRIX.md) for a sta
 
 ### 1. Install Dependencies
 
+Using [uv](https://github.com/astral-sh/uv):
+
 ```bash
 uv sync
 ```
@@ -53,6 +55,9 @@ cp connections.yaml.sample connections.yaml
 ```
 
 **Option B: Import from DBeaver**
+
+Using [just](https://github.com/casey/just):
+
 ```bash
 just import-dbeaver
 # This creates connections.yaml from your DBeaver workspace
@@ -72,34 +77,10 @@ just test-connection              # Test all connections
 just test-connection my_postgres  # Test specific connection
 ```
 
-### 4. Install in Claude Desktop
+### 4. Add MCP to Claude Code
 
-Add to your Claude Desktop configuration (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
-
-```json
-{
-  "mcpServers": {
-    "sql": {
-      "command": "uv",
-      "args": ["run", "--", "python", "-m", "src.server"],
-      "cwd": "/path/to/mcp-read-only-sql"
-    }
-  }
-}
-```
-
-### 5. Use in Cline/Continue
-
-For VS Code extensions, add to your MCP server configuration:
-
-```json
-{
-  "mcp-read-only-sql": {
-    "command": "uv",
-    "args": ["run", "--", "python", "-m", "src.server"],
-    "cwd": "/path/to/mcp-read-only-sql"
-  }
-}
+```bash
+claude mcp add mcp-read-only-sql -- uv --directory {PATH_TO_DIRECTORY}/mcp-read-only-sql run python -m src.server
 ```
 
 ## MCP Tools
