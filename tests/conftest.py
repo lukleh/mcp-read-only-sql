@@ -270,6 +270,9 @@ async def call_tool(session: ClientSession, tool_name: str, arguments: Dict[str,
         if text_content.startswith("Error"):
             return {"success": False, "error": text_content}
 
+        if tool_name == "run_query_read_only" and arguments.get("file_path"):
+            return {"success": True, "file_path": text_content}
+
         # For list_connections, parse TSV format
         if tool_name == "list_connections":
             lines = text_content.strip().split('\n')
