@@ -100,18 +100,21 @@ Execute read-only SQL queries on configured databases.
 {
   "connection_name": "my_postgres",
   "query": "SELECT * FROM users LIMIT 10",
-  "server": "db2.example.com"
+  "server": "db2.example.com",
+  "file_path": "~/Downloads/query.tsv"
 }
 ```
 
 **Parameters:**
 - `connection_name` (required): Identifier returned by list_connections
 - `query` (required): SQL text that must remain read-only
-- `server` (optional): Hostname to target a specific server. If not provided, uses the first server in the connection's list. 
+- `server` (optional): Hostname to target a specific server. If not provided, uses the first server in the connection's list.
+- `file_path` (optional): When provided, results are written to this path (parents created if needed) and the tool returns the absolute path string instead of TSV content. The file must not already exist; if it does, the tool returns an error instead of overwriting.
 
 **Returns:** Tab-separated text (TSV) with a header row followed by data rows.
 The structured MCP payload mirrors the same TSV string. If results exceed
-`max_result_bytes`, a trailing notice indicates truncation.
+`max_result_bytes`, a trailing notice indicates truncation. When `file_path`
+is supplied, the returned value is the absolute path of the written file and the tool refuses to overwrite existing files.
 
 ### `list_connections`
 List all available database connections.

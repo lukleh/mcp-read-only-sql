@@ -106,7 +106,12 @@ class ReadOnlySQLServer:
         """Setup MCP tools using FastMCP decorators"""
 
         @self.mcp.tool()
-        async def run_query_read_only(connection_name: str, query: str, server: Optional[str] = None) -> str:
+        async def run_query_read_only(
+            connection_name: str,
+            query: str,
+            server: Optional[str] = None,
+            file_path: Optional[str] = None,
+        ) -> str:
             """
             Execute a read-only SQL statement on a configured connection.
 
@@ -114,11 +119,15 @@ class ReadOnlySQLServer:
                 connection_name: Identifier returned by list_connections
                 query: SQL text that must remain read-only
                 server: Optional hostname to target a specific server.
+                file_path: Optional path to save results. When supplied, results
+                    are written to this path and only the absolute path is returned.
 
             Returns:
                 TSV string where the first line contains column headers and
                 subsequent lines contain tab-delimited rows. Output may be empty
-                when no rows match and is capped by max_result_bytes.
+                when no rows match and is capped by max_result_bytes. If
+                file_path is provided, returns the absolute file path after
+                writing results.
             """
             if connection_name not in self.connections:
                 raise ValueError(f"Connection '{connection_name}' not found. Available connections: {', '.join(self.connections.keys())}")
@@ -127,6 +136,17 @@ class ReadOnlySQLServer:
             # Use the hard timeout wrapper to prevent hanging
             # This will return TSV string on success or raise exception on error
             result = await connector.execute_query_with_timeout(query, server=server)
+
+            if file_path:
+                output_path = Path(file_path).expanduser().resolve()
+
+                if output_path.exists():
+                    raise ValueError(f"File path already exists: {output_path}")
+
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                output_path.write_text(result, encoding="utf-8")
+                return str(output_path)
+
             return result
 
         @self.mcp.tool()
