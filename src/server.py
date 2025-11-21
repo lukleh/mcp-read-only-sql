@@ -135,9 +135,12 @@ class ReadOnlySQLServer:
             connector = self.connections[connection_name]
             # Use the hard timeout wrapper to prevent hanging
             # This will return TSV string on success or raise exception on error
-            result = await connector.execute_query_with_timeout(query, server=server)
-
+            execute = connector.execute_query_with_timeout
             if file_path:
+                # Disable result-size guard when streaming to disk
+                with connector.disable_result_limit():
+                    result = await execute(query, server=server)
+
                 output_path = Path(file_path).expanduser().resolve()
 
                 if output_path.exists():
@@ -146,6 +149,8 @@ class ReadOnlySQLServer:
                 output_path.parent.mkdir(parents=True, exist_ok=True)
                 output_path.write_text(result, encoding="utf-8")
                 return str(output_path)
+            else:
+                result = await execute(query, server=server)
 
             return result
 

@@ -2,7 +2,8 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 import asyncio
 import sys
-from contextlib import asynccontextmanager
+import contextvars
+from contextlib import asynccontextmanager, contextmanager
 
 from ..config import Connection, Server, SSHTunnelConfig
 from ..utils.ssh_tunnel import SSHTunnel
@@ -51,6 +52,8 @@ class BaseConnector(ABC):
         # Hard timeout is the sum of all component timeouts
         self.hard_timeout = self.ssh_timeout + self.connection_timeout + self.query_timeout
         self.max_result_bytes = connection.max_result_bytes
+        # Context-local flag to optionally disable result-size enforcement
+        self._enforce_limit_var = contextvars.ContextVar("enforce_limit", default=True)
 
     @asynccontextmanager
     async def _get_ssh_tunnel(self, server: Optional[str] = None):
@@ -167,6 +170,19 @@ class BaseConnector(ABC):
             )
 
         return size
+
+    def _effective_max_result_bytes(self) -> int:
+        """Return the per-call effective max_result_bytes (0 when disabled)."""
+        return self.max_result_bytes if self._enforce_limit_var.get() else 0
+
+    @contextmanager
+    def disable_result_limit(self):
+        """Temporarily disable result-size enforcement for this task."""
+        token = self._enforce_limit_var.set(False)
+        try:
+            yield
+        finally:
+            self._enforce_limit_var.reset(token)
 
     async def execute_query_with_timeout(self, query: str, database: Optional[str] = None, server: Optional[str] = None) -> str:
         """

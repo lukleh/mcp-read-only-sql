@@ -41,6 +41,7 @@ class PostgreSQLPythonConnector(BaseConnector):
                 # Run synchronous psycopg2 in executor with timeout
                 loop = asyncio.get_event_loop()
                 total_timeout = self.connection_timeout + self.query_timeout
+                max_bytes = self._effective_max_result_bytes()
                 tsv_output, truncated = await asyncio.wait_for(
                     loop.run_in_executor(
                         None,
@@ -49,7 +50,7 @@ class PostgreSQLPythonConnector(BaseConnector):
                         port,
                         db_name,
                         sanitized_query,
-                        self.max_result_bytes
+                        max_bytes
                     ),
                     timeout=total_timeout
                 )
