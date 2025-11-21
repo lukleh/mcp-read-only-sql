@@ -94,6 +94,7 @@ class ClickHousePythonConnector(BaseConnector):
                 db_name = database or self.database
                 # Run synchronous clickhouse-connect in executor with timeout
                 loop = asyncio.get_event_loop()
+                max_bytes = self._effective_max_result_bytes()
                 tsv_output, truncated = await asyncio.wait_for(
                     loop.run_in_executor(
                         None,
@@ -102,7 +103,7 @@ class ClickHousePythonConnector(BaseConnector):
                         port,
                         db_name,
                         query,
-                        self.max_result_bytes,
+                        max_bytes,
                         original_port,  # Pass original port for protocol detection
                         is_ssh_tunnel
                     ),

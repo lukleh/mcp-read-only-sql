@@ -71,7 +71,7 @@ class PostgreSQLCLIConnector(BaseCLIConnector):
                 lines = []
                 total_bytes = 0
                 newline_bytes = len('\n'.encode())
-                max_bytes = self.max_result_bytes or 0
+                max_bytes = self._effective_max_result_bytes() or 0
                 enforce_limit = max_bytes > 0
                 truncated = False
 
