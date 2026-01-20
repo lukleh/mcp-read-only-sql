@@ -13,13 +13,35 @@ install:
 run config="connections.yaml":
     uv run -- python -m src.server {{config}}
 
-# Import DBeaver connections
-import-dbeaver path="$HOME/Library/DBeaverData/workspace6/General/.dbeaver":
-    uv run -- python -m src.config.dbeaver_import {{path}}
-
-# Import DBeaver without merging clusters
-import-dbeaver-no-merge path="$HOME/Library/DBeaverData/workspace6/General/.dbeaver":
-    uv run -- python -m src.config.dbeaver_import --no-merge {{path}}
+# Import DBeaver connections (supports name=value options)
+# Examples:
+#   just import-dbeaver
+#   just import-dbeaver only="clickhouse-1.example.com grafana"
+#   just import-dbeaver merge=false dry_run=true
+# Options: path, only, merge, dry_run, update_passwords, output, env_file
+import-dbeaver path="$HOME/Library/DBeaverData/workspace6/General/.dbeaver" only="" merge="true" dry_run="false" update_passwords="false" output="" env_file="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    args=()
+    if [ -n "{{only}}" ]; then
+        args+=(--only "{{only}}")
+    fi
+    case "{{merge}}" in
+        false|0|no) args+=(--no-merge) ;;
+    esac
+    case "{{dry_run}}" in
+        true|1|yes) args+=(--dry-run) ;;
+    esac
+    case "{{update_passwords}}" in
+        true|1|yes) args+=(--update-passwords) ;;
+    esac
+    if [ -n "{{output}}" ]; then
+        args+=(--output "{{output}}")
+    fi
+    if [ -n "{{env_file}}" ]; then
+        args+=(--env-file "{{env_file}}")
+    fi
+    uv run -- python -m src.config.dbeaver_import "{{path}}" "${args[@]}"
 
 # Validate configuration file
 validate config="connections.yaml" maybe_flag="":
