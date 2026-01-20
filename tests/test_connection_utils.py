@@ -213,12 +213,12 @@ class TestGetConnectionTarget:
         """Test real-world example: staging connection"""
         config = {
             "connection_name": "staging",
-            "description": "postgresql on esh-ab-worker-7.adjust.com/postgres (imported from DBeaver: STAGING)",
+            "description": "postgresql on staging-worker-7.example.com/postgres (imported from DBeaver: STAGING)",
             "type": "postgresql",
             "servers": ["localhost:5432"],
             "db": "postgres",
             "ssh_tunnel": {
-                "host": "esh-ab-worker-7.adjust.com",
+                "host": "staging-worker-7.example.com",
                 "user": "lukas",
                 "port": 22,
                 "private_key": "/Users/lukas/.ssh/vault/id_rsa_ab-data-team"
@@ -229,7 +229,7 @@ class TestGetConnectionTarget:
         result = get_connection_target(config)
 
         # DB is on localhost via SSH, so use SSH host
-        assert result["host"] == "esh-ab-worker-7.adjust.com"
+        assert result["host"] == "staging-worker-7.example.com"
         assert result["port"] == 5432
         assert result["database"] == "postgres"
         assert result["connection_type"] == "ssh_local"
@@ -239,10 +239,10 @@ class TestGetConnectionTarget:
         config = {
             "connection_name": "prod_esh-tracker-db-1",
             "type": "postgresql",
-            "servers": ["esh-pg-tracker-1.adjust.com:8433"],
+            "servers": ["tracker-db-1.example.com:8433"],
             "db": "adjust",
             "ssh_tunnel": {
-                "host": "esh-ab-query-4.adjust.com",
+                "host": "jump-1.example.com",
                 "user": "lukas",
                 "private_key": "/Users/lukas/.ssh/vault/id_rsa_ab-data-team"
             },
@@ -252,8 +252,8 @@ class TestGetConnectionTarget:
         result = get_connection_target(config)
 
         # DB is remote, SSH is just a jump
-        assert result["host"] == "esh-pg-tracker-1.adjust.com"
+        assert result["host"] == "tracker-db-1.example.com"
         assert result["port"] == 8433
         assert result["database"] == "adjust"
         assert result["connection_type"] == "ssh_jump"
-        assert result["ssh_host"] == "esh-ab-query-4.adjust.com"
+        assert result["ssh_host"] == "jump-1.example.com"
