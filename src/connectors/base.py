@@ -37,6 +37,7 @@ class BaseConnector(ABC):
         self.name = connection.name
         self.servers = connection.servers
         self.database = connection.database
+        self.allowed_databases = connection.allowed_databases
         self.username = connection.username
         self.password = connection.password
         self.ssh_config = connection.ssh_tunnel
@@ -142,6 +143,10 @@ class BaseConnector(ABC):
     def _get_default_port(self) -> int:
         """Get default port for the database type"""
         return 5432  # Override in subclasses
+
+    def _resolve_database(self, database: Optional[str] = None) -> str:
+        """Resolve and validate database selection for this connection."""
+        return self.connection.resolve_database(database)
 
 
     def _check_result_size(self, data: Any) -> int:

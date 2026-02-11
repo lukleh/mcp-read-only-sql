@@ -109,6 +109,7 @@ class ReadOnlySQLServer:
         async def run_query_read_only(
             connection_name: str,
             query: str,
+            database: Optional[str] = None,
             server: Optional[str] = None,
             file_path: Optional[str] = None,
         ) -> str:
@@ -118,6 +119,7 @@ class ReadOnlySQLServer:
             Args:
                 connection_name: Identifier returned by list_connections
                 query: SQL text that must remain read-only
+                database: Optional database to use (must be allowlisted by the connection).
                 server: Optional hostname to target a specific server.
                 file_path: Optional path to save results. When supplied, results
                     are written to this path and only the absolute path is returned.
@@ -139,7 +141,7 @@ class ReadOnlySQLServer:
             if file_path:
                 # Disable result-size guard when streaming to disk
                 with connector.disable_result_limit():
-                    result = await execute(query, server=server)
+                    result = await execute(query, database=database, server=server)
 
                 output_path = Path(file_path).expanduser().resolve()
 
@@ -150,7 +152,7 @@ class ReadOnlySQLServer:
                 output_path.write_text(result, encoding="utf-8")
                 return str(output_path)
             else:
-                result = await execute(query, server=server)
+                result = await execute(query, database=database, server=server)
 
             return result
 
@@ -160,7 +162,7 @@ class ReadOnlySQLServer:
             List all available database connections with their configuration details.
 
             Returns:
-                TSV string with header columns: name, type, description, servers, database, user.
+                TSV string with header columns: name, type, description, servers, database, databases, user.
                 Servers are comma-separated hostnames showing the resolved database endpoints
                 (SSH/VPN adjustments applied) loaded at startup.
             """
@@ -179,6 +181,7 @@ class ReadOnlySQLServer:
                     "description": connector.connection.description or "",
                     "servers": servers,
                     "database": connector.database,
+                    "databases": connector.allowed_databases,
                     "user": connector.username or ""
                 }
 
@@ -194,10 +197,10 @@ class ReadOnlySQLServer:
 
             # Return as TSV for consistency with query results
             if not conn_list:
-                return "name\ttype\tdescription\tservers\tdatabase\tuser"
+                return "name\ttype\tdescription\tservers\tdatabase\tdatabases\tuser"
 
             # Build TSV with headers
-            headers = ["name", "type", "description", "servers", "database", "user"]
+            headers = ["name", "type", "description", "servers", "database", "databases", "user"]
             rows = ["\t".join(headers)]
 
             for conn in conn_list:
@@ -207,6 +210,7 @@ class ReadOnlySQLServer:
                     conn.get("description", ""),
                     ",".join(conn.get("servers", [])),  # Join multiple servers with comma
                     conn.get("database", ""),
+                    ",".join(conn.get("databases", [])),
                     conn.get("user", "")
                 ]
                 rows.append("\t".join(row))

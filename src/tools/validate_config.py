@@ -260,8 +260,34 @@ def validate_config(config_path: str = "connections.yaml", check_env: bool = Fal
                     for err in server_errors:
                         errors.append(f"Server {i+1}: {err}")
 
-            if not conn.get("db"):
-                warnings.append("No database specified (will use default)")
+            if conn.get("db") and conn.get("default_database") and conn.get("db") != conn.get("default_database"):
+                errors.append("db and default_database must match when both are provided")
+
+            db_value = conn.get("default_database") or conn.get("db")
+            if "allowed_databases" in conn and "databases" in conn:
+                errors.append("Use only one of allowed_databases or databases")
+
+            allowed_raw = conn.get("allowed_databases", conn.get("databases"))
+
+            allowed_list = None
+            if allowed_raw is not None:
+                if not isinstance(allowed_raw, list) or not allowed_raw:
+                    errors.append("allowed_databases must be a non-empty list of database names")
+                else:
+                    allowed_list = []
+                    for item in allowed_raw:
+                        if not isinstance(item, str) or not item.strip():
+                            errors.append("allowed_databases entries must be non-empty strings")
+                            break
+                        if item not in allowed_list:
+                            allowed_list.append(item)
+
+            if not db_value and not allowed_list:
+                errors.append("Missing db (or allowed_databases)")
+            elif not db_value and allowed_list:
+                warnings.append("No default database specified (will use first allowed)")
+            elif db_value and allowed_list and db_value not in allowed_list:
+                errors.append("default_database/db must be included in allowed_databases")
 
             if not conn.get("username"):
                 errors.append("Missing username")

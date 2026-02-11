@@ -11,7 +11,7 @@ def get_connection_target(config: Dict[str, Any]) -> Dict[str, Any]:
     Returns a dict with:
     - host: The final host to connect to
     - port: The final port
-    - database: The database name
+    - database: The default database name
     - connection_type: One of 'direct', 'ssh_local', 'ssh_jump'
     """
     # Required field
@@ -19,7 +19,13 @@ def get_connection_target(config: Dict[str, Any]) -> Dict[str, Any]:
         raise ValueError("Connection configuration missing required field 'type'")
 
     db_type = config["type"]
-    database = config.get("db", "")
+    database = config.get("default_database") or config.get("db")
+    if not database:
+        allowed = config.get("allowed_databases", config.get("databases"))
+        if isinstance(allowed, list) and allowed:
+            database = allowed[0]
+        else:
+            database = ""
     ssh_config = config.get("ssh_tunnel")
     servers = config.get("servers", [])
 

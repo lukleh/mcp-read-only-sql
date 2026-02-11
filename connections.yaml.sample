@@ -28,6 +28,22 @@
   # Password from DB_PASSWORD_BASIC_CLICKHOUSE env var
 
 # ============================================================================
+# MULTI-DATABASE ACCESS (ALLOWLIST)
+# ============================================================================
+
+# Single connection with explicit database allowlist
+- connection_name: analytics_multi
+  description: Analytics connection with explicit DB allowlist
+  type: postgresql
+  servers:
+    - "analytics.example.com:5432"
+  allowed_databases:
+    - analytics
+    - reporting
+  default_database: analytics
+  username: analyst
+
+# ============================================================================
 # CLUSTER CONFIGURATIONS (Multiple Servers)
 # ============================================================================
 
@@ -40,7 +56,7 @@
     - "pg-node-1.example.com:5432"
     - "pg-node-2.example.com:5432"
     - "pg-node-3.example.com:5432"
-  db: production  # For multiple databases, create separate connections
+  db: production  # For multiple databases, use allowed_databases + default_database
   username: app_reader
   # NOTE: Currently always uses first server - no load balancing implemented
 
@@ -52,7 +68,7 @@
   servers:
     - "ch-1.example.com:9000"
     - "ch-2.example.com:9000"
-  db: metrics  # For multiple databases, create separate connections
+  db: metrics  # For multiple databases, use allowed_databases + default_database
   username: reader
 
 # ============================================================================
@@ -173,7 +189,7 @@
   servers:
     - "primary.example.com:5432"
     - "secondary.example.com:5432"
-  db: production  # For multiple databases, create separate connections
+  db: production  # For multiple databases, use allowed_databases + default_database
   username: power_user
   # Security limits (reasonable for production)
   query_timeout: 30           # 30 seconds (default: 10)
@@ -239,7 +255,7 @@
 #    - query_timeout: 10 seconds
 #    - connection_timeout: 5 seconds
 #    - max_result_bytes: 5120 bytes (5KB)
-# 4. The 'db' field is optional (defaults: postgres for PostgreSQL, default for ClickHouse)
+# 4. Use 'db' for a single allowed database, or 'allowed_databases' + 'default_database' for multiple
 # 5. Multiple servers: Currently always uses first server (no load balancing/failover)
 # 6. Passwords: MUST be set via environment variables - any password in YAML is ignored
 # 7. All queries are forced to be read-only at multiple levels

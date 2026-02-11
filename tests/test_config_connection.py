@@ -160,6 +160,65 @@ class TestConnection:
         assert conn.ssh_tunnel.host == "bastion.example.com"
         assert conn.ssh_tunnel.user == "tunneluser"
 
+    def test_connection_with_allowed_databases(self):
+        """Test connection with allowed database list and default"""
+        env = {"DB_PASSWORD_TEST": "testpass"}
+        conn = Connection({
+            "connection_name": "test",
+            "type": "postgresql",
+            "servers": [{"host": "localhost", "port": 5432}],
+            "allowed_databases": ["db1", "db2"],
+            "default_database": "db2",
+            "username": "testuser"
+        }, env=env)
+
+        assert conn.database == "db2"
+        assert conn.allowed_databases == ["db1", "db2"]
+
+    def test_connection_allowed_databases_default_first(self):
+        """Default database should fall back to first allowed entry"""
+        env = {"DB_PASSWORD_TEST": "testpass"}
+        conn = Connection({
+            "connection_name": "test",
+            "type": "postgresql",
+            "servers": [{"host": "localhost", "port": 5432}],
+            "allowed_databases": ["db1", "db2"],
+            "username": "testuser"
+        }, env=env)
+
+        assert conn.database == "db1"
+        assert conn.allowed_databases == ["db1", "db2"]
+
+    def test_connection_default_not_in_allowed(self):
+        """Default database must be in allowed list"""
+        with pytest.raises(ValueError, match="default_database.*allowed_databases"):
+            Connection({
+                "connection_name": "test",
+                "type": "postgresql",
+                "servers": [{"host": "localhost", "port": 5432}],
+                "allowed_databases": ["db1", "db2"],
+                "default_database": "db3",
+                "username": "testuser",
+                "password": "testpass"
+            })
+
+    def test_connection_resolve_database_enforces_allowlist(self):
+        """resolve_database should enforce allowed databases"""
+        conn = Connection({
+            "connection_name": "test",
+            "type": "postgresql",
+            "servers": [{"host": "localhost", "port": 5432}],
+            "allowed_databases": ["db1", "db2"],
+            "default_database": "db1",
+            "username": "testuser",
+            "password": "testpass"
+        })
+
+        assert conn.resolve_database(None) == "db1"
+        assert conn.resolve_database("db2") == "db2"
+        with pytest.raises(ValueError, match="not allowed"):
+            conn.resolve_database("db3")
+
     def test_connection_missing_name(self):
         """Test connection validation catches missing name"""
         with pytest.raises(ValueError, match="missing required field 'connection_name'"):
@@ -219,7 +278,7 @@ class TestConnection:
 
     def test_connection_missing_db(self):
         """Test connection validation catches missing db"""
-        with pytest.raises(ValueError, match="missing required field 'db'"):
+        with pytest.raises(ValueError, match="missing required field 'db' or 'allowed_databases'"):
             Connection({
                 "connection_name": "test",
                 "type": "postgresql",

@@ -35,9 +35,9 @@ class ConfigParser:
         # Get database password from environment variables
         conn["password"] = os.getenv(f"DB_PASSWORD_{conn_name_env}", "")
 
-        # Note: Database defaults are handled by the connector based on type:
-        # - PostgreSQL: defaults to "postgres" if db is missing
-        # - ClickHouse: defaults to "default" if db is missing
+        # Note: Database defaults are handled by the Connection config:
+        # - Use 'db' for a single allowed database
+        # - Use 'allowed_databases' + 'default_database' for multi-DB access
 
         # Process SSH tunnel configuration
         if "ssh_tunnel" in conn and conn["ssh_tunnel"] is not None:

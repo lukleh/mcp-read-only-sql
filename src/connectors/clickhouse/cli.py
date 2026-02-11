@@ -65,8 +65,8 @@ class ClickHouseCLIConnector(BaseCLIConnector):
                     logger.debug(f"Changing port from 8443 to 9440 for clickhouse-client direct connection")
                     port = 9440
 
-            # Use specified database or configured database
-            db_name = database or self.database
+            # Use specified database or configured database (validated)
+            db_name = self._resolve_database(database)
 
             # Build clickhouse-client command with read-only enforcement
             cmd = [

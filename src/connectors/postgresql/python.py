@@ -35,8 +35,8 @@ class PostgreSQLPythonConnector(BaseConnector):
                     host = selected_server.host
                     port = selected_server.port
 
-                # Use specified database or configured database
-                db_name = database or self.database
+                # Use specified database or configured database (validated)
+                db_name = self._resolve_database(database)
 
                 # Run synchronous psycopg2 in executor with timeout
                 loop = asyncio.get_event_loop()

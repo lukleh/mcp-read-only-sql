@@ -66,6 +66,22 @@ just import-dbeaver
 > **Note:** The server reads `connections.yaml` during startup. Restart the MCP
 > process after editing the file so changes take effect.
 
+To allow a connection to access multiple databases, add an explicit allowlist:
+
+```yaml
+- connection_name: analytics_multi
+  type: postgresql
+  servers:
+    - "analytics.example.com:5432"
+  allowed_databases:
+    - analytics
+    - reporting
+  default_database: analytics
+  username: analyst
+```
+
+If you only set `db`, that single database is implicitly the allowlist.
+
 ### 3. Validate and Test Connections
 
 ```bash
@@ -100,6 +116,7 @@ Execute read-only SQL queries on configured databases.
 {
   "connection_name": "my_postgres",
   "query": "SELECT * FROM users LIMIT 10",
+  "database": "analytics",
   "server": "db2.example.com",
   "file_path": "~/Downloads/query.tsv"
 }
@@ -108,6 +125,7 @@ Execute read-only SQL queries on configured databases.
 **Parameters:**
 - `connection_name` (required): Identifier returned by list_connections
 - `query` (required): SQL text that must remain read-only
+- `database` (optional): Database to use (must be listed in the connection's allowlist).
 - `server` (optional): Hostname to target a specific server. If not provided, uses the first server in the connection's list.
 - `file_path` (optional): When provided, results are written to this path (parents created if needed) and the tool returns the absolute path string instead of TSV content. The file must not already exist; if it does, the tool returns an error instead of overwriting. The result-size limit is skipped when saving to a file so the full output is streamed to disk.
 
@@ -120,9 +138,10 @@ is supplied, the returned value is the absolute path of the written file, the to
 List all available database connections.
 
 **Returns:** Tab-separated text with columns `name`, `type`, `description`,
-`servers`, `database`, and `user`. The `servers` column lists comma-separated
-hostnames after resolving SSH/VPN tunnels, so entries reflect the endpoints the
-agent should reference.
+`servers`, `database`, `databases`, and `user`. `database` is the default database,
+while `databases` lists the allowlisted databases (comma-separated). The `servers`
+column lists comma-separated hostnames after resolving SSH/VPN tunnels, so entries
+reflect the endpoints the agent should reference.
 
 ## Implementation Matrix
 

@@ -15,6 +15,26 @@ DEFAULT_CONNECTION_TIMEOUT = 10
 DEFAULT_MAX_RESULT_BYTES = 10_000_000
 
 
+def _normalize_database_list(value: Any, field_name: str) -> List[str]:
+    """Normalize a database list field to a deduplicated list of names."""
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError(f"'{field_name}' must be a non-empty list of database names")
+    cleaned: List[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            raise ValueError(f"'{field_name}' entries must be strings")
+        name = item.strip()
+        if not name:
+            raise ValueError(f"'{field_name}' entries must be non-empty strings")
+        if name not in cleaned:
+            cleaned.append(name)
+    if not cleaned:
+        raise ValueError(f"'{field_name}' must contain at least one database name")
+    return cleaned
+
+
 @dataclass
 class Server:
     """Database server configuration"""
@@ -150,8 +170,15 @@ class Connection:
             raise ValueError("Connection configuration missing required field 'type'")
         if "servers" not in config or not config["servers"]:
             raise ValueError("Connection configuration missing required field 'servers' (must be non-empty list)")
-        if "db" not in config:
-            raise ValueError("Connection configuration missing required field 'db'")
+        if (
+            "db" not in config
+            and "default_database" not in config
+            and "allowed_databases" not in config
+            and "databases" not in config
+        ):
+            raise ValueError(
+                "Connection configuration missing required field 'db' or 'allowed_databases'"
+            )
         if "username" not in config:
             raise ValueError("Connection configuration missing required field 'username'")
 
@@ -195,6 +222,38 @@ class Connection:
             # Note: Empty password is allowed (for compatibility with existing configs)
             # but authentication will likely fail at connection time
 
+        # Parse database allowlist/defaults
+        if "allowed_databases" in config and "databases" in config:
+            raise ValueError("Use only one of 'allowed_databases' or 'databases'")
+
+        default_db = config.get("default_database")
+        db_field = config.get("db")
+        if db_field is not None and not isinstance(db_field, str):
+            raise ValueError("Field 'db' must be a string database name")
+        if default_db is not None and not isinstance(default_db, str):
+            raise ValueError("Field 'default_database' must be a string database name")
+
+        allowed_raw = config.get("allowed_databases", config.get("databases"))
+        allowed_databases = _normalize_database_list(allowed_raw, "allowed_databases") if allowed_raw is not None else []
+
+        if db_field and default_db and db_field.strip() != default_db.strip():
+            raise ValueError("'db' and 'default_database' must match when both are provided")
+
+        if default_db is None:
+            if db_field:
+                default_db = db_field
+            elif allowed_databases:
+                default_db = allowed_databases[0]
+        default_db = (default_db or "").strip()
+
+        if not default_db:
+            raise ValueError("Connection configuration missing required field 'db' or 'default_database'")
+
+        if not allowed_databases:
+            allowed_databases = [default_db]
+        elif default_db not in allowed_databases:
+            raise ValueError("'default_database' must be included in 'allowed_databases'")
+
         # Parse servers
         servers = []
         for idx, server_data in enumerate(config["servers"]):
@@ -230,7 +289,8 @@ class Connection:
         self._name = config["connection_name"]
         self._db_type = db_type
         self._servers = servers
-        self._database = config["db"]
+        self._database = default_db
+        self._allowed_databases = allowed_databases
         self._username = config["username"]
         self._password = password
         self._password_env_var = password_env_var
@@ -260,8 +320,28 @@ class Connection:
 
     @property
     def database(self) -> str:
-        """Database name"""
+        """Default database name"""
         return self._database
+
+    @property
+    def allowed_databases(self) -> List[str]:
+        """Allowed database names for this connection"""
+        return list(self._allowed_databases)
+
+    def resolve_database(self, database: Optional[str] = None) -> str:
+        """Resolve and validate the database name against the allowlist."""
+        if database is None:
+            return self._database
+        candidate = str(database).strip()
+        if not candidate:
+            return self._database
+        if candidate not in self._allowed_databases:
+            allowed = ", ".join(self._allowed_databases)
+            raise ValueError(
+                f"Database '{candidate}' is not allowed for connection '{self.name}'. "
+                f"Allowed databases: {allowed}"
+            )
+        return candidate
 
     @property
     def username(self) -> str:

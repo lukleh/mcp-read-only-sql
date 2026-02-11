@@ -30,8 +30,8 @@ class PostgreSQLCLIConnector(BaseCLIConnector):
                 host = selected_server.host
                 port = selected_server.port
 
-            # Use specified database or configured database
-            db_name = database or self.database
+            # Use specified database or configured database (validated)
+            db_name = self._resolve_database(database)
 
             # Build psql command with read-only enforcement
             # Wrap the query in a read-only transaction

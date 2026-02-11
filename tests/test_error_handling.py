@@ -20,6 +20,7 @@ def postgres_python_conn():
         "type": "postgresql",
         "servers": [{"host": "localhost", "port": 5432}],
         "db": "testdb",
+        "allowed_databases": ["testdb", "nonexistent_db"],
         "username": "testuser",
         "password": "testpass"
     })
@@ -35,6 +36,7 @@ def postgres_cli_conn():
         "type": "postgresql",
         "servers": [{"host": "localhost", "port": 5432}],
         "db": "testdb",
+        "allowed_databases": ["testdb", "nonexistent_db"],
         "username": "testuser",
         "password": "testpass"
     })

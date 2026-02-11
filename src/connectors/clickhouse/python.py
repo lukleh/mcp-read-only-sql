@@ -90,8 +90,8 @@ class ClickHousePythonConnector(BaseConnector):
                     port = selected_server.port
                     is_ssh_tunnel = False
 
-                # Use specified database or configured database
-                db_name = database or self.database
+                # Use specified database or configured database (validated)
+                db_name = self._resolve_database(database)
                 # Run synchronous clickhouse-connect in executor with timeout
                 loop = asyncio.get_event_loop()
                 max_bytes = self._effective_max_result_bytes()
