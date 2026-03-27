@@ -3,7 +3,7 @@ name = "mcp-read-only-sql"
 version = "0.1.0"
 description = "MCP server for read-only SQL queries supporting PostgreSQL and ClickHouse"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 authors = [
     {name = "Lukas Lehner", email = "lehner.lukas@gmail.com"}
 ]
