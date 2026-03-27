@@ -10,7 +10,6 @@ from typing import Optional
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from src.config import load_connections
-from src.config.env_files import build_runtime_env
 from src.connectors.clickhouse.cli import ClickHouseCLIConnector
 from src.connectors.clickhouse.python import ClickHousePythonConnector
 from src.connectors.postgresql.cli import PostgreSQLCLIConnector
@@ -24,10 +23,7 @@ async def test_connection(
 ) -> bool:
     """Test database connection(s)."""
     try:
-        connections = load_connections(
-            runtime_paths.connections_file,
-            env=build_runtime_env(None),
-        )
+        connections = load_connections(runtime_paths.connections_file)
 
         if not connections:
             print("❌ No connections found in configuration")
@@ -54,14 +50,10 @@ async def test_connection(
             print(f"  Type: {db_type}")
             print(f"  Implementation: {impl}")
 
-            if connection.password_env_var:
-                status = "found" if connection.password_env_found else "missing"
-                status_icon = "✅" if connection.password_env_found else "❌"
-                print(
-                    f"  Password env var: {connection.password_env_var} {status_icon} ({status})"
-                )
+            if connection.password:
+                print("  Password: configured")
             else:
-                print("  Password env var: n/a (inline password configured)")
+                print("  Password: empty / not set")
 
             if connection.ssh_tunnel:
                 print(f"  SSH Tunnel: {connection.ssh_tunnel.host}")
@@ -127,7 +119,9 @@ async def test_connection(
                     query = "SELECT version()"
                     server_param = None if display_host == "default" else display_host
                     if server_param:
-                        result = await connector.execute_query(query, server=server_param)
+                        result = await connector.execute_query(
+                            query, server=server_param
+                        )
                     else:
                         result = await connector.execute_query(query)
 

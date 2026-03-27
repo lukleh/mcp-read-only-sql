@@ -58,12 +58,14 @@ class TestSSHTunnelConfig:
 
     def test_ssh_tunnel_with_private_key(self):
         """Test SSH tunnel config with private key"""
-        config = SSHTunnelConfig.from_dict({
-            "host": "bastion.example.com",
-            "port": 22,
-            "user": "tunneluser",
-            "private_key": "~/.ssh/id_rsa"
-        })
+        config = SSHTunnelConfig.from_dict(
+            {
+                "host": "bastion.example.com",
+                "port": 22,
+                "user": "tunneluser",
+                "private_key": "~/.ssh/id_rsa",
+            }
+        )
         assert config.host == "bastion.example.com"
         assert config.port == 22
         assert config.user == "tunneluser"
@@ -72,46 +74,58 @@ class TestSSHTunnelConfig:
 
     def test_ssh_tunnel_with_password(self):
         """Test SSH tunnel config with password"""
-        config = SSHTunnelConfig.from_dict({
-            "host": "bastion.example.com",
-            "user": "tunneluser",
-            "password": "secret"
-        })
+        config = SSHTunnelConfig.from_dict(
+            {"host": "bastion.example.com", "user": "tunneluser", "password": "secret"}
+        )
         assert config.password == "secret"
         assert config.private_key is None
+
+    def test_ssh_tunnel_rejects_password_env(self):
+        """Legacy password_env should fail with a clear message."""
+        with pytest.raises(
+            ValueError, match="Field 'password_env' is no longer supported"
+        ):
+            SSHTunnelConfig.from_dict(
+                {
+                    "host": "bastion.example.com",
+                    "user": "tunneluser",
+                    "password_env": "SSH_PASSWORD_TEST",
+                }
+            )
 
     def test_ssh_tunnel_missing_host(self):
         """Test SSH tunnel validation catches missing host"""
         with pytest.raises(ValueError, match="missing required field 'host'"):
-            SSHTunnelConfig.from_dict({
-                "user": "tunneluser",
-                "private_key": "~/.ssh/id_rsa"
-            })
+            SSHTunnelConfig.from_dict(
+                {"user": "tunneluser", "private_key": "~/.ssh/id_rsa"}
+            )
 
     def test_ssh_tunnel_missing_user(self):
         """Test SSH tunnel validation catches missing user"""
         with pytest.raises(ValueError, match="missing required field 'user'"):
-            SSHTunnelConfig.from_dict({
-                "host": "bastion.example.com",
-                "private_key": "~/.ssh/id_rsa"
-            })
+            SSHTunnelConfig.from_dict(
+                {"host": "bastion.example.com", "private_key": "~/.ssh/id_rsa"}
+            )
 
     def test_ssh_tunnel_no_auth_method(self):
         """Test SSH tunnel validation catches missing auth"""
-        with pytest.raises(ValueError, match="requires either 'private_key' or 'password'"):
-            SSHTunnelConfig.from_dict({
-                "host": "bastion.example.com",
-                "user": "tunneluser"
-            })
+        with pytest.raises(
+            ValueError, match="requires either 'private_key' or 'password'"
+        ):
+            SSHTunnelConfig.from_dict(
+                {"host": "bastion.example.com", "user": "tunneluser"}
+            )
 
     def test_ssh_tunnel_disabled(self):
         """Test SSH tunnel returns None when disabled"""
-        config = SSHTunnelConfig.from_dict({
-            "enabled": False,
-            "host": "bastion.example.com",
-            "user": "tunneluser",
-            "private_key": "~/.ssh/id_rsa"
-        })
+        config = SSHTunnelConfig.from_dict(
+            {
+                "enabled": False,
+                "host": "bastion.example.com",
+                "user": "tunneluser",
+                "private_key": "~/.ssh/id_rsa",
+            }
+        )
         assert config is None
 
 
@@ -120,14 +134,16 @@ class TestConnection:
 
     def test_connection_minimal_valid(self):
         """Test creating minimal valid connection"""
-        env = {"DB_PASSWORD_TEST": "testpass"}
-        conn = Connection({
-            "connection_name": "test",
-            "type": "postgresql",
-            "servers": [{"host": "localhost", "port": 5432}],
-            "db": "testdb",
-            "username": "testuser"
-        }, env=env)
+        conn = Connection(
+            {
+                "connection_name": "test",
+                "type": "postgresql",
+                "servers": [{"host": "localhost", "port": 5432}],
+                "db": "testdb",
+                "username": "testuser",
+                "password": "testpass",
+            }
+        )
 
         assert conn.name == "test"
         assert conn.db_type == "postgresql"
@@ -142,19 +158,21 @@ class TestConnection:
 
     def test_connection_with_ssh_tunnel(self):
         """Test connection with SSH tunnel"""
-        env = {"DB_PASSWORD_TEST": "testpass"}
-        conn = Connection({
-            "connection_name": "test",
-            "type": "postgresql",
-            "servers": [{"host": "db.internal", "port": 5432}],
-            "db": "testdb",
-            "username": "testuser",
-            "ssh_tunnel": {
-                "host": "bastion.example.com",
-                "user": "tunneluser",
-                "private_key": "~/.ssh/id_rsa"
+        conn = Connection(
+            {
+                "connection_name": "test",
+                "type": "postgresql",
+                "servers": [{"host": "db.internal", "port": 5432}],
+                "db": "testdb",
+                "username": "testuser",
+                "password": "testpass",
+                "ssh_tunnel": {
+                    "host": "bastion.example.com",
+                    "user": "tunneluser",
+                    "private_key": "~/.ssh/id_rsa",
+                },
             }
-        }, env=env)
+        )
 
         assert conn.ssh_tunnel is not None
         assert conn.ssh_tunnel.host == "bastion.example.com"
@@ -162,29 +180,33 @@ class TestConnection:
 
     def test_connection_with_allowed_databases(self):
         """Test connection with allowed database list and default"""
-        env = {"DB_PASSWORD_TEST": "testpass"}
-        conn = Connection({
-            "connection_name": "test",
-            "type": "postgresql",
-            "servers": [{"host": "localhost", "port": 5432}],
-            "allowed_databases": ["db1", "db2"],
-            "default_database": "db2",
-            "username": "testuser"
-        }, env=env)
+        conn = Connection(
+            {
+                "connection_name": "test",
+                "type": "postgresql",
+                "servers": [{"host": "localhost", "port": 5432}],
+                "allowed_databases": ["db1", "db2"],
+                "default_database": "db2",
+                "username": "testuser",
+                "password": "testpass",
+            }
+        )
 
         assert conn.database == "db2"
         assert conn.allowed_databases == ["db1", "db2"]
 
     def test_connection_allowed_databases_default_first(self):
         """Default database should fall back to first allowed entry"""
-        env = {"DB_PASSWORD_TEST": "testpass"}
-        conn = Connection({
-            "connection_name": "test",
-            "type": "postgresql",
-            "servers": [{"host": "localhost", "port": 5432}],
-            "allowed_databases": ["db1", "db2"],
-            "username": "testuser"
-        }, env=env)
+        conn = Connection(
+            {
+                "connection_name": "test",
+                "type": "postgresql",
+                "servers": [{"host": "localhost", "port": 5432}],
+                "allowed_databases": ["db1", "db2"],
+                "username": "testuser",
+                "password": "testpass",
+            }
+        )
 
         assert conn.database == "db1"
         assert conn.allowed_databases == ["db1", "db2"]
@@ -192,27 +214,31 @@ class TestConnection:
     def test_connection_default_not_in_allowed(self):
         """Default database must be in allowed list"""
         with pytest.raises(ValueError, match="default_database.*allowed_databases"):
-            Connection({
+            Connection(
+                {
+                    "connection_name": "test",
+                    "type": "postgresql",
+                    "servers": [{"host": "localhost", "port": 5432}],
+                    "allowed_databases": ["db1", "db2"],
+                    "default_database": "db3",
+                    "username": "testuser",
+                    "password": "testpass",
+                }
+            )
+
+    def test_connection_resolve_database_enforces_allowlist(self):
+        """resolve_database should enforce allowed databases"""
+        conn = Connection(
+            {
                 "connection_name": "test",
                 "type": "postgresql",
                 "servers": [{"host": "localhost", "port": 5432}],
                 "allowed_databases": ["db1", "db2"],
-                "default_database": "db3",
+                "default_database": "db1",
                 "username": "testuser",
-                "password": "testpass"
-            })
-
-    def test_connection_resolve_database_enforces_allowlist(self):
-        """resolve_database should enforce allowed databases"""
-        conn = Connection({
-            "connection_name": "test",
-            "type": "postgresql",
-            "servers": [{"host": "localhost", "port": 5432}],
-            "allowed_databases": ["db1", "db2"],
-            "default_database": "db1",
-            "username": "testuser",
-            "password": "testpass"
-        })
+                "password": "testpass",
+            }
+        )
 
         assert conn.resolve_database(None) == "db1"
         assert conn.resolve_database("db2") == "db2"
@@ -221,178 +247,178 @@ class TestConnection:
 
     def test_connection_missing_name(self):
         """Test connection validation catches missing name"""
-        with pytest.raises(ValueError, match="missing required field 'connection_name'"):
-            Connection({
-                "type": "postgresql",
-                "servers": [{"host": "localhost", "port": 5432}],
-                "db": "testdb",
-                "username": "testuser",
-                "password": "testpass"
-            })
+        with pytest.raises(
+            ValueError, match="missing required field 'connection_name'"
+        ):
+            Connection(
+                {
+                    "type": "postgresql",
+                    "servers": [{"host": "localhost", "port": 5432}],
+                    "db": "testdb",
+                    "username": "testuser",
+                    "password": "testpass",
+                }
+            )
 
     def test_connection_missing_type(self):
         """Test connection validation catches missing type"""
         with pytest.raises(ValueError, match="missing required field 'type'"):
-            Connection({
-                "connection_name": "test",
-                "servers": [{"host": "localhost", "port": 5432}],
-                "db": "testdb",
-                "username": "testuser",
-                "password": "testpass"
-            })
+            Connection(
+                {
+                    "connection_name": "test",
+                    "servers": [{"host": "localhost", "port": 5432}],
+                    "db": "testdb",
+                    "username": "testuser",
+                    "password": "testpass",
+                }
+            )
 
     def test_connection_invalid_type(self):
         """Test connection validation catches invalid type"""
         with pytest.raises(ValueError, match="Invalid database type"):
-            Connection({
-                "connection_name": "test",
-                "type": "mysql",  # Not supported
-                "servers": [{"host": "localhost", "port": 3306}],
-                "db": "testdb",
-                "username": "testuser",
-                "password": "testpass"
-            })
+            Connection(
+                {
+                    "connection_name": "test",
+                    "type": "mysql",  # Not supported
+                    "servers": [{"host": "localhost", "port": 3306}],
+                    "db": "testdb",
+                    "username": "testuser",
+                    "password": "testpass",
+                }
+            )
 
     def test_connection_missing_servers(self):
         """Test connection validation catches missing servers"""
         with pytest.raises(ValueError, match="missing required field 'servers'"):
-            Connection({
-                "connection_name": "test",
-                "type": "postgresql",
-                "db": "testdb",
-                "username": "testuser",
-                "password": "testpass"
-            })
+            Connection(
+                {
+                    "connection_name": "test",
+                    "type": "postgresql",
+                    "db": "testdb",
+                    "username": "testuser",
+                    "password": "testpass",
+                }
+            )
 
     def test_connection_empty_servers(self):
         """Test connection validation catches empty servers list"""
         with pytest.raises(ValueError, match="must be non-empty list"):
-            Connection({
-                "connection_name": "test",
-                "type": "postgresql",
-                "servers": [],
-                "db": "testdb",
-                "username": "testuser",
-                "password": "testpass"
-            })
+            Connection(
+                {
+                    "connection_name": "test",
+                    "type": "postgresql",
+                    "servers": [],
+                    "db": "testdb",
+                    "username": "testuser",
+                    "password": "testpass",
+                }
+            )
 
     def test_connection_missing_db(self):
         """Test connection validation catches missing db"""
-        with pytest.raises(ValueError, match="missing required field 'db' or 'allowed_databases'"):
-            Connection({
-                "connection_name": "test",
-                "type": "postgresql",
-                "servers": [{"host": "localhost", "port": 5432}],
-                "username": "testuser",
-                "password": "testpass"
-            })
+        with pytest.raises(
+            ValueError, match="missing required field 'db' or 'allowed_databases'"
+        ):
+            Connection(
+                {
+                    "connection_name": "test",
+                    "type": "postgresql",
+                    "servers": [{"host": "localhost", "port": 5432}],
+                    "username": "testuser",
+                    "password": "testpass",
+                }
+            )
 
     def test_connection_missing_username(self):
         """Test connection validation catches missing username"""
         with pytest.raises(ValueError, match="missing required field 'username'"):
-            Connection({
-                "connection_name": "test",
+            Connection(
+                {
+                    "connection_name": "test",
+                    "type": "postgresql",
+                    "servers": [{"host": "localhost", "port": 5432}],
+                    "db": "testdb",
+                    "password": "testpass",
+                }
+            )
+
+    def test_connection_password_from_yaml(self):
+        """Test connection loads password directly from YAML config."""
+        conn = Connection(
+            {
+                "connection_name": "my-test-connection",
                 "type": "postgresql",
                 "servers": [{"host": "localhost", "port": 5432}],
                 "db": "testdb",
-                "password": "testpass"
-            })
-
-    def test_connection_password_from_env_auto(self):
-        """Test connection auto-loads password from environment"""
-        env = {"DB_PASSWORD_MY_TEST_CONNECTION": "secret123"}
-        conn = Connection({
-            "connection_name": "my-test-connection",
-            "type": "postgresql",
-            "servers": [{"host": "localhost", "port": 5432}],
-            "db": "testdb",
-            "username": "testuser"
-        }, env=env)
+                "username": "testuser",
+                "password": "secret123",
+            }
+        )
 
         assert conn.password == "secret123"
-        assert conn.password_env_var == "DB_PASSWORD_MY_TEST_CONNECTION"
-        assert conn.password_env_found is True
-        assert conn.password_from_env is True
 
     def test_connection_password_explicit(self):
         """Test connection with explicit password"""
-        conn = Connection({
-            "connection_name": "test",
-            "type": "postgresql",
-            "servers": [{"host": "localhost", "port": 5432}],
-            "db": "testdb",
-            "username": "testuser",
-            "password": "explicit_pass"
-        })
-
-        assert conn.password == "explicit_pass"
-        assert conn.password_env_var is None
-        assert conn.password_env_found is False
-        assert conn.password_from_env is False
-
-    def test_connection_password_env_var(self):
-        """Test connection with password_env"""
-        env = {"MY_CUSTOM_PASSWORD": "custom_pass"}
-        conn = Connection({
-            "connection_name": "test",
-            "type": "postgresql",
-            "servers": [{"host": "localhost", "port": 5432}],
-            "db": "testdb",
-            "username": "testuser",
-            "password_env": "MY_CUSTOM_PASSWORD"
-        }, env=env)
-
-        assert conn.password == "custom_pass"
-        assert conn.password_env_var == "MY_CUSTOM_PASSWORD"
-        assert conn.password_env_found is True
-        assert conn.password_from_env is True
-
-    def test_connection_password_missing_env_var(self):
-        """Test connection fails when password_env not found"""
-        with pytest.raises(ValueError, match="Password environment variable 'MISSING_VAR' not found"):
-            Connection({
+        conn = Connection(
+            {
                 "connection_name": "test",
                 "type": "postgresql",
                 "servers": [{"host": "localhost", "port": 5432}],
                 "db": "testdb",
                 "username": "testuser",
-                "password_env": "MISSING_VAR"
-            }, env={})
+                "password": "explicit_pass",
+            }
+        )
+
+        assert conn.password == "explicit_pass"
+
+    def test_connection_rejects_password_env(self):
+        """Legacy password_env should fail with a clear message."""
+        with pytest.raises(
+            ValueError, match="Field 'password_env' is no longer supported"
+        ):
+            Connection(
+                {
+                    "connection_name": "test",
+                    "type": "postgresql",
+                    "servers": [{"host": "localhost", "port": 5432}],
+                    "db": "testdb",
+                    "username": "testuser",
+                    "password_env": "MISSING_VAR",
+                }
+            )
 
     def test_connection_empty_password_allowed(self):
         """Test connection allows empty password for compatibility"""
-        conn = Connection({
-            "connection_name": "test",
-            "type": "postgresql",
-            "servers": [{"host": "localhost", "port": 5432}],
-            "db": "testdb",
-            "username": "testuser"
-        }, env={})
+        conn = Connection(
+            {
+                "connection_name": "test",
+                "type": "postgresql",
+                "servers": [{"host": "localhost", "port": 5432}],
+                "db": "testdb",
+                "username": "testuser",
+            }
+        )
 
         assert conn.password == ""
-        assert conn.password_env_var == "DB_PASSWORD_TEST"
-        assert conn.password_env_found is False
-        assert conn.password_from_env is False
 
-    def test_connection_ssh_password_env_fallback(self):
-        """SSH password falls back to SSH_PASSWORD_<NAME> when no key is provided"""
-        env = {
-            "DB_PASSWORD_TEST": "dbpass",
-            "SSH_PASSWORD_TEST": "sshpass",
-        }
-
-        conn = Connection({
-            "connection_name": "test",
-            "type": "postgresql",
-            "servers": [{"host": "localhost", "port": 5432}],
-            "db": "testdb",
-            "username": "testuser",
-            "ssh_tunnel": {
-                "host": "bastion.example.com",
-                "user": "tunneluser",
-                # No password/key fields provided so fallback should trigger
-            },
-        }, env=env)
+    def test_connection_ssh_password_from_yaml(self):
+        """SSH password should come directly from ssh_tunnel.password."""
+        conn = Connection(
+            {
+                "connection_name": "test",
+                "type": "postgresql",
+                "servers": [{"host": "localhost", "port": 5432}],
+                "db": "testdb",
+                "username": "testuser",
+                "password": "dbpass",
+                "ssh_tunnel": {
+                    "host": "bastion.example.com",
+                    "user": "tunneluser",
+                    "password": "sshpass",
+                },
+            }
+        )
 
         assert conn.ssh_tunnel is not None
         assert conn.ssh_tunnel.password == "sshpass"
@@ -400,14 +426,16 @@ class TestConnection:
 
     def test_connection_string_servers(self):
         """Test connection parses string servers"""
-        env = {"DB_PASSWORD_TEST": "pass"}
-        conn = Connection({
-            "connection_name": "test",
-            "type": "postgresql",
-            "servers": ["localhost:5432", "backup:5433"],
-            "db": "testdb",
-            "username": "testuser"
-        }, env=env)
+        conn = Connection(
+            {
+                "connection_name": "test",
+                "type": "postgresql",
+                "servers": ["localhost:5432", "backup:5433"],
+                "db": "testdb",
+                "username": "testuser",
+                "password": "pass",
+            }
+        )
 
         assert len(conn.servers) == 2
         assert conn.servers[0].host == "localhost"
@@ -438,7 +466,7 @@ class TestLoadConnections:
   username: clickuser
   password: clickpass
 """
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
             f.write(yaml_content)
             f.flush()
             temp_path = f.name
@@ -472,13 +500,15 @@ class TestLoadConnections:
   username: clickuser
   password: clickpass
 """
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
             f.write(yaml_content)
             f.flush()
             temp_path = f.name
 
         try:
-            with pytest.raises(ValueError, match="Duplicate connection name: 'duplicate'"):
+            with pytest.raises(
+                ValueError, match="Duplicate connection name: 'duplicate'"
+            ):
                 load_connections(temp_path)
         finally:
             os.unlink(temp_path)
@@ -490,7 +520,7 @@ class TestLoadConnections:
 
     def test_load_connections_empty_file(self):
         """Test loader handles empty file"""
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
             f.write("")
             f.flush()
             temp_path = f.name
@@ -504,7 +534,7 @@ class TestLoadConnections:
     def test_load_connections_invalid_yaml(self):
         """Test loader handles invalid YAML structure"""
         yaml_content = "just_a_string"  # Valid YAML but not a list
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
             f.write(yaml_content)
             f.flush()
             temp_path = f.name
@@ -532,7 +562,7 @@ class TestLoadConnections:
   username: testuser
   password: testpass
 """
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
             f.write(yaml_content)
             f.flush()
             temp_path = f.name

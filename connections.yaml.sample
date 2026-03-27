@@ -14,7 +14,7 @@
     - "localhost:5432"
   db: myapp
   username: readonly_user
-  # Password will be read from DB_PASSWORD_BASIC_POSTGRES environment variable
+  password: change_me
   # Implementation defaults to 'cli' when not specified
 
 # Simple ClickHouse connection
@@ -25,7 +25,7 @@
     - "localhost:9000"  # Native protocol port (not HTTP 8123)
   db: events
   username: analyst
-  # Password from DB_PASSWORD_BASIC_CLICKHOUSE env var
+  password: change_me
 
 # ============================================================================
 # MULTI-DATABASE ACCESS (ALLOWLIST)
@@ -42,6 +42,7 @@
     - reporting
   default_database: analytics
   username: analyst
+  password: change_me
 
 # ============================================================================
 # CLUSTER CONFIGURATIONS (Multiple Servers)
@@ -58,6 +59,7 @@
     - "pg-node-3.example.com:5432"
   db: production  # For multiple databases, use allowed_databases + default_database
   username: app_reader
+  password: change_me
   # NOTE: Currently always uses first server - no load balancing implemented
 
 # ClickHouse cluster (uses first server only - no load balancing)
@@ -70,6 +72,7 @@
     - "ch-2.example.com:9000"
   db: metrics  # For multiple databases, use allowed_databases + default_database
   username: reader
+  password: change_me
 
 # ============================================================================
 # SSH TUNNEL CONNECTIONS
@@ -84,6 +87,7 @@
     - "10.0.1.50:5432"  # Internal IP only accessible via SSH
   db: postgres  # Specify the database to connect to
   username: db_user
+  password: change_me
   ssh_tunnel:
     host: bastion.example.com
     port: 22  # Optional, defaults to 22
@@ -91,8 +95,6 @@
     private_key: ~/.ssh/id_rsa  # Path to private key
     remote_host: 10.0.1.50  # Optional, defaults to localhost
     remote_port: 5432  # Optional, defaults to server port
-  # Password from DB_PASSWORD_REMOTE_POSTGRES_SSH env var
-  # SSH password (if needed) from SSH_PASSWORD_REMOTE_POSTGRES_SSH env var
 
 # SSH tunnel with password authentication
 - connection_name: remote_clickhouse_ssh
@@ -102,10 +104,11 @@
     - "internal-clickhouse:9000"
   db: analytics
   username: analyst
+  password: change_me
   ssh_tunnel:
     host: jump-server.example.com
     user: ssh_user
-    # No private_key specified, will use password from SSH_PASSWORD_REMOTE_CLICKHOUSE_SSH env var
+    password: change_me
 
 # ============================================================================
 # SECURITY-LIMITED CONNECTIONS
@@ -120,6 +123,7 @@
     - "sensitive.example.com:5432"
   db: sensitive_data  # Connect to specific database
   username: auditor
+  password: change_me
   # Strict security limits (stricter than defaults)
   query_timeout: 2            # Max 2 seconds per query (default: 10)
   connection_timeout: 2       # Max 2 seconds to connect (default: 5)
@@ -134,6 +138,7 @@
     - "analytics.example.com:9000"
   db: analytics
   username: analyst
+  password: change_me
   query_timeout: 60           # 1 minute for complex queries (default: 10)
   connection_timeout: 10      # 10 seconds to connect (default: 5)
   max_result_bytes: 20971520  # 20MB for larger datasets (default: 5KB)
@@ -146,6 +151,7 @@
     - "public.example.com:5432"
   db: public_data
   username: public_reader
+  password: change_me
   query_timeout: 1            # 1 second max (default: 10)
   connection_timeout: 1       # Quick connect only (default: 5)
   max_result_bytes: 512       # 512 bytes max (default: 5KB)
@@ -163,8 +169,8 @@
     - "legacy.example.com:5432"
   db: legacy_db
   username: cli_user
+  password: change_me
   # Requires psql to be installed and in PATH
-  # Password from DB_PASSWORD_LEGACY_POSTGRES_CLI env var
 
 # ClickHouse using clickhouse-client
 - connection_name: clickhouse_cli
@@ -175,6 +181,7 @@
     - "localhost:9000"
   db: test
   username: cli_user
+  password: change_me
   # Requires clickhouse-client to be installed and in PATH
 
 # ============================================================================
@@ -191,6 +198,7 @@
     - "secondary.example.com:5432"
   db: production  # For multiple databases, use allowed_databases + default_database
   username: power_user
+  password: change_me
   # Security limits (reasonable for production)
   query_timeout: 30           # 30 seconds (default: 10)
   connection_timeout: 10      # 10 seconds (default: 5)
@@ -216,7 +224,7 @@
     - "localhost"  # Port defaults to 5432
   db: postgres  # Specify the database to connect to
   username: postgres
-  # Password from DB_PASSWORD_LOCAL_POSTGRES env var
+  password: change_me
 
 # Docker PostgreSQL
 - connection_name: docker_postgres
@@ -226,25 +234,7 @@
     - "localhost:5433"  # Non-standard port for Docker
   db: testdb
   username: testuser
-
-# ============================================================================
-# ENVIRONMENT VARIABLES REFERENCE
-# ============================================================================
-# For each connection, passwords are read from environment variables:
-#
-# Database password: DB_PASSWORD_<CONNECTION_NAME>
-# Examples:
-#   DB_PASSWORD_BASIC_POSTGRES=secretpass123
-#   DB_PASSWORD_POSTGRES_CLUSTER=cluster_pass
-#   DB_PASSWORD_RESTRICTED_POSTGRES=secure_pass
-#
-# SSH password (if not using key): SSH_PASSWORD_<CONNECTION_NAME>
-# Examples:
-#   SSH_PASSWORD_REMOTE_CLICKHOUSE_SSH=ssh_pass
-#   SSH_PASSWORD_FULL_FEATURED=tunnel_pass
-#
-# Connection names are converted to uppercase with hyphens replaced by underscores
-# Example: "my-connection" becomes "DB_PASSWORD_MY_CONNECTION"
+  password: change_me
 #
 # ============================================================================
 # NOTES
@@ -257,9 +247,9 @@
 #    - max_result_bytes: 5120 bytes (5KB)
 # 4. Use 'db' for a single allowed database, or 'allowed_databases' + 'default_database' for multiple
 # 5. Multiple servers: Currently always uses first server (no load balancing/failover)
-# 6. Passwords: MUST be set via environment variables - any password in YAML is ignored
+# 6. Passwords live directly in this YAML file
 # 7. All queries are forced to be read-only at multiple levels
 # 8. CLI implementations require the respective tools installed:
 #    - PostgreSQL: psql
 #    - ClickHouse: clickhouse-client
-# 9. Never commit actual passwords to this file - use environment variables
+# 9. Never commit actual passwords from this file; keep permissions restricted

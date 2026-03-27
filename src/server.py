@@ -18,7 +18,6 @@ from .config.connection import (
     DEFAULT_MAX_RESULT_BYTES,
     DEFAULT_QUERY_TIMEOUT,
 )
-from .config.env_files import build_runtime_env
 from .connectors.base import BaseConnector
 from .connectors.clickhouse.cli import ClickHouseCLIConnector
 from .connectors.clickhouse.python import ClickHousePythonConnector
@@ -64,11 +63,7 @@ class ReadOnlySQLServer:
 
     def _load_connections(self) -> None:
         try:
-            runtime_env = build_runtime_env(None)
-            connections_config = load_connections(
-                self.runtime_paths.connections_file,
-                env=runtime_env,
-            )
+            connections_config = load_connections(self.runtime_paths.connections_file)
 
             errors = []
 
@@ -76,14 +71,22 @@ class ReadOnlySQLServer:
                 try:
                     if connection.db_type == "postgresql":
                         if connection.implementation == "cli":
-                            self.connections[conn_name] = PostgreSQLCLIConnector(connection)
+                            self.connections[conn_name] = PostgreSQLCLIConnector(
+                                connection
+                            )
                         else:
-                            self.connections[conn_name] = PostgreSQLPythonConnector(connection)
+                            self.connections[conn_name] = PostgreSQLPythonConnector(
+                                connection
+                            )
                     elif connection.db_type == "clickhouse":
                         if connection.implementation == "cli":
-                            self.connections[conn_name] = ClickHouseCLIConnector(connection)
+                            self.connections[conn_name] = ClickHouseCLIConnector(
+                                connection
+                            )
                         else:
-                            self.connections[conn_name] = ClickHousePythonConnector(connection)
+                            self.connections[conn_name] = ClickHousePythonConnector(
+                                connection
+                            )
 
                     logger.info(
                         "Loaded connection: %s (%s, %s)",
@@ -117,6 +120,24 @@ class ReadOnlySQLServer:
             server: Optional[str] = None,
             file_path: Optional[str] = None,
         ) -> str:
+            """Run a read-only SQL query and return TSV output.
+
+            Args:
+                connection_name: Connection name returned by ``list_connections``.
+                query: Read-only SQL text to execute.
+                database: Optional database override. Must be in the connection's
+                    allowed database list.
+                server: Optional hostname override targeting a specific configured
+                    server. Defaults to the first server for the connection.
+                file_path: Optional file path for writing the full TSV result to
+                    disk. When provided, the tool returns the absolute path to the
+                    written file instead of the TSV payload and refuses to
+                    overwrite an existing file.
+
+            Returns:
+                Tab-separated text with a header row followed by result rows, or
+                the absolute output path when ``file_path`` is provided.
+            """
             if connection_name not in self.connections:
                 raise ValueError(
                     f"Connection '{connection_name}' not found. Available connections: {', '.join(self.connections.keys())}"
@@ -141,6 +162,15 @@ class ReadOnlySQLServer:
 
         @self.mcp.tool()
         async def list_connections() -> str:
+            """List configured database connections as TSV metadata.
+
+            Returns:
+                Tab-separated text with the columns ``name``, ``type``,
+                ``description``, ``servers``, ``database``, ``databases``, and
+                ``user``. The ``servers`` column contains the resolved display
+                hosts for each connection, while ``database`` and ``databases``
+                describe the default database and allowed database list.
+            """
             conn_list = []
 
             for conn_name, connector in self.connections.items():

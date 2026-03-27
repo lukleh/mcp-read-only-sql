@@ -6,7 +6,7 @@ A secure MCP (Model Context Protocol) server that provides **read-only** SQL acc
 
 > Default layout:
 > - Config: `~/.config/lukleh/mcp-read-only-sql/connections.yaml`
-> - Credentials: injected via the MCP client environment
+> - Credentials: stored in `connections.yaml`
 > - State: `~/.local/state/lukleh/mcp-read-only-sql/`
 > - Cache: `~/.cache/lukleh/mcp-read-only-sql/`
 
@@ -73,12 +73,14 @@ cp connections.yaml.sample ~/.config/lukleh/mcp-read-only-sql/connections.yaml
 ```bash
 just import-dbeaver
 # This creates ~/.config/lukleh/mcp-read-only-sql/connections.yaml
-# and prints the DB_PASSWORD_*/SSH_PASSWORD_* variables to add
-# to your Codex/Claude MCP config
+# with any decrypted passwords written directly into that file
 ```
 
 > **Note:** The server reads `connections.yaml` during startup. Restart the MCP
 > process after editing the file so changes take effect.
+>
+> `connections.yaml` contains credentials, so keep it private and never commit
+> it. The DBeaver importer writes the file with user-only permissions.
 
 To allow a connection to access multiple databases, add an explicit allowlist:
 
@@ -92,14 +94,15 @@ To allow a connection to access multiple databases, add an explicit allowlist:
     - reporting
   default_database: analytics
   username: analyst
+  password: change_me
 ```
 
 If you only set `db`, that single database is implicitly the allowlist.
 
 ### 3. Set Up Credentials
 
-Set the `DB_PASSWORD_*` and `SSH_PASSWORD_*` values in your MCP client config
-to match the connections in `connections.yaml`.
+Put database passwords in each connection's `password` field. For SSH tunnels,
+use either `ssh_tunnel.private_key` or `ssh_tunnel.password`.
 
 ### 4. Validate and Test Connections
 
@@ -256,5 +259,5 @@ Example HAProxy configuration:
 When multiple servers are specified in a connection's configuration, the system currently uses only the first server in the list. Load balancing across servers is not implemented.
 
 ### SSH Authentication
-- **Python implementation**: Supports both SSH password authentication (via `SSH_PASSWORD_<CONNECTION_NAME>` environment variable) and SSH key files
+- **Python implementation**: Supports both `ssh_tunnel.password` and `ssh_tunnel.private_key`
 - **CLI implementation**: Supports key-based authentication and can use passwords when `sshpass` is installed

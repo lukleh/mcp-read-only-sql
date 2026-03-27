@@ -10,7 +10,6 @@ from typing import Optional
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from src.config import load_connections
-from src.config.env_files import build_runtime_env
 from src.runtime_paths import resolve_runtime_paths, RuntimePaths
 from src.utils.ssh_tunnel import SSHTunnel
 from src.utils.ssh_tunnel_cli import CLISSHTunnel
@@ -22,10 +21,7 @@ async def test_ssh_tunnels(
 ) -> bool:
     """Test SSH tunnel connectivity for connections."""
     try:
-        all_connections = load_connections(
-            runtime_paths.connections_file,
-            env=build_runtime_env(None),
-        )
+        all_connections = load_connections(runtime_paths.connections_file)
 
         if not all_connections:
             print("❌ No connections found in configuration")
@@ -41,7 +37,9 @@ async def test_ssh_tunnels(
 
         if connection_name:
             if connection_name not in ssh_connections:
-                print(f"❌ Connection not found or has no SSH tunnel: {connection_name}")
+                print(
+                    f"❌ Connection not found or has no SSH tunnel: {connection_name}"
+                )
                 print("\nConnections with SSH tunnels:")
                 for name in ssh_connections:
                     print(f"  - {name}")
@@ -132,9 +130,7 @@ async def test_ssh_tunnels(
                         if ssh_config.private_key:
                             print(f"    Check SSH key: {ssh_config.private_key}")
                         else:
-                            print(
-                                "    Check the injected SSH password environment variable"
-                            )
+                            print("    Check the SSH password in connections.yaml")
                     elif "refused" in error_msg.lower():
                         print("    ❌ Connection refused by SSH server")
                         print(
