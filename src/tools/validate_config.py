@@ -11,43 +11,14 @@ import yaml
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from src.config.env_files import build_runtime_env
 from src.config.parser import ConfigParser
 from src.runtime_paths import resolve_runtime_paths, RuntimePaths
 
 
-def _scan_env_file_for_key(env_path: Path, var_name: str) -> bool:
-    """Return True if var_name has an entry in the credentials file."""
-    if not env_path.exists():
-        return False
-
-    with env_path.open() as f:
-        for line in f:
-            line = line.strip()
-            if line and not line.startswith("#") and line.startswith(f"{var_name}="):
-                return True
-    return False
-
-
-def check_env_var(
-    env_path: Path,
-    var_name: str,
-    env_keys: Optional[Set[str]] = None,
-) -> tuple[bool, Optional[str]]:
-    """Check if environment variable exists in shell or credentials.env."""
-    if env_keys is not None and var_name in env_keys:
-        return True, "credentials.env"
-
-    # Check shell environment
+def check_env_var(var_name: str) -> tuple[bool, Optional[str]]:
+    """Check if an environment variable exists in the current process."""
     if os.getenv(var_name):
-        if env_keys is None and _scan_env_file_for_key(env_path, var_name):
-            return True, "credentials.env"
-        return True, "shell"
-
-    # Fallback to scanning credentials.env when env_keys not provided
-    if env_keys is None and _scan_env_file_for_key(env_path, var_name):
-        return True, "credentials.env"
-
+        return True, "environment"
     return False, None
 
 
@@ -122,41 +93,11 @@ def validate_server_format(server: Any) -> List[str]:
     return errors
 
 
-def _load_env_inventory(env_path: Path) -> Tuple[Set[str], List[Tuple[str, int, int]]]:
-    """
-    Return the set of keys defined in the credentials file and any duplicate key definitions.
-    """
-    if not env_path.exists():
-        return set(), []
-
-    seen: Dict[str, int] = {}
-    duplicates: List[Tuple[str, int, int]] = []
-    keys: Set[str] = set()
-
-    with env_path.open() as f:
-        for lineno, raw in enumerate(f, start=1):
-            if "=" not in raw:
-                continue
-            key = raw.split("=", 1)[0].strip()
-            if not key or key.startswith("#"):
-                continue
-            if key in seen:
-                duplicates.append((key, seen[key], lineno))
-            else:
-                seen[key] = lineno
-                keys.add(key)
-
-    return keys, duplicates
-
-
 def validate_config(
     config_path: str | Path,
-    env_path: str | Path,
-    check_env: bool = False,
 ) -> bool:
     """Validate configuration file and report issues"""
     config_path = str(Path(config_path).expanduser())
-    env_path = Path(env_path).expanduser()
 
     print(f"Validating {config_path}...")
     print("-" * 50)
@@ -170,24 +111,10 @@ def validate_config(
         print("❌ Passwords MUST be set via environment variables, not in YAML!")
         print()
 
-    env_keys: Set[str] = set()
-    env_duplicates: List[Tuple[str, int, int]] = []
-    env_missing_file = False
     used_db_env: Set[str] = set()
     used_ssh_env: Set[str] = set()
-
-    if check_env:
-        if env_path.exists():
-            env_keys, env_duplicates = _load_env_inventory(env_path)
-        else:
-            env_missing_file = True
-        print("🔍 Environment variable verification enabled (--check-env)")
-        print()
-    else:
-        print(
-            "ℹ️ Environment variable verification skipped (run with --check-env to enforce credentials.env checks)"
-        )
-        print()
+    print("ℹ️ Environment variable verification uses the current process environment")
+    print()
 
     try:
         with open(config_path) as raw_file:
@@ -200,7 +127,7 @@ def validate_config(
 
         parser = ConfigParser(
             config_path,
-            env=build_runtime_env(env_path),
+            env=dict(os.environ),
         )
         connections = parser.load_config()
 
@@ -213,12 +140,6 @@ def validate_config(
 
         has_errors = False
 
-        if check_env and env_duplicates:
-            print("⚠️  Duplicate entries found in credentials.env:")
-            for key, first, second in env_duplicates:
-                print(f"  - {key} (lines {first} and {second})")
-            print()
-
         for i, conn in enumerate(connections, 1):
             name = conn.get("connection_name", f"Connection {i}")
             print(f"Connection: {name}")
@@ -229,30 +150,10 @@ def validate_config(
             infos = []
 
             def record_var_status(var_name: str, kind: str) -> Tuple[bool, Optional[str]]:
-                exists, location = check_env_var(
-                    env_path,
-                    var_name,
-                    env_keys if (check_env and not env_missing_file) else None,
-                )
-                if check_env and not env_missing_file:
-                    in_env = var_name in env_keys
-                    icon = "✅" if in_env else "❌"
-                    if in_env:
-                        infos.append(
-                            f"{icon} {kind} sourced from {var_name} (credentials.env)"
-                        )
-                    else:
-                        if location == "shell":
-                            detail = "shell override; not in credentials.env"
-                        elif location:
-                            detail = f"{location}; not in credentials.env"
-                        else:
-                            detail = "missing in credentials.env"
-                        infos.append(f"{icon} {kind} sourced from {var_name} ({detail})")
-                else:
-                    if exists:
-                        origin = location or "unknown source"
-                        infos.append(f"ℹ️  {kind} sourced from {var_name} ({origin})")
+                exists, location = check_env_var(var_name)
+                if exists:
+                    origin = location or "unknown source"
+                    infos.append(f"ℹ️  {kind} sourced from {var_name} ({origin})")
                 return exists, location
 
             # Required fields
@@ -325,28 +226,9 @@ def validate_config(
                 exists, location = record_var_status(env_var, "Password")
                 if not exists:
                     errors.append(f"Password not found - missing environment variable: {env_var}")
-
-                if check_env:
-                    if env_missing_file:
-                        errors.append(
-                            "--check-env: credentials.env file not found (required to verify password variables)"
-                        )
-                    elif env_var not in env_keys:
-                        errors.append(
-                            f"--check-env: {env_var} is not defined in credentials.env"
-                        )
             elif password_env_var:
                 used_db_env.add(password_env_var)
-                exists, _ = record_var_status(password_env_var, "Password")
-                if check_env:
-                    if env_missing_file:
-                        errors.append(
-                            "--check-env: credentials.env file not found (required to verify password variables)"
-                        )
-                    elif password_env_var not in env_keys:
-                        errors.append(
-                            f"--check-env: {password_env_var} is not defined in credentials.env"
-                        )
+                record_var_status(password_env_var, "Password")
 
             # Check implementation
             impl = conn.get("implementation", "cli")
@@ -427,16 +309,6 @@ def validate_config(
                     else:
                         errors.append(f"SSH authentication missing - no private key and no password in {ssh_env}")
 
-                    if check_env and ssh_env:
-                        if env_missing_file:
-                            errors.append(
-                                "--check-env: credentials.env file not found (required to verify SSH password variables)"
-                            )
-                        elif ssh_env not in env_keys:
-                            errors.append(
-                                f"--check-env: {ssh_env} is not defined in credentials.env"
-                            )
-
             # Report results
             if errors:
                 has_errors = True
@@ -453,40 +325,33 @@ def validate_config(
 
             print()
 
-        if check_env and not env_missing_file:
-            db_keys_in_env = {key for key in env_keys if key.startswith("DB_PASSWORD_")}
-            unused_db_env = sorted(db_keys_in_env - used_db_env)
-            print("DB password variables in credentials.env without matching connection:")
-            if unused_db_env:
-                for key in unused_db_env:
-                    print(f"  - {key}")
-            else:
-                print("  - (none)")
+        env_keys = {key for key in os.environ if key.startswith("DB_PASSWORD_")}
+        unused_db_env = sorted(env_keys - used_db_env)
+        print("DB password variables in the environment without matching connection:")
+        if unused_db_env:
+            for key in unused_db_env:
+                print(f"  - {key}")
+        else:
+            print("  - (none)")
 
-            ssh_keys_in_env = {key for key in env_keys if key.startswith("SSH_PASSWORD_")}
-            unused_ssh_env = sorted(ssh_keys_in_env - used_ssh_env)
-            if unused_ssh_env:
-                print("SSH password variables in credentials.env without matching connection:")
-                for key in unused_ssh_env:
-                    print(f"  - {key}")
-            elif ssh_keys_in_env:
-                print("SSH password variables in credentials.env without matching connection:")
-                print("  - (none)")
-            print()
+        ssh_keys_in_env = {key for key in os.environ if key.startswith("SSH_PASSWORD_")}
+        unused_ssh_env = sorted(ssh_keys_in_env - used_ssh_env)
+        if unused_ssh_env:
+            print("SSH password variables in the environment without matching connection:")
+            for key in unused_ssh_env:
+                print(f"  - {key}")
+        elif ssh_keys_in_env:
+            print("SSH password variables in the environment without matching connection:")
+            print("  - (none)")
+        print()
 
-        if has_errors or password_warnings or (check_env and env_missing_file):
+        if has_errors or password_warnings:
             if has_errors:
                 print("❌ Configuration has errors")
             if password_warnings:
                 print("❌ Remove passwords from YAML - use environment variables instead")
-            if check_env and env_missing_file:
-                print(
-                    "❌ credentials.env file not found - required when running with --check-env"
-                )
             return False
         else:
-            if check_env and not env_missing_file:
-                print("✅ credentials.env password variables verified")
             print("✅ Configuration is valid")
             return True
 
@@ -505,7 +370,7 @@ def main():
     parser = argparse.ArgumentParser(description="Validate MCP SQL Server configuration")
     parser.add_argument(
         "--config-dir",
-        help="Directory containing connections.yaml and credentials.env",
+        help="Directory containing connections.yaml",
     )
     parser.add_argument(
         "--state-dir",
@@ -520,12 +385,6 @@ def main():
         action="store_true",
         help="Print resolved config/state/cache paths and exit",
     )
-    parser.add_argument(
-        "--check-env",
-        action="store_true",
-        help="Verify that required password environment variables are defined in credentials.env",
-    )
-
     args = parser.parse_args()
 
     runtime_paths = resolve_runtime_paths(
@@ -538,11 +397,7 @@ def main():
         print(runtime_paths.render())
         return
 
-    success = validate_config(
-        runtime_paths.connections_file,
-        runtime_paths.credentials_file,
-        check_env=args.check_env,
-    )
+    success = validate_config(runtime_paths.connections_file)
     sys.exit(0 if success else 1)
 
 

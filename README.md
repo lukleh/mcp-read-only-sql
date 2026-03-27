@@ -6,7 +6,7 @@ A secure MCP (Model Context Protocol) server that provides **read-only** SQL acc
 
 > Default layout:
 > - Config: `~/.config/lukleh/mcp-read-only-sql/connections.yaml`
-> - Credentials: `~/.config/lukleh/mcp-read-only-sql/credentials.env`
+> - Credentials: injected via the MCP client environment
 > - State: `~/.local/state/lukleh/mcp-read-only-sql/`
 > - Cache: `~/.cache/lukleh/mcp-read-only-sql/`
 
@@ -73,7 +73,8 @@ cp connections.yaml.sample ~/.config/lukleh/mcp-read-only-sql/connections.yaml
 ```bash
 just import-dbeaver
 # This creates ~/.config/lukleh/mcp-read-only-sql/connections.yaml
-# and ~/.config/lukleh/mcp-read-only-sql/credentials.env
+# and prints the DB_PASSWORD_*/SSH_PASSWORD_* variables to add
+# to your Codex/Claude MCP config
 ```
 
 > **Note:** The server reads `connections.yaml` during startup. Restart the MCP
@@ -97,22 +98,14 @@ If you only set `db`, that single database is implicitly the allowlist.
 
 ### 3. Set Up Credentials
 
-If you are not importing from DBeaver, copy the credentials sample:
-
-```bash
-cp credentials.env.example ~/.config/lukleh/mcp-read-only-sql/credentials.env
-```
-
-Fill in the `DB_PASSWORD_*` and `SSH_PASSWORD_*` values that match your connections.
+Set the `DB_PASSWORD_*` and `SSH_PASSWORD_*` values in your MCP client config
+to match the connections in `connections.yaml`.
 
 ### 4. Validate and Test Connections
 
 ```bash
 # Validate configuration file
 just validate
-
-# Verify required password variables exist in credentials.env
-just validate check_env=true
 
 # Test database connectivity
 just test-connection              # Test all connections

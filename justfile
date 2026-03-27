@@ -16,8 +16,8 @@ run:
 #   just import-dbeaver
 #   just import-dbeaver only="clickhouse-1.example.com grafana"
 #   just import-dbeaver merge=false dry_run=true
-# Options: path, only, merge, dry_run, update_passwords, output, env_file
-import-dbeaver path="$HOME/Library/DBeaverData/workspace6/General/.dbeaver" only="" merge="true" dry_run="false" update_passwords="false" output="" env_file="":
+# Options: path, only, merge, dry_run, output
+import-dbeaver path="$HOME/Library/DBeaverData/workspace6/General/.dbeaver" only="" merge="true" dry_run="false" output="":
     #!/usr/bin/env bash
     set -euo pipefail
     args=()
@@ -30,25 +30,14 @@ import-dbeaver path="$HOME/Library/DBeaverData/workspace6/General/.dbeaver" only
     case "{{dry_run}}" in
         true|1|yes) args+=(--dry-run) ;;
     esac
-    case "{{update_passwords}}" in
-        true|1|yes) args+=(--update-passwords) ;;
-    esac
     if [ -n "{{output}}" ]; then
         args+=(--output "{{output}}")
-    fi
-    if [ -n "{{env_file}}" ]; then
-        args+=(--env-file "{{env_file}}")
     fi
     uv run -- python -m src.config.dbeaver_import "{{path}}" "${args[@]}"
 
 # Validate configuration file
-validate check_env="false":
-    #!/usr/bin/env bash
-    if [ "{{check_env}}" = "true" ] || [ "{{check_env}}" = "1" ] || [ "{{check_env}}" = "yes" ]; then
-        uv run -- python -m src.tools.validate_config --check-env
-    else
-        uv run -- python -m src.tools.validate_config
-    fi
+validate:
+    uv run -- python -m src.tools.validate_config
 
 # Show resolved paths
 print-paths:

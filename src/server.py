@@ -64,7 +64,7 @@ class ReadOnlySQLServer:
 
     def _load_connections(self) -> None:
         try:
-            runtime_env = build_runtime_env(self.runtime_paths.credentials_file)
+            runtime_env = build_runtime_env(None)
             connections_config = load_connections(
                 self.runtime_paths.connections_file,
                 env=runtime_env,
@@ -207,7 +207,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="MCP Read-Only SQL Server")
     parser.add_argument(
         "--config-dir",
-        help="Directory containing connections.yaml and credentials.env",
+        help="Directory containing connections.yaml",
     )
     parser.add_argument(
         "--state-dir",
@@ -238,8 +238,6 @@ def main() -> None:
     if args.print_paths:
         print(runtime_paths.render())
         return
-
-    runtime_paths.ensure_directories()
 
     if not runtime_paths.connections_file.exists():
         logger.error("Configuration file not found: %s", runtime_paths.connections_file)

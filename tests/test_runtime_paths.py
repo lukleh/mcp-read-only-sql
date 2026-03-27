@@ -16,4 +16,3 @@ def test_resolve_runtime_paths_env_overrides(monkeypatch, tmp_path):
     assert runtime_paths.state_dir == state_dir
     assert runtime_paths.cache_dir == cache_dir
     assert runtime_paths.connections_file == config_dir / "connections.yaml"
-    assert runtime_paths.credentials_file == config_dir / "credentials.env"

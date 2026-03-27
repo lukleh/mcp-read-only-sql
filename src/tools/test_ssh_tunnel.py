@@ -24,7 +24,7 @@ async def test_ssh_tunnels(
     try:
         all_connections = load_connections(
             runtime_paths.connections_file,
-            env=build_runtime_env(runtime_paths.credentials_file),
+            env=build_runtime_env(None),
         )
 
         if not all_connections:
@@ -133,7 +133,7 @@ async def test_ssh_tunnels(
                             print(f"    Check SSH key: {ssh_config.private_key}")
                         else:
                             print(
-                                "    Check SSH password variable in credentials.env"
+                                "    Check the injected SSH password environment variable"
                             )
                     elif "refused" in error_msg.lower():
                         print("    ❌ Connection refused by SSH server")
@@ -195,7 +195,7 @@ def main():
     )
     parser.add_argument(
         "--config-dir",
-        help="Directory containing connections.yaml and credentials.env",
+        help="Directory containing connections.yaml",
     )
     parser.add_argument(
         "--state-dir",

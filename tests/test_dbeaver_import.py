@@ -1,6 +1,4 @@
 import json
-import os
-import stat
 import sys
 from pathlib import Path
 
@@ -51,9 +49,7 @@ def test_dry_run_skips_writes(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(DBeaverImporter, "_decrypt_credentials", _fake_decrypt)
 
     output_path = tmp_path / "connections.yaml"
-    env_path = tmp_path / "credentials.env"
     output_path.write_text("- connection_name: existing\n  type: clickhouse\n")
-    env_path.write_text("DB_PASSWORD_EXISTING=keep\n")
 
     _run_import(
         monkeypatch,
@@ -62,20 +58,18 @@ def test_dry_run_skips_writes(tmp_path, monkeypatch, capsys):
             "--dry-run",
             "--output",
             str(output_path),
-            "--env-file",
-            str(env_path),
         ],
     )
 
     captured = capsys.readouterr().out
     assert "Dry run: skipping write" in captured
+    assert "DB_PASSWORD_CLICKHOUSE_1_EXAMPLE_COM_GRAFANA" in captured
     assert output_path.read_text() == "- connection_name: existing\n  type: clickhouse\n"
-    assert env_path.read_text() == "DB_PASSWORD_EXISTING=keep\n"
     assert not list(tmp_path.glob("connections.yaml.bak.*"))
-    assert not list(tmp_path.glob("credentials.env.bak.*"))
+    assert not list(tmp_path.glob("credentials.env*"))
 
 
-def test_only_merges_with_existing(tmp_path, monkeypatch):
+def test_only_merges_with_existing(tmp_path, monkeypatch, capsys):
     workspace = _write_dbeaver_workspace(
         tmp_path,
         [
@@ -94,7 +88,6 @@ def test_only_merges_with_existing(tmp_path, monkeypatch):
     monkeypatch.setattr(DBeaverImporter, "_decrypt_credentials", _fake_decrypt)
 
     output_path = tmp_path / "connections.yaml"
-    env_path = tmp_path / "credentials.env"
     existing = [
         {
             "connection_name": "existing_conn",
@@ -106,7 +99,6 @@ def test_only_merges_with_existing(tmp_path, monkeypatch):
         }
     ]
     output_path.write_text(yaml.safe_dump(existing, sort_keys=False))
-    env_path.write_text("DB_PASSWORD_EXISTING=keep\n")
 
     _run_import(
         monkeypatch,
@@ -116,8 +108,6 @@ def test_only_merges_with_existing(tmp_path, monkeypatch):
             "clickhouse-1.example.com grafana",
             "--output",
             str(output_path),
-            "--env-file",
-            str(env_path),
         ],
     )
 
@@ -126,14 +116,14 @@ def test_only_merges_with_existing(tmp_path, monkeypatch):
     assert "existing_conn" in names
     assert "clickhouse-1_example_com_grafana" in names
 
-    env_contents = env_path.read_text()
-    assert "DB_PASSWORD_CLICKHOUSE_1_EXAMPLE_COM_GRAFANA=secret" in env_contents
+    captured = capsys.readouterr().out
+    assert "DB_PASSWORD_CLICKHOUSE_1_EXAMPLE_COM_GRAFANA" in captured
 
     assert list(tmp_path.glob("connections.yaml.bak.*"))
-    assert list(tmp_path.glob("credentials.env.bak.*"))
+    assert not list(tmp_path.glob("credentials.env*"))
 
 
-def test_credentials_files_are_private(tmp_path, monkeypatch):
+def test_import_does_not_write_credentials_files(tmp_path, monkeypatch, capsys):
     workspace = _write_dbeaver_workspace(
         tmp_path,
         [
@@ -152,10 +142,7 @@ def test_credentials_files_are_private(tmp_path, monkeypatch):
     monkeypatch.setattr(DBeaverImporter, "_decrypt_credentials", _fake_decrypt)
 
     output_path = tmp_path / "connections.yaml"
-    env_path = tmp_path / "credentials.env"
     output_path.write_text("- connection_name: existing\n  type: clickhouse\n")
-    env_path.write_text("DB_PASSWORD_EXISTING=keep\n")
-    os.chmod(env_path, 0o644)
 
     _run_import(
         monkeypatch,
@@ -163,13 +150,9 @@ def test_credentials_files_are_private(tmp_path, monkeypatch):
             str(workspace),
             "--output",
             str(output_path),
-            "--env-file",
-            str(env_path),
         ],
     )
 
-    if os.name != "nt":
-        assert stat.S_IMODE(env_path.stat().st_mode) == 0o600
-        backups = list(tmp_path.glob("credentials.env.bak.*"))
-        assert backups
-        assert stat.S_IMODE(backups[0].stat().st_mode) == 0o600
+    captured = capsys.readouterr().out
+    assert "DB_PASSWORD_CLICKHOUSE_1_EXAMPLE_COM_GRAFANA" in captured
+    assert not list(tmp_path.glob("credentials.env*"))

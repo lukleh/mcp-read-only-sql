@@ -20,10 +20,6 @@ class RuntimePaths:
     def connections_file(self) -> Path:
         return self.config_dir / "connections.yaml"
 
-    @property
-    def credentials_file(self) -> Path:
-        return self.config_dir / "credentials.env"
-
     def ensure_directories(self) -> None:
         self.config_dir.mkdir(parents=True, exist_ok=True)
         self.state_dir.mkdir(parents=True, exist_ok=True)
@@ -36,7 +32,6 @@ class RuntimePaths:
                 f"state_dir={self.state_dir}",
                 f"cache_dir={self.cache_dir}",
                 f"connections_file={self.connections_file}",
-                f"credentials_file={self.credentials_file}",
             ]
         )
 
