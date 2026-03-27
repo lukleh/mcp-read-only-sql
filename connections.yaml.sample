@@ -1,6 +1,6 @@
 # MCP Read-Only SQL Server - Connection Configuration Sample
 # This file demonstrates all connection variations and options
-# Copy to connections.yaml and customize for your environment
+# Copy to ~/.config/lukleh/mcp-read-only-sql/connections.yaml
 
 # ============================================================================
 # BASIC CONNECTIONS

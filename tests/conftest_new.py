@@ -16,6 +16,8 @@ import pytest_asyncio
 from mcp.client.session import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
 
 @pytest_asyncio.fixture
 async def integration_client_fixed(integration_config_file, docker_check):
@@ -26,7 +28,16 @@ async def integration_client_fixed(integration_config_file, docker_check):
     """
     server_params = StdioServerParameters(
         command="uv",
-        args=["run", "python", "-m", "src.server", integration_config_file],
+        args=[
+            "--directory",
+            str(PROJECT_ROOT),
+            "run",
+            "python",
+            "-m",
+            "src.server",
+            "--config-dir",
+            str(Path(integration_config_file).parent),
+        ],
         env=dict(os.environ)
     )
 
@@ -71,7 +82,16 @@ async def mcp_client_fixed(test_config_file):
     """
     server_params = StdioServerParameters(
         command="uv",
-        args=["run", "python", "-m", "src.server", test_config_file],
+        args=[
+            "--directory",
+            str(PROJECT_ROOT),
+            "run",
+            "python",
+            "-m",
+            "src.server",
+            "--config-dir",
+            str(Path(test_config_file).parent),
+        ],
         env=dict(os.environ)
     )
 

@@ -4,6 +4,12 @@
 
 A secure MCP (Model Context Protocol) server that provides **read-only** SQL access to PostgreSQL and ClickHouse databases with built-in safety features.
 
+> Default layout:
+> - Config: `~/.config/lukleh/mcp-read-only-sql/connections.yaml`
+> - Credentials: `~/.config/lukleh/mcp-read-only-sql/credentials.env`
+> - State: `~/.local/state/lukleh/mcp-read-only-sql/`
+> - Cache: `~/.cache/lukleh/mcp-read-only-sql/`
+
 ## Security
 
 The server implements a **three-layer security model**:
@@ -51,16 +57,23 @@ If you plan to use CLI connectors with SSH password authentication, install `ssh
 
 ### 2. Configure Database Connections
 
+Create the config directory:
+
+```bash
+mkdir -p ~/.config/lukleh/mcp-read-only-sql
+```
+
 **Option A: Create from sample**
 ```bash
-cp connections.yaml.sample connections.yaml
-# Edit connections.yaml with your database details
+cp connections.yaml.sample ~/.config/lukleh/mcp-read-only-sql/connections.yaml
+# Edit ~/.config/lukleh/mcp-read-only-sql/connections.yaml with your database details
 ```
 
 **Option B: Import from DBeaver**
 ```bash
 just import-dbeaver
-# This creates connections.yaml from your DBeaver workspace
+# This creates ~/.config/lukleh/mcp-read-only-sql/connections.yaml
+# and ~/.config/lukleh/mcp-read-only-sql/credentials.env
 ```
 
 > **Note:** The server reads `connections.yaml` during startup. Restart the MCP
@@ -82,18 +95,34 @@ To allow a connection to access multiple databases, add an explicit allowlist:
 
 If you only set `db`, that single database is implicitly the allowlist.
 
-### 3. Validate and Test Connections
+### 3. Set Up Credentials
+
+If you are not importing from DBeaver, copy the credentials sample:
+
+```bash
+cp credentials.env.example ~/.config/lukleh/mcp-read-only-sql/credentials.env
+```
+
+Fill in the `DB_PASSWORD_*` and `SSH_PASSWORD_*` values that match your connections.
+
+### 4. Validate and Test Connections
 
 ```bash
 # Validate configuration file
 just validate
 
+# Verify required password variables exist in credentials.env
+just validate check_env=true
+
 # Test database connectivity
 just test-connection              # Test all connections
 just test-connection my_postgres  # Test specific connection
+
+# Show the exact runtime paths
+just print-paths
 ```
 
-### 4. Add MCP Server to Your Client
+### 5. Add MCP Server to Your Client
 
 **For Claude Code:**
 ```bash
@@ -106,6 +135,12 @@ codex mcp add mcp-read-only-sql -- uv --directory {PATH_TO_MCP_READ_ONLY_SQL} ru
 ```
 
 Replace `{PATH_TO_MCP_READ_ONLY_SQL}` with the full path to where you cloned this repository (e.g., `/Users/yourname/projects/mcp-read-only-sql`).
+
+To use a different config root during manual testing:
+
+```bash
+uv run -- python -m src.server --config-dir /path/to/config-dir
+```
 
 ## MCP Tools
 

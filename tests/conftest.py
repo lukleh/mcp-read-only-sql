@@ -7,6 +7,7 @@ Uses the minimal_client.py pattern for real MCP protocol testing
 import json
 import os
 import subprocess
+from pathlib import Path
 from typing import Any, Dict
 
 import pytest
@@ -17,6 +18,8 @@ from mcp.client.stdio import stdio_client
 
 from src.config import Connection
 from src.connectors.base import BaseConnector
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 # Helper function to create Connection objects from dict configs
@@ -100,7 +103,7 @@ def test_config_file(tmp_path):
   username: testuser
   password: testpass
 """
-    config_file = tmp_path / "test_config.yaml"
+    config_file = tmp_path / "connections.yaml"
     config_file.write_text(config_content)
     return str(config_file)
 
@@ -113,7 +116,16 @@ async def mcp_client(test_config_file):
     """
     server_params = StdioServerParameters(
         command="uv",
-        args=["run", "python", "-m", "src.server", test_config_file],
+        args=[
+            "--directory",
+            str(PROJECT_ROOT),
+            "run",
+            "python",
+            "-m",
+            "src.server",
+            "--config-dir",
+            str(Path(test_config_file).parent),
+        ],
         env=dict(os.environ)
     )
 
@@ -208,7 +220,7 @@ def integration_config_file(tmp_path):
   max_result_bytes: 10000
 """
 
-    config_file = tmp_path / "integration_config.yaml"
+    config_file = tmp_path / "connections.yaml"
     config_file.write_text(config_content)
 
     # Set password environment variables
@@ -230,7 +242,16 @@ async def integration_client(integration_config_file, docker_check):
     """Client connected to integration test server"""
     server_params = StdioServerParameters(
         command="uv",
-        args=["run", "python", "-m", "src.server", integration_config_file],
+        args=[
+            "--directory",
+            str(PROJECT_ROOT),
+            "run",
+            "python",
+            "-m",
+            "src.server",
+            "--config-dir",
+            str(Path(integration_config_file).parent),
+        ],
         env=dict(os.environ)
     )
 

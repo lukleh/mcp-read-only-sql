@@ -1,22 +1,23 @@
 #!/usr/bin/env python3
-"""Validate connections.yaml configuration file"""
+"""Validate SQL configuration and credentials."""
 
 import os
 import sys
-import yaml
 from pathlib import Path
 from typing import List, Dict, Any, Tuple, Set, Optional
-from dotenv import load_dotenv
+
+import yaml
 
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
+from src.config.env_files import build_runtime_env
 from src.config.parser import ConfigParser
+from src.runtime_paths import resolve_runtime_paths, RuntimePaths
 
 
-def _scan_env_file_for_key(var_name: str) -> bool:
-    """Return True if var_name has an entry in the .env file."""
-    env_path = Path(".env")
+def _scan_env_file_for_key(env_path: Path, var_name: str) -> bool:
+    """Return True if var_name has an entry in the credentials file."""
     if not env_path.exists():
         return False
 
@@ -28,20 +29,24 @@ def _scan_env_file_for_key(var_name: str) -> bool:
     return False
 
 
-def check_env_var(var_name: str, env_keys: Optional[Set[str]] = None) -> tuple[bool, Optional[str]]:
-    """Check if environment variable exists in shell or .env."""
+def check_env_var(
+    env_path: Path,
+    var_name: str,
+    env_keys: Optional[Set[str]] = None,
+) -> tuple[bool, Optional[str]]:
+    """Check if environment variable exists in shell or credentials.env."""
     if env_keys is not None and var_name in env_keys:
-        return True, ".env"
+        return True, "credentials.env"
 
     # Check shell environment
     if os.getenv(var_name):
-        if env_keys is None and _scan_env_file_for_key(var_name):
-            return True, ".env"
+        if env_keys is None and _scan_env_file_for_key(env_path, var_name):
+            return True, "credentials.env"
         return True, "shell"
 
-    # Fallback to scanning .env when env_keys not provided
-    if env_keys is None and _scan_env_file_for_key(var_name):
-        return True, ".env"
+    # Fallback to scanning credentials.env when env_keys not provided
+    if env_keys is None and _scan_env_file_for_key(env_path, var_name):
+        return True, "credentials.env"
 
     return False, None
 
@@ -119,7 +124,7 @@ def validate_server_format(server: Any) -> List[str]:
 
 def _load_env_inventory(env_path: Path) -> Tuple[Set[str], List[Tuple[str, int, int]]]:
     """
-    Return the set of keys defined in the .env file and any duplicate key definitions.
+    Return the set of keys defined in the credentials file and any duplicate key definitions.
     """
     if not env_path.exists():
         return set(), []
@@ -144,8 +149,14 @@ def _load_env_inventory(env_path: Path) -> Tuple[Set[str], List[Tuple[str, int, 
     return keys, duplicates
 
 
-def validate_config(config_path: str = "connections.yaml", check_env: bool = False) -> bool:
+def validate_config(
+    config_path: str | Path,
+    env_path: str | Path,
+    check_env: bool = False,
+) -> bool:
     """Validate configuration file and report issues"""
+    config_path = str(Path(config_path).expanduser())
+    env_path = Path(env_path).expanduser()
 
     print(f"Validating {config_path}...")
     print("-" * 50)
@@ -159,10 +170,6 @@ def validate_config(config_path: str = "connections.yaml", check_env: bool = Fal
         print("❌ Passwords MUST be set via environment variables, not in YAML!")
         print()
 
-    # Load .env file if exists
-    load_dotenv()
-
-    env_path = Path(".env")
     env_keys: Set[str] = set()
     env_duplicates: List[Tuple[str, int, int]] = []
     env_missing_file = False
@@ -177,7 +184,9 @@ def validate_config(config_path: str = "connections.yaml", check_env: bool = Fal
         print("🔍 Environment variable verification enabled (--check-env)")
         print()
     else:
-        print("ℹ️ Environment variable verification skipped (run with --check-env to enforce .env checks)")
+        print(
+            "ℹ️ Environment variable verification skipped (run with --check-env to enforce credentials.env checks)"
+        )
         print()
 
     try:
@@ -189,7 +198,10 @@ def validate_config(config_path: str = "connections.yaml", check_env: bool = Fal
             if isinstance(item, dict) and item.get("connection_name")
         }
 
-        parser = ConfigParser(config_path)
+        parser = ConfigParser(
+            config_path,
+            env=build_runtime_env(env_path),
+        )
         connections = parser.load_config()
 
         if not connections:
@@ -202,7 +214,7 @@ def validate_config(config_path: str = "connections.yaml", check_env: bool = Fal
         has_errors = False
 
         if check_env and env_duplicates:
-            print("⚠️  Duplicate entries found in .env:")
+            print("⚠️  Duplicate entries found in credentials.env:")
             for key, first, second in env_duplicates:
                 print(f"  - {key} (lines {first} and {second})")
             print()
@@ -218,6 +230,7 @@ def validate_config(config_path: str = "connections.yaml", check_env: bool = Fal
 
             def record_var_status(var_name: str, kind: str) -> Tuple[bool, Optional[str]]:
                 exists, location = check_env_var(
+                    env_path,
                     var_name,
                     env_keys if (check_env and not env_missing_file) else None,
                 )
@@ -225,14 +238,16 @@ def validate_config(config_path: str = "connections.yaml", check_env: bool = Fal
                     in_env = var_name in env_keys
                     icon = "✅" if in_env else "❌"
                     if in_env:
-                        infos.append(f"{icon} {kind} sourced from {var_name} (.env)")
+                        infos.append(
+                            f"{icon} {kind} sourced from {var_name} (credentials.env)"
+                        )
                     else:
                         if location == "shell":
-                            detail = "shell override; not in .env"
+                            detail = "shell override; not in credentials.env"
                         elif location:
-                            detail = f"{location}; not in .env"
+                            detail = f"{location}; not in credentials.env"
                         else:
-                            detail = "missing in .env"
+                            detail = "missing in credentials.env"
                         infos.append(f"{icon} {kind} sourced from {var_name} ({detail})")
                 else:
                     if exists:
@@ -313,17 +328,25 @@ def validate_config(config_path: str = "connections.yaml", check_env: bool = Fal
 
                 if check_env:
                     if env_missing_file:
-                        errors.append("--check-env: .env file not found (required to verify password variables)")
+                        errors.append(
+                            "--check-env: credentials.env file not found (required to verify password variables)"
+                        )
                     elif env_var not in env_keys:
-                        errors.append(f"--check-env: {env_var} is not defined in .env")
+                        errors.append(
+                            f"--check-env: {env_var} is not defined in credentials.env"
+                        )
             elif password_env_var:
                 used_db_env.add(password_env_var)
                 exists, _ = record_var_status(password_env_var, "Password")
                 if check_env:
                     if env_missing_file:
-                        errors.append("--check-env: .env file not found (required to verify password variables)")
+                        errors.append(
+                            "--check-env: credentials.env file not found (required to verify password variables)"
+                        )
                     elif password_env_var not in env_keys:
-                        errors.append(f"--check-env: {password_env_var} is not defined in .env")
+                        errors.append(
+                            f"--check-env: {password_env_var} is not defined in credentials.env"
+                        )
 
             # Check implementation
             impl = conn.get("implementation", "cli")
@@ -406,9 +429,13 @@ def validate_config(config_path: str = "connections.yaml", check_env: bool = Fal
 
                     if check_env and ssh_env:
                         if env_missing_file:
-                            errors.append("--check-env: .env file not found (required to verify SSH password variables)")
+                            errors.append(
+                                "--check-env: credentials.env file not found (required to verify SSH password variables)"
+                            )
                         elif ssh_env not in env_keys:
-                            errors.append(f"--check-env: {ssh_env} is not defined in .env")
+                            errors.append(
+                                f"--check-env: {ssh_env} is not defined in credentials.env"
+                            )
 
             # Report results
             if errors:
@@ -429,7 +456,7 @@ def validate_config(config_path: str = "connections.yaml", check_env: bool = Fal
         if check_env and not env_missing_file:
             db_keys_in_env = {key for key in env_keys if key.startswith("DB_PASSWORD_")}
             unused_db_env = sorted(db_keys_in_env - used_db_env)
-            print("DB password variables in .env without matching connection:")
+            print("DB password variables in credentials.env without matching connection:")
             if unused_db_env:
                 for key in unused_db_env:
                     print(f"  - {key}")
@@ -439,11 +466,11 @@ def validate_config(config_path: str = "connections.yaml", check_env: bool = Fal
             ssh_keys_in_env = {key for key in env_keys if key.startswith("SSH_PASSWORD_")}
             unused_ssh_env = sorted(ssh_keys_in_env - used_ssh_env)
             if unused_ssh_env:
-                print("SSH password variables in .env without matching connection:")
+                print("SSH password variables in credentials.env without matching connection:")
                 for key in unused_ssh_env:
                     print(f"  - {key}")
             elif ssh_keys_in_env:
-                print("SSH password variables in .env without matching connection:")
+                print("SSH password variables in credentials.env without matching connection:")
                 print("  - (none)")
             print()
 
@@ -453,11 +480,13 @@ def validate_config(config_path: str = "connections.yaml", check_env: bool = Fal
             if password_warnings:
                 print("❌ Remove passwords from YAML - use environment variables instead")
             if check_env and env_missing_file:
-                print("❌ .env file not found - required when running with --check-env")
+                print(
+                    "❌ credentials.env file not found - required when running with --check-env"
+                )
             return False
         else:
             if check_env and not env_missing_file:
-                print("✅ .env password variables verified")
+                print("✅ credentials.env password variables verified")
             print("✅ Configuration is valid")
             return True
 
@@ -475,20 +504,45 @@ def main():
 
     parser = argparse.ArgumentParser(description="Validate MCP SQL Server configuration")
     parser.add_argument(
-        "config",
-        nargs="?",
-        default="connections.yaml",
-        help="Path to configuration file (default: connections.yaml)"
+        "--config-dir",
+        help="Directory containing connections.yaml and credentials.env",
+    )
+    parser.add_argument(
+        "--state-dir",
+        help="Directory reserved for local state files",
+    )
+    parser.add_argument(
+        "--cache-dir",
+        help="Directory reserved for cache files",
+    )
+    parser.add_argument(
+        "--print-paths",
+        action="store_true",
+        help="Print resolved config/state/cache paths and exit",
     )
     parser.add_argument(
         "--check-env",
         action="store_true",
-        help="Verify that required password environment variables are defined in .env"
+        help="Verify that required password environment variables are defined in credentials.env",
     )
 
     args = parser.parse_args()
 
-    success = validate_config(args.config, check_env=args.check_env)
+    runtime_paths = resolve_runtime_paths(
+        config_dir=args.config_dir,
+        state_dir=args.state_dir,
+        cache_dir=args.cache_dir,
+    )
+
+    if args.print_paths:
+        print(runtime_paths.render())
+        return
+
+    success = validate_config(
+        runtime_paths.connections_file,
+        runtime_paths.credentials_file,
+        check_env=args.check_env,
+    )
     sys.exit(0 if success else 1)
 
 

@@ -1,6 +1,4 @@
 # MCP Read-Only SQL Server
-set dotenv-load
-
 # Show available commands
 default:
     @just --list
@@ -10,8 +8,8 @@ install:
     uv sync
 
 # Run the server
-run config="connections.yaml":
-    uv run -- python -m src.server {{config}}
+run:
+    uv run -- python -m src.server
 
 # Import DBeaver connections (supports name=value options)
 # Examples:
@@ -44,15 +42,17 @@ import-dbeaver path="$HOME/Library/DBeaverData/workspace6/General/.dbeaver" only
     uv run -- python -m src.config.dbeaver_import "{{path}}" "${args[@]}"
 
 # Validate configuration file
-validate config="connections.yaml" maybe_flag="":
+validate check_env="false":
     #!/usr/bin/env bash
-    if [ "{{config}}" = "check-env" ] || [ "{{config}}" = "--check-env" ]; then
-        uv run -- python -m src.tools.validate_config --check-env connections.yaml
-    elif [ "{{maybe_flag}}" = "check-env" ] || [ "{{maybe_flag}}" = "--check-env" ]; then
-        uv run -- python -m src.tools.validate_config {{config}} --check-env
+    if [ "{{check_env}}" = "true" ] || [ "{{check_env}}" = "1" ] || [ "{{check_env}}" = "yes" ]; then
+        uv run -- python -m src.tools.validate_config --check-env
     else
-        uv run -- python -m src.tools.validate_config {{config}}
+        uv run -- python -m src.tools.validate_config
     fi
+
+# Show resolved paths
+print-paths:
+    uv run -- python -m src.server --print-paths
 
 # Test database connection(s)
 test-connection connection="":

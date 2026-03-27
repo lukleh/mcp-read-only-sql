@@ -36,8 +36,8 @@ import-dbeaver = "src.config.dbeaver_import:main"
 [tool.hatch.build.targets.wheel]
 packages = ["src"]
 
-[tool.uv]
-dev-dependencies = [
+[dependency-groups]
+dev = [
     "pytest>=7.0.0",
     "pytest-timeout>=2.2.0",
     "black>=23.0.0",

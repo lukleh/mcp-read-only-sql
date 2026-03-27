@@ -3,6 +3,7 @@ import os
 import re
 import getpass
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Tuple, Optional
 import logging
@@ -11,8 +12,38 @@ import sys
 # Add parent directory to path to import from utils
 sys.path.append(str(Path(__file__).parent.parent))
 from utils.connection_utils import get_connection_target
+from runtime_paths import resolve_runtime_paths
 
 logger = logging.getLogger(__name__)
+PRIVATE_FILE_MODE = 0o600
+
+
+def _restrict_file_permissions(path: Path) -> None:
+    if os.name == "nt" or not path.exists():
+        return
+    os.chmod(path, PRIVATE_FILE_MODE)
+
+
+def _write_private_text(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_fd, temp_path = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=f".{path.name}_",
+        suffix=".tmp",
+    )
+    try:
+        with os.fdopen(temp_fd, "w", encoding="utf-8") as handle:
+            handle.write(content)
+        if os.name != "nt":
+            os.chmod(temp_path, PRIVATE_FILE_MODE)
+        os.replace(temp_path, path)
+        _restrict_file_permissions(path)
+    except Exception:
+        try:
+            os.unlink(temp_path)
+        except OSError:
+            pass
+        raise
 
 
 class DBeaverImporter:
@@ -173,11 +204,11 @@ class DBeaverImporter:
             else:
                 print(f"    Warning: No username found in credentials")
 
-            # Store password for later .env update (don't put in YAML)
+            # Store password for later credentials.env update (don't put in YAML)
             password = creds.get("password")
             if password:
                 connection["_password"] = password  # Temporary field, removed before saving
-                print(f"    Password: {'*' * 8} (will be added to .env)")
+                print(f"    Password: {'*' * 8} (will be added to credentials.env)")
         else:
             print(f"    Warning: No credentials available for this connection")
 
@@ -206,7 +237,7 @@ class DBeaverImporter:
             # Store SSH password if available
             if ssh_creds and "password" in ssh_creds:
                 connection["_ssh_password"] = ssh_creds["password"]
-                print(f"    SSH Password: {'*' * 8} (will be added to .env)")
+                print(f"    SSH Password: {'*' * 8} (will be added to credentials.env)")
 
             # Add SSH port if non-standard
             ssh_port = ssh_props.get("port", 22)
@@ -429,9 +460,13 @@ def main():
     parser = argparse.ArgumentParser(description="Import DBeaver connections")
     parser.add_argument("dbeaver_path", help="Path to DBeaver .dbeaver directory")
     parser.add_argument("--no-merge", action="store_true", help="Don't merge cluster connections")
-    parser.add_argument("--output", "-o", help="Output file (default: connections.yaml)")
-    parser.add_argument("--env-file", "-e", help="Environment file (default: .env)")
-    parser.add_argument("--update-passwords", action="store_true", help="Update passwords in .env from DBeaver")
+    parser.add_argument("--output", "-o", help="Output file (default: ~/.config/lukleh/mcp-read-only-sql/connections.yaml)")
+    parser.add_argument("--env-file", "-e", help="Environment file (default: ~/.config/lukleh/mcp-read-only-sql/credentials.env)")
+    parser.add_argument("--update-passwords", action="store_true", help="Update passwords in credentials.env from DBeaver")
+    parser.add_argument("--config-dir", help="Directory containing connections.yaml and credentials.env")
+    parser.add_argument("--state-dir", help="Directory reserved for local state files")
+    parser.add_argument("--cache-dir", help="Directory reserved for cache files")
+    parser.add_argument("--print-paths", action="store_true", help="Print resolved config/state/cache paths and exit")
     parser.add_argument("--dry-run", action="store_true", help="Show results without writing files")
     parser.add_argument(
         "--only",
@@ -440,10 +475,28 @@ def main():
     )
     args = parser.parse_args()
 
+    runtime_paths = resolve_runtime_paths(
+        config_dir=args.config_dir,
+        state_dir=args.state_dir,
+        cache_dir=args.cache_dir,
+    )
+
+    if args.print_paths:
+        print(runtime_paths.render())
+        return
+
     dbeaver_path = args.dbeaver_path
     merge_clusters = not args.no_merge
-    output_path = Path(args.output) if args.output else Path("connections.yaml")
-    env_path = Path(args.env_file) if args.env_file else Path(".env")
+    output_path = (
+        Path(args.output).expanduser()
+        if args.output
+        else runtime_paths.connections_file
+    )
+    env_path = (
+        Path(args.env_file).expanduser()
+        if args.env_file
+        else runtime_paths.credentials_file
+    )
     dry_run = args.dry_run
     only_names: List[str] = []
     if args.only:
@@ -478,7 +531,7 @@ def main():
         backup_path = None
         env_backup_path = None
 
-        # Track credentials that need to be added to .env
+        # Track credentials that need to be added to credentials.env
         ssh_credentials = []
         new_connections = []
         password_updates = {}  # Track passwords to update
@@ -577,7 +630,7 @@ def main():
                 with open(output_path, "w") as f:
                     f.write(new_yaml)
 
-        # Update .env file with required credentials
+        # Update credentials.env with required credentials
         if new_connections:
             env_lines = []
             if env_path.exists():
@@ -621,7 +674,7 @@ def main():
                     elif ssh_pass_key in password_updates and (args.update_passwords or env_dict.get(ssh_pass_key, "") == ""):
                         new_env_entries.append((ssh_pass_key, password_updates[ssh_pass_key]))
 
-            # Append new entries to .env file
+            # Append new entries to credentials.env
             if new_env_entries:
                 # Add new entries to dictionary
                 for key, value in new_env_entries:
@@ -644,7 +697,7 @@ def main():
                         with open(env_path, "r") as f:
                             existing_env_content = f.read()
 
-                    # Backup .env before writing (only if it exists)
+                    # Backup credentials.env before writing (only if it exists)
                     new_env_content_lines = []
                     if comment_lines:
                         for comment in comment_lines:
@@ -658,18 +711,18 @@ def main():
 
                     if existing_env_content == new_env_content:
                         print(f"\n✓ {env_path} unchanged; skipped write and backup")
+                        if env_path.exists():
+                            _restrict_file_permissions(env_path)
                     else:
                         if env_path.exists():
                             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                             env_backup_name = f"{env_path.name}.bak.{timestamp}"
                             env_backup_path = env_path.parent / env_backup_name
-                            with open(env_backup_path, "w") as f:
-                                f.write(existing_env_content)
+                            _write_private_text(env_backup_path, existing_env_content)
                             print(f"\n✓ Created backup: {env_backup_path}")
 
                         # Write back sorted entries
-                        with open(env_path, "w") as f:
-                            f.write(new_env_content)
+                        _write_private_text(env_path, new_env_content)
 
                         print(f"\n✓ Updated {env_path} with {len(new_env_entries)} new credential entries (sorted)")
 

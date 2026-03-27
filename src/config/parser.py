@@ -1,15 +1,18 @@
 import os
-import yaml
 from pathlib import Path
-from typing import Any, Dict, List
-from dotenv import load_dotenv
+from typing import Any, Dict, List, Mapping
 
-load_dotenv()
+import yaml
 
 
 class ConfigParser:
-    def __init__(self, config_path: str = "connections.yaml"):
-        self.config_path = Path(config_path)
+    def __init__(
+        self,
+        config_path: str | Path,
+        env: Mapping[str, str] | None = None,
+    ):
+        self.config_path = Path(config_path).expanduser()
+        self.env = dict(env) if env is not None else dict(os.environ)
 
     def load_config(self) -> List[Dict[str, Any]]:
         """Load and parse connection configuration from YAML file"""
@@ -33,7 +36,7 @@ class ConfigParser:
         conn_name_env = conn_name.upper().replace('-', '_')
 
         # Get database password from environment variables
-        conn["password"] = os.getenv(f"DB_PASSWORD_{conn_name_env}", "")
+        conn["password"] = self.env.get(f"DB_PASSWORD_{conn_name_env}", "")
 
         # Note: Database defaults are handled by the Connection config:
         # - Use 'db' for a single allowed database
@@ -44,7 +47,7 @@ class ConfigParser:
             ssh_config = conn["ssh_tunnel"]
 
             # Check for SSH password in environment
-            ssh_password = os.getenv(f"SSH_PASSWORD_{conn_name_env}", "")
+            ssh_password = self.env.get(f"SSH_PASSWORD_{conn_name_env}", "")
 
             if ssh_password:
                 ssh_config["password"] = ssh_password

@@ -2,12 +2,12 @@
 Test that the default implementation is CLI when not specified.
 """
 
-import pytest
 import tempfile
 import yaml
 import os
 from src.config.parser import ConfigParser
 from src.server import ReadOnlySQLServer
+from src.runtime_paths import resolve_runtime_paths
 
 
 def test_parser_default_implementation():
@@ -32,7 +32,7 @@ def test_parser_default_implementation():
         os.unlink(temp_file)
 
 
-def test_server_default_implementation():
+def test_server_default_implementation(tmp_path):
     """Test that server defaults to CLI implementation when not specified in config"""
     test_config = [{
         "connection_name": "test_postgres",
@@ -44,26 +44,28 @@ def test_server_default_implementation():
         # Note: implementation not specified - should default to CLI
     }]
 
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
-        yaml.dump(test_config, f)
-        temp_file = f.name
+    config_file = tmp_path / "connections.yaml"
+    config_file.write_text(yaml.dump(test_config))
+    runtime_paths = resolve_runtime_paths(
+        config_dir=tmp_path,
+        state_dir=tmp_path / "state",
+        cache_dir=tmp_path / "cache",
+    )
+    runtime_paths.ensure_directories()
 
-    try:
-        # Create server with the config
-        server = ReadOnlySQLServer(temp_file)
+    server = ReadOnlySQLServer(runtime_paths)
 
-        # Check the loaded connection uses CLI implementation
-        conn = server.connections.get("test_postgres")
-        assert conn is not None, "Connection should be loaded"
+    # Check the loaded connection uses CLI implementation
+    conn = server.connections.get("test_postgres")
+    assert conn is not None, "Connection should be loaded"
 
-        # Check it's a CLI connector
-        from src.connectors.postgresql.cli import PostgreSQLCLIConnector
-        assert isinstance(conn, PostgreSQLCLIConnector), "Should use CLI connector by default"
-    finally:
-        os.unlink(temp_file)
+    # Check it's a CLI connector
+    from src.connectors.postgresql.cli import PostgreSQLCLIConnector
+
+    assert isinstance(conn, PostgreSQLCLIConnector), "Should use CLI connector by default"
 
 
-def test_explicit_python_implementation():
+def test_explicit_python_implementation(tmp_path):
     """Test that explicitly specifying Python implementation still works"""
     test_config = [{
         "connection_name": "test_postgres_python",
@@ -75,23 +77,26 @@ def test_explicit_python_implementation():
         "implementation": "python"  # Explicitly specify Python
     }]
 
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
-        yaml.dump(test_config, f)
-        temp_file = f.name
+    config_file = tmp_path / "connections.yaml"
+    config_file.write_text(yaml.dump(test_config))
+    runtime_paths = resolve_runtime_paths(
+        config_dir=tmp_path,
+        state_dir=tmp_path / "state",
+        cache_dir=tmp_path / "cache",
+    )
+    runtime_paths.ensure_directories()
 
-    try:
-        server = ReadOnlySQLServer(temp_file)
-        conn = server.connections.get("test_postgres_python")
-        assert conn is not None, "Connection should be loaded"
+    server = ReadOnlySQLServer(runtime_paths)
+    conn = server.connections.get("test_postgres_python")
+    assert conn is not None, "Connection should be loaded"
 
-        # Check it's a Python connector
-        from src.connectors.postgresql.python import PostgreSQLPythonConnector
-        assert isinstance(conn, PostgreSQLPythonConnector), "Should use Python connector when explicitly specified"
-    finally:
-        os.unlink(temp_file)
+    # Check it's a Python connector
+    from src.connectors.postgresql.python import PostgreSQLPythonConnector
+
+    assert isinstance(conn, PostgreSQLPythonConnector), "Should use Python connector when explicitly specified"
 
 
-def test_explicit_cli_implementation():
+def test_explicit_cli_implementation(tmp_path):
     """Test that explicitly specifying CLI implementation works"""
     test_config = [{
         "connection_name": "test_clickhouse_cli",
@@ -103,17 +108,20 @@ def test_explicit_cli_implementation():
         "implementation": "cli"  # Explicitly specify CLI
     }]
 
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
-        yaml.dump(test_config, f)
-        temp_file = f.name
+    config_file = tmp_path / "connections.yaml"
+    config_file.write_text(yaml.dump(test_config))
+    runtime_paths = resolve_runtime_paths(
+        config_dir=tmp_path,
+        state_dir=tmp_path / "state",
+        cache_dir=tmp_path / "cache",
+    )
+    runtime_paths.ensure_directories()
 
-    try:
-        server = ReadOnlySQLServer(temp_file)
-        conn = server.connections.get("test_clickhouse_cli")
-        assert conn is not None, "Connection should be loaded"
+    server = ReadOnlySQLServer(runtime_paths)
+    conn = server.connections.get("test_clickhouse_cli")
+    assert conn is not None, "Connection should be loaded"
 
-        # Check it's a CLI connector
-        from src.connectors.clickhouse.cli import ClickHouseCLIConnector
-        assert isinstance(conn, ClickHouseCLIConnector), "Should use CLI connector when explicitly specified"
-    finally:
-        os.unlink(temp_file)
+    # Check it's a CLI connector
+    from src.connectors.clickhouse.cli import ClickHouseCLIConnector
+
+    assert isinstance(conn, ClickHouseCLIConnector), "Should use CLI connector when explicitly specified"

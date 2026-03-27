@@ -10,6 +10,7 @@ from tests.conftest import call_tool, execute_query, list_connections
 
 
 pytestmark = pytest.mark.filterwarnings("ignore::pytest.PytestUnraisableExceptionWarning")
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.mark.anyio
@@ -97,7 +98,7 @@ class TestResolvedEndpoints:
     port: 22
     private_key: /tmp/nonexistent
 """
-        config_file = tmp_path / "ssh_resolved.yaml"
+        config_file = tmp_path / "connections.yaml"
         config_file.write_text(config_content)
         return str(config_file)
 
@@ -110,7 +111,16 @@ class TestResolvedEndpoints:
 
         server_params = StdioServerParameters(
             command="uv",
-            args=["run", "python", "-m", "src.server", ssh_resolved_config],
+            args=[
+                "--directory",
+                str(PROJECT_ROOT),
+                "run",
+                "python",
+                "-m",
+                "src.server",
+                "--config-dir",
+                str(Path(ssh_resolved_config).parent),
+            ],
             env=dict(os.environ),
         )
 
@@ -165,7 +175,7 @@ class TestMultipleConnections:
   username: user3
   password: pass3
 """
-        config_file = tmp_path / "multi_config.yaml"
+        config_file = tmp_path / "connections.yaml"
         config_file.write_text(config_content)
         return str(config_file)
 
@@ -175,7 +185,16 @@ class TestMultipleConnections:
         from mcp import StdioServerParameters
         return StdioServerParameters(
             command="uv",
-            args=["run", "python", "-m", "src.server", multi_config_file]
+            args=[
+                "--directory",
+                str(PROJECT_ROOT),
+                "run",
+                "python",
+                "-m",
+                "src.server",
+                "--config-dir",
+                str(Path(multi_config_file).parent),
+            ],
         )
 
     @pytest.fixture
@@ -226,7 +245,7 @@ class TestSecurityLimits:
   connection_timeout: 5
   max_result_bytes: 5242880
 """
-        config_file = tmp_path / "secure_config.yaml"
+        config_file = tmp_path / "connections.yaml"
         config_file.write_text(config_content)
         return str(config_file)
 
@@ -236,7 +255,16 @@ class TestSecurityLimits:
         from mcp import StdioServerParameters
         return StdioServerParameters(
             command="uv",
-            args=["run", "python", "-m", "src.server", secure_config_file]
+            args=[
+                "--directory",
+                str(PROJECT_ROOT),
+                "run",
+                "python",
+                "-m",
+                "src.server",
+                "--config-dir",
+                str(Path(secure_config_file).parent),
+            ],
         )
 
     @pytest.fixture
@@ -286,7 +314,7 @@ class TestServerParameter:
   username: user
   password: pass
 """
-        config_file = tmp_path / "multi_server_config.yaml"
+        config_file = tmp_path / "connections.yaml"
         config_file.write_text(config_content)
         return str(config_file)
 
@@ -298,7 +326,16 @@ class TestServerParameter:
 
         server_params = StdioServerParameters(
             command="uv",
-            args=["run", "python", "-m", "src.server", multi_server_config_file]
+            args=[
+                "--directory",
+                str(PROJECT_ROOT),
+                "run",
+                "python",
+                "-m",
+                "src.server",
+                "--config-dir",
+                str(Path(multi_server_config_file).parent),
+            ]
         )
 
         async with stdio_client(server_params) as (read, write):

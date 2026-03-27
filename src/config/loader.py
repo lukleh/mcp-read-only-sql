@@ -1,18 +1,20 @@
 """
-Connection configuration loader
+Connection configuration loader.
 """
 
-import yaml
+import os
 from pathlib import Path
 from typing import Dict, Optional
-from dotenv import load_dotenv
+
+import yaml
+
 from .connection import Connection
 
-# Load .env file at module import
-load_dotenv()
 
-
-def load_connections(yaml_path: str, env: Optional[Dict[str, str]] = None) -> Dict[str, Connection]:
+def load_connections(
+    yaml_path: str | Path,
+    env: Optional[Dict[str, str]] = None,
+) -> Dict[str, Connection]:
     """
     Load and validate all connections from YAML configuration file.
 
@@ -27,7 +29,7 @@ def load_connections(yaml_path: str, env: Optional[Dict[str, str]] = None) -> Di
         FileNotFoundError: If YAML file doesn't exist
         ValueError: If configuration is invalid (includes all validation errors)
     """
-    yaml_file = Path(yaml_path)
+    yaml_file = Path(yaml_path).expanduser()
     if not yaml_file.exists():
         raise FileNotFoundError(f"Configuration file not found: {yaml_path}")
 
@@ -49,7 +51,7 @@ def load_connections(yaml_path: str, env: Optional[Dict[str, str]] = None) -> Di
             continue
 
         try:
-            conn = Connection(config, env)
+            conn = Connection(config, env if env is not None else dict(os.environ))
 
             # Check for duplicate names
             if conn.name in connections:
