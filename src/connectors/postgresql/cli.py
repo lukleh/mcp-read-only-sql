@@ -185,8 +185,8 @@ class PostgreSQLCLIConnector(BaseCLIConnector):
                     raise
                 except FileNotFoundError:
                     raise FileNotFoundError("psql: command not found. Please install PostgreSQL client tools.")
-                except ReadOnlyQueryError as exc:
-                    raise ReadOnlyQueryError(str(exc))
+                except ReadOnlyQueryError:
+                    raise
                 except asyncio.TimeoutError as exc:
                     logger.error(f"Query execution error: {exc}")
                     raise

@@ -225,7 +225,9 @@ async def test_postgresql_cli_includes_readonly_flags(postgres_config, monkeypat
     async def fake_create_subprocess_exec(*cmd, **kwargs):
         captured["cmd"] = list(cmd)
         captured["env"] = kwargs.get("env", {})
-        return DummyProcess()
+        process = DummyProcess()
+        captured["process"] = process
+        return process
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
 
@@ -377,10 +379,26 @@ async def test_clickhouse_cli_includes_readonly_flag(clickhouse_config, monkeypa
         async def read(self):
             return b""
 
+    class DummyStdin:
+        def __init__(self):
+            self.writes = []
+            self.closed = False
+            self.drained = False
+
+        def write(self, data):
+            self.writes.append(data)
+
+        async def drain(self):
+            self.drained = True
+
+        def close(self):
+            self.closed = True
+
     class DummyProcess:
         def __init__(self):
             self.stdout = DummyStdout(["col\n"])
             self.stderr = DummyStderr()
+            self.stdin = DummyStdin()
             self.returncode = 0
 
         async def wait(self):
@@ -392,7 +410,9 @@ async def test_clickhouse_cli_includes_readonly_flag(clickhouse_config, monkeypa
     async def fake_create_subprocess_exec(*cmd, **kwargs):
         captured["cmd"] = list(cmd)
         captured["env"] = kwargs.get("env", {})
-        return DummyProcess()
+        process = DummyProcess()
+        captured["process"] = process
+        return process
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
 
@@ -406,6 +426,10 @@ async def test_clickhouse_cli_includes_readonly_flag(clickhouse_config, monkeypa
     assert "--ask-password" in cmd
     assert "--password" not in cmd
     assert any(part == "SELECT 1" for part in cmd)
+    assert connector.password == "testpass"
+    assert captured["process"].stdin.writes == [b"testpass\n"]
+    assert captured["process"].stdin.drained is True
+    assert captured["process"].stdin.closed is True
     # No environment mutations expected, but keep assertion for completeness
     assert captured["env"] is not None
 

@@ -205,8 +205,8 @@ class ClickHouseCLIConnector(BaseCLIConnector):
 
             except FileNotFoundError:
                 raise FileNotFoundError("clickhouse-client: command not found. Please install ClickHouse client tools.")
-            except ReadOnlyQueryError as exc:
-                raise ReadOnlyQueryError(str(exc))
+            except ReadOnlyQueryError:
+                raise
             except asyncio.TimeoutError as exc:
                 logger.error(f"Query execution error: {exc}")
                 raise
