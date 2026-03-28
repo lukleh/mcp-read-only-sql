@@ -178,15 +178,15 @@ class PostgreSQLCLIConnector(BaseCLIConnector):
                         and use_pgoptions
                         and "unsupported startup parameter" in message
                     ):
-                        logger.info(
+                        logger.warning(
                             "psql: remote server rejected default_transaction_read_only; retrying without PGOPTIONS"
                         )
                         continue
                     raise
                 except FileNotFoundError:
                     raise FileNotFoundError("psql: command not found. Please install PostgreSQL client tools.")
-                except ReadOnlyQueryError as exc:
-                    raise ReadOnlyQueryError(str(exc))
+                except ReadOnlyQueryError:
+                    raise
                 except asyncio.TimeoutError as exc:
                     logger.error(f"Query execution error: {exc}")
                     raise

@@ -11,14 +11,14 @@ from src.config.parser import ConfigParser
 from src.connectors.postgresql.python import PostgreSQLPythonConnector
 from src.connectors.clickhouse.python import ClickHousePythonConnector
 from src.utils.sql_guard import ReadOnlyQueryError
+from tests.docker_test_config import apply_docker_test_overrides
 
 
 @pytest.fixture(scope="module")
 def test_config():
     """Load test configuration"""
     parser = ConfigParser("tests/connections-test.yaml")
-    configs = parser.load_config()
-    return configs
+    return [apply_docker_test_overrides(config) for config in parser.load_config()]
 
 
 @pytest.fixture
@@ -131,4 +131,3 @@ class TestReadOnlySession:
         assert len(lines) >= 2  # Header + at least one row
         row_values = lines[1].split('\t')
         assert int(row_values[0]) > 0  # count > 0
-

@@ -14,6 +14,7 @@ from src.connectors.clickhouse.python import ClickHousePythonConnector
 from src.connectors.postgresql.cli import PostgreSQLCLIConnector
 from src.connectors.postgresql.python import PostgreSQLPythonConnector
 from src.utils.timeout_wrapper import HardTimeoutError
+from tests.docker_test_config import docker_test_server
 
 pytestmark = [pytest.mark.docker, pytest.mark.usefixtures("docker_check")]
 
@@ -25,12 +26,6 @@ CONNECTOR_CLASSES: Dict[Tuple[str, str], type] = {
     ("clickhouse", "python"): ClickHousePythonConnector,
     ("clickhouse", "cli"): ClickHouseCLIConnector,
 }
-
-DEFAULT_PORT = {
-    "postgresql": 5432,
-    "clickhouse": 9000,
-}
-
 
 def ensure_cli_available(db_type: str, implementation: str) -> None:
     """Skip tests gracefully when CLI tools are missing."""
@@ -45,7 +40,17 @@ def build_connector(db_type: str, implementation: str, **overrides):
     """Construct a connector for the given database/implementation pair."""
     servers = overrides.pop(
         "servers",
-        [{"host": overrides.pop("host", "localhost"), "port": overrides.pop("port", DEFAULT_PORT[db_type])}],
+        [
+            docker_test_server(
+                db_type,
+                port=overrides.pop("port", None),
+            )
+            if "host" not in overrides
+            else {
+                "host": overrides.pop("host"),
+                "port": overrides.pop("port", docker_test_server(db_type)["port"]),
+            }
+        ],
     )
     connection_name = overrides.pop(
         "connection_name", f"{db_type}_{implementation}_limits"

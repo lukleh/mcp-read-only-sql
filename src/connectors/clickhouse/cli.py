@@ -6,6 +6,7 @@ from typing import Optional
 
 from ..base_cli import BaseCLIConnector
 from ...utils.ssh_tunnel_cli import CLISSHTunnel
+from ...utils.sql_guard import ReadOnlyQueryError, sanitize_read_only_sql
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,7 @@ class ClickHouseCLIConnector(BaseCLIConnector):
 
     async def execute_query(self, query: str, database: Optional[str] = None, server: Optional[str] = None) -> str:
         """Execute a read-only query using clickhouse-client and return raw TSV output"""
+        sanitized_query = sanitize_read_only_sql(query)
         selected_server = self._select_server(server)
 
         async with self._get_ssh_tunnel(server) as local_port:
@@ -79,7 +81,7 @@ class ClickHouseCLIConnector(BaseCLIConnector):
                 "--max_execution_time", str(self.query_timeout),  # Query timeout in seconds
                 "--connect_timeout", str(self.connection_timeout),  # Connection timeout
                 "--format", "TabSeparatedWithNames",  # Use TSV format with headers
-                "--query", query
+                "--query", sanitized_query
             ]
 
             # Add --secure flag for TLS ports (9440)
@@ -89,7 +91,7 @@ class ClickHouseCLIConnector(BaseCLIConnector):
 
             # Add password if provided
             if self.password:
-                cmd.extend(["--password", self.password])
+                cmd.append("--ask-password")
 
             # Preserve PATH in environment
             env = os.environ.copy()
@@ -97,10 +99,21 @@ class ClickHouseCLIConnector(BaseCLIConnector):
             try:
                 process = await asyncio.create_subprocess_exec(
                     *cmd,
+                    stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                     env=env
                 )
+
+                stdin = getattr(process, "stdin", None)
+                if self.password and stdin is not None:
+                    stdin.write(f"{self.password}\n".encode())
+                    drain = getattr(stdin, "drain", None)
+                    if callable(drain):
+                        drain_result = drain()
+                        if asyncio.iscoroutine(drain_result):
+                            await drain_result
+                    stdin.close()
 
                 stdout = process.stdout
                 stderr_task = asyncio.create_task(process.stderr.read())
@@ -192,6 +205,8 @@ class ClickHouseCLIConnector(BaseCLIConnector):
 
             except FileNotFoundError:
                 raise FileNotFoundError("clickhouse-client: command not found. Please install ClickHouse client tools.")
+            except ReadOnlyQueryError:
+                raise
             except asyncio.TimeoutError as exc:
                 logger.error(f"Query execution error: {exc}")
                 raise

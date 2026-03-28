@@ -13,6 +13,10 @@ from src.connectors.postgresql.python import PostgreSQLPythonConnector
 from src.connectors.clickhouse.python import ClickHousePythonConnector
 from src.utils.ssh_tunnel import SSHTunnel
 from conftest import make_connection
+from tests.docker_test_config import (
+    docker_test_server,
+    docker_test_ssh_tunnel,
+)
 
 
 # SSH setup note: The test runner (run_tests.sh) handles:
@@ -44,13 +48,7 @@ def postgres_ssh_password_config():
         "db": "testdb",
         "username": "testuser",
         "password": "testpass",
-        "ssh_tunnel": {
-            "enabled": True,
-            "host": "localhost",
-            "port": 2222,
-            "user": "tunnel",
-            "password": "tunnelpass"
-        }
+        "ssh_tunnel": docker_test_ssh_tunnel(password="tunnelpass"),
     }
 
 
@@ -64,13 +62,7 @@ def postgres_ssh_key_config(ssh_test_key_path):
         "db": "testdb",
         "username": "testuser",
         "password": "testpass",
-        "ssh_tunnel": {
-            "enabled": True,
-            "host": "localhost",
-            "port": 2222,
-            "user": "tunnel",
-            "private_key": ssh_test_key_path
-        }
+        "ssh_tunnel": docker_test_ssh_tunnel(private_key=ssh_test_key_path),
     }
 
 
@@ -84,13 +76,7 @@ def clickhouse_ssh_config():
         "db": "testdb",
         "username": "testuser",
         "password": "testpass",
-        "ssh_tunnel": {
-            "enabled": True,
-            "host": "localhost",
-            "port": 2222,
-            "user": "tunnel",
-            "password": "tunnelpass"
-        }
+        "ssh_tunnel": docker_test_ssh_tunnel(password="tunnelpass"),
     }
 
 
@@ -152,13 +138,7 @@ class TestSSHTunnelConnectivity:
             "db": "testdb",
             "username": "testuser",
             "password": "testpass",
-            "ssh_tunnel": {
-                "enabled": True,
-                "host": "localhost",
-                "port": 2222,
-                "user": "tunnel",
-                "password": "wrongpass"
-            }
+            "ssh_tunnel": docker_test_ssh_tunnel(password="wrongpass")
         }
 
         connector = PostgreSQLPythonConnector(make_connection(config))
@@ -177,13 +157,7 @@ class TestSSHTunnelConnectivity:
             "db": "testdb",
             "username": "testuser",
             "password": "testpass",
-            "ssh_tunnel": {
-                "enabled": True,
-                "host": "localhost",
-                "port": 2222,
-                "user": "tunnel",
-                "password": "tunnelpass"
-            }
+            "ssh_tunnel": docker_test_ssh_tunnel(password="tunnelpass")
         }
 
         connector = PostgreSQLPythonConnector(make_connection(config))
@@ -233,13 +207,7 @@ class TestClickHousePortConversion:
             "db": "testdb",
             "username": "testuser",
             "password": "testpass",
-            "ssh_tunnel": {
-                "enabled": True,
-                "host": "localhost",
-                "port": 2222,
-                "user": "tunnel",
-                "password": "tunnelpass"
-            }
+            "ssh_tunnel": docker_test_ssh_tunnel(password="tunnelpass")
         }
         
         # Test with Python connector - should auto-convert 9000 -> 8123
@@ -264,13 +232,7 @@ class TestClickHousePortConversion:
             "db": "testdb",
             "username": "testuser",
             "password": "testpass",
-            "ssh_tunnel": {
-                "enabled": True,
-                "host": "localhost",
-                "port": 2222,
-                "user": "tunnel",
-                "password": "tunnelpass"
-            }
+            "ssh_tunnel": docker_test_ssh_tunnel(password="tunnelpass")
         }
         
         from src.connectors.clickhouse.python import ClickHousePythonConnector
@@ -290,7 +252,7 @@ class TestClickHousePortConversion:
         config = {
             "connection_name": "ch_direct_test",
             "type": "clickhouse",
-            "servers": [{"host": "localhost", "port": 9000}],  # Native port configured
+            "servers": [docker_test_server("clickhouse")],  # Native port configured
             "db": "testdb",
             "username": "testuser",
             "password": "testpass"
@@ -436,8 +398,8 @@ class TestSSHKeyAutoDetection:
         from src.config import SSHTunnelConfig
 
         ssh_config = SSHTunnelConfig.from_dict({
-            "host": "localhost",
-            "port": 2222,
+            "host": docker_test_ssh_tunnel()["host"],
+            "port": docker_test_ssh_tunnel()["port"],
             "user": "tunnel",
             "private_key": ssh_test_key_path
         })

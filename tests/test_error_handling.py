@@ -9,6 +9,7 @@ from src.connectors.postgresql.python import PostgreSQLPythonConnector
 from src.connectors.postgresql.cli import PostgreSQLCLIConnector
 from src.connectors.clickhouse.python import ClickHousePythonConnector
 from src.connectors.clickhouse.cli import ClickHouseCLIConnector
+from tests.docker_test_config import docker_test_host, docker_test_server
 
 
 @pytest.fixture
@@ -18,7 +19,7 @@ def postgres_python_conn():
     config = make_connection({
         "connection_name": "test_pg",
         "type": "postgresql",
-        "servers": [{"host": "localhost", "port": 5432}],
+        "servers": [docker_test_server("postgresql")],
         "db": "testdb",
         "allowed_databases": ["testdb", "nonexistent_db"],
         "username": "testuser",
@@ -34,7 +35,7 @@ def postgres_cli_conn():
     config = make_connection({
         "connection_name": "test_pg_cli",
         "type": "postgresql",
-        "servers": [{"host": "localhost", "port": 5432}],
+        "servers": [docker_test_server("postgresql")],
         "db": "testdb",
         "allowed_databases": ["testdb", "nonexistent_db"],
         "username": "testuser",
@@ -50,7 +51,7 @@ def clickhouse_python_conn():
     config = make_connection({
         "connection_name": "test_ch",
         "type": "clickhouse",
-        "servers": [{"host": "localhost", "port": 9000}],
+        "servers": [docker_test_server("clickhouse")],
         "db": "testdb",
         "username": "testuser",
         "password": "testpass"
@@ -65,7 +66,7 @@ def clickhouse_cli_conn():
     config = make_connection({
         "connection_name": "test_ch_cli",
         "type": "clickhouse",
-        "servers": [{"host": "localhost", "port": 9000}],
+        "servers": [docker_test_server("clickhouse")],
         "db": "testdb",
         "username": "testuser",
         "password": "testpass"
@@ -107,7 +108,7 @@ class TestConnectionErrors:
         config = make_connection({
             "connection_name": "bad_port",
             "type": "postgresql",
-            "servers": [{"host": "localhost", "port": 9999}],  # Wrong port
+            "servers": [{"host": docker_test_host(), "port": 9999}],  # Wrong port
             "db": "testdb",
             "username": "testuser",
             "password": "testpass",
@@ -128,7 +129,7 @@ class TestConnectionErrors:
         config = make_connection({
             "connection_name": "bad_creds",
             "type": "postgresql",
-            "servers": [{"host": "localhost", "port": 5432}],
+            "servers": [docker_test_server("postgresql")],
             "db": "testdb",
             "username": "wronguser",
             "password": "wrongpass"
@@ -146,7 +147,7 @@ class TestConnectionErrors:
         """Test CLI connector handles connection errors"""
         # Temporarily break the connection by using wrong port
         from src.config.connection import Server
-        postgres_cli_conn.servers = [Server(host="localhost", port=9999)]
+        postgres_cli_conn.servers = [Server(host=docker_test_host(), port=9999)]
 
         with pytest.raises(RuntimeError) as exc_info:
             await postgres_cli_conn.execute_query("SELECT 1")

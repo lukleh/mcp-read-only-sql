@@ -195,6 +195,36 @@ class TestConnection:
         assert conn.database == "db2"
         assert conn.allowed_databases == ["db1", "db2"]
 
+    def test_connection_rejects_invalid_query_timeout_type(self):
+        """Runtime loading should reject non-numeric timeout values."""
+        with pytest.raises(ValueError, match="query_timeout"):
+            Connection(
+                {
+                    "connection_name": "test",
+                    "type": "postgresql",
+                    "servers": [{"host": "localhost", "port": 5432}],
+                    "db": "testdb",
+                    "username": "testuser",
+                    "password": "testpass",
+                    "query_timeout": "slow",
+                }
+            )
+
+    def test_connection_rejects_invalid_max_result_bytes_type(self):
+        """Runtime loading should reject non-integer max_result_bytes values."""
+        with pytest.raises(ValueError, match="max_result_bytes"):
+            Connection(
+                {
+                    "connection_name": "test",
+                    "type": "postgresql",
+                    "servers": [{"host": "localhost", "port": 5432}],
+                    "db": "testdb",
+                    "username": "testuser",
+                    "password": "testpass",
+                    "max_result_bytes": 1.5,
+                }
+            )
+
     def test_connection_allowed_databases_default_first(self):
         """Default database should fall back to first allowed entry"""
         conn = Connection(

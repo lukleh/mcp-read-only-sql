@@ -15,6 +15,10 @@ from mcp.client.stdio import stdio_client
 
 from src.config import Connection
 from src.connectors.base import BaseConnector
+from tests.docker_test_config import (
+    docker_test_server,
+    docker_test_server_string,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -60,7 +64,7 @@ def postgres_config():
         {
             "connection_name": "test_postgres",
             "type": "postgresql",
-            "servers": [{"host": "localhost", "port": 5432}],
+            "servers": [docker_test_server("postgresql")],
             "username": "testuser",
             "password": "testpass",
             "db": "testdb",
@@ -75,7 +79,7 @@ def clickhouse_config():
         {
             "connection_name": "test_clickhouse",
             "type": "clickhouse",
-            "servers": [{"host": "localhost", "port": 9000}],
+            "servers": [docker_test_server("clickhouse")],
             "username": "testuser",
             "password": "testpass",
             "db": "testdb",
@@ -170,13 +174,13 @@ def ssh_container_check():
 @pytest.fixture
 def integration_config_file(tmp_path):
     """Create integration test configuration with real databases"""
-    config_content = """
+    config_content = f"""
 # Integration test configuration
 - connection_name: test_postgres_python
   type: postgresql
   implementation: python
   servers:
-    - "localhost:5432"
+    - "{docker_test_server_string('postgresql')}"
   db: testdb
   username: testuser
   password: testpass
@@ -186,7 +190,7 @@ def integration_config_file(tmp_path):
   type: postgresql
   implementation: cli
   servers:
-    - "localhost:5432"
+    - "{docker_test_server_string('postgresql')}"
   db: testdb
   username: testuser
   password: testpass
@@ -195,7 +199,7 @@ def integration_config_file(tmp_path):
   type: clickhouse
   implementation: python
   servers:
-    - "localhost:9000"
+    - "{docker_test_server_string('clickhouse')}"
   db: testdb
   username: testuser
   password: testpass
@@ -204,7 +208,7 @@ def integration_config_file(tmp_path):
   type: clickhouse
   implementation: cli
   servers:
-    - "localhost:9000"
+    - "{docker_test_server_string('clickhouse')}"
   db: testdb
   username: testuser
   password: testpass
@@ -214,7 +218,7 @@ def integration_config_file(tmp_path):
   type: postgresql
   implementation: python
   servers:
-    - "localhost:5432"
+    - "{docker_test_server_string('postgresql')}"
   db: testdb
   username: testuser
   password: testpass
