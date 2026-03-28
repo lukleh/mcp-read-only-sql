@@ -4,24 +4,26 @@ MCP Read-Only SQL Server - FastMCP Implementation
 A secure MCP server providing read-only SQL query capabilities for PostgreSQL and ClickHouse databases.
 """
 
+import argparse
 import logging
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 from mcp.server.fastmcp import FastMCP
 
 from .config import load_connections
 from .config.connection import (
-    DEFAULT_QUERY_TIMEOUT,
     DEFAULT_CONNECTION_TIMEOUT,
     DEFAULT_MAX_RESULT_BYTES,
+    DEFAULT_QUERY_TIMEOUT,
 )
 from .connectors.base import BaseConnector
-from .connectors.postgresql.python import PostgreSQLPythonConnector
-from .connectors.postgresql.cli import PostgreSQLCLIConnector
-from .connectors.clickhouse.python import ClickHousePythonConnector
 from .connectors.clickhouse.cli import ClickHouseCLIConnector
+from .connectors.clickhouse.python import ClickHousePythonConnector
+from .connectors.postgresql.cli import PostgreSQLCLIConnector
+from .connectors.postgresql.python import PostgreSQLPythonConnector
+from .runtime_paths import resolve_runtime_paths, RuntimePaths
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -48,62 +50,67 @@ def _display_hosts_for_connector(connector: BaseConnector) -> List[str]:
 
 
 class ReadOnlySQLServer:
-    """MCP Read-Only SQL Server using FastMCP"""
+    """MCP Read-Only SQL Server using FastMCP."""
 
-    def __init__(self, config_path: str = "connections.yaml"):
-        """Initialize the server with configuration"""
-        self.config_path = config_path
+    def __init__(self, runtime_paths: RuntimePaths):
+        self.runtime_paths = runtime_paths
         self.connections: Dict[str, BaseConnector] = {}
 
-        # Initialize FastMCP server
         self.mcp = FastMCP("mcp-read-only-sql")
 
-        # Load connections
         self._load_connections()
-
-        # Setup tools
         self._setup_tools()
 
-    def _load_connections(self):
-        """Load all connections from config file"""
+    def _load_connections(self) -> None:
         try:
-            # Load and validate all connections
-            connections_config = load_connections(self.config_path)
+            connections_config = load_connections(self.runtime_paths.connections_file)
 
             errors = []
 
-            # Create connectors from validated Connection objects
             for conn_name, connection in connections_config.items():
                 try:
                     if connection.db_type == "postgresql":
                         if connection.implementation == "cli":
-                            self.connections[conn_name] = PostgreSQLCLIConnector(connection)
+                            self.connections[conn_name] = PostgreSQLCLIConnector(
+                                connection
+                            )
                         else:
-                            self.connections[conn_name] = PostgreSQLPythonConnector(connection)
+                            self.connections[conn_name] = PostgreSQLPythonConnector(
+                                connection
+                            )
                     elif connection.db_type == "clickhouse":
                         if connection.implementation == "cli":
-                            self.connections[conn_name] = ClickHouseCLIConnector(connection)
+                            self.connections[conn_name] = ClickHouseCLIConnector(
+                                connection
+                            )
                         else:
-                            self.connections[conn_name] = ClickHousePythonConnector(connection)
+                            self.connections[conn_name] = ClickHousePythonConnector(
+                                connection
+                            )
 
-                    logger.info(f"Loaded connection: {conn_name} ({connection.db_type}, {connection.implementation})")
+                    logger.info(
+                        "Loaded connection: %s (%s, %s)",
+                        conn_name,
+                        connection.db_type,
+                        connection.implementation,
+                    )
 
-                except ImportError as e:
-                    errors.append(f"  - {conn_name}: Missing dependency - {e}")
-                except Exception as e:
-                    errors.append(f"  - {conn_name}: {e}")
+                except ImportError as exc:
+                    errors.append(f"  - {conn_name}: Missing dependency - {exc}")
+                except Exception as exc:
+                    errors.append(f"  - {conn_name}: {exc}")
 
             if errors:
                 error_msg = "Failed to load some connections:\n" + "\n".join(errors)
                 logger.error(error_msg)
                 raise RuntimeError(error_msg)
 
-        except Exception as e:
-            logger.error(f"Failed to load connections: {e}")
+        except Exception as exc:
+            logger.error("Failed to load connections: %s", exc)
             raise
 
-    def _setup_tools(self):
-        """Setup MCP tools using FastMCP decorators"""
+    def _setup_tools(self) -> None:
+        """Setup MCP tools using FastMCP decorators."""
 
         @self.mcp.tool()
         async def run_query_read_only(
@@ -113,33 +120,32 @@ class ReadOnlySQLServer:
             server: Optional[str] = None,
             file_path: Optional[str] = None,
         ) -> str:
-            """
-            Execute a read-only SQL statement on a configured connection.
+            """Run a read-only SQL query and return TSV output.
 
             Args:
-                connection_name: Identifier returned by list_connections
-                query: SQL text that must remain read-only
-                database: Optional database to use (must be allowlisted by the connection).
-                server: Optional hostname to target a specific server.
-                file_path: Optional path to save results. When supplied, results
-                    are written to this path and only the absolute path is returned.
+                connection_name: Connection name returned by ``list_connections``.
+                query: Read-only SQL text to execute.
+                database: Optional database override. Must be in the connection's
+                    allowed database list.
+                server: Optional hostname override targeting a specific configured
+                    server. Defaults to the first server for the connection.
+                file_path: Optional file path for writing the full TSV result to
+                    disk. When provided, the tool returns the absolute path to the
+                    written file instead of the TSV payload and refuses to
+                    overwrite an existing file.
 
             Returns:
-                TSV string where the first line contains column headers and
-                subsequent lines contain tab-delimited rows. Output may be empty
-                when no rows match and is capped by max_result_bytes. If
-                file_path is provided, returns the absolute file path after
-                writing results.
+                Tab-separated text with a header row followed by result rows, or
+                the absolute output path when ``file_path`` is provided.
             """
             if connection_name not in self.connections:
-                raise ValueError(f"Connection '{connection_name}' not found. Available connections: {', '.join(self.connections.keys())}")
+                raise ValueError(
+                    f"Connection '{connection_name}' not found. Available connections: {', '.join(self.connections.keys())}"
+                )
 
             connector = self.connections[connection_name]
-            # Use the hard timeout wrapper to prevent hanging
-            # This will return TSV string on success or raise exception on error
             execute = connector.execute_query_with_timeout
             if file_path:
-                # Disable result-size guard when streaming to disk
                 with connector.disable_result_limit():
                     result = await execute(query, database=database, server=server)
 
@@ -151,28 +157,24 @@ class ReadOnlySQLServer:
                 output_path.parent.mkdir(parents=True, exist_ok=True)
                 output_path.write_text(result, encoding="utf-8")
                 return str(output_path)
-            else:
-                result = await execute(query, database=database, server=server)
 
-            return result
+            return await execute(query, database=database, server=server)
 
         @self.mcp.tool()
         async def list_connections() -> str:
-            """
-            List all available database connections with their configuration details.
+            """List configured database connections as TSV metadata.
 
             Returns:
-                TSV string with header columns: name, type, description, servers, database, databases, user.
-                Servers are comma-separated hostnames showing the resolved database endpoints
-                (SSH/VPN adjustments applied) loaded at startup.
+                Tab-separated text with the columns ``name``, ``type``,
+                ``description``, ``servers``, ``database``, ``databases``, and
+                ``user``. The ``servers`` column contains the resolved display
+                hosts for each connection, while ``database`` and ``databases``
+                describe the default database and allowed database list.
             """
             conn_list = []
 
             for conn_name, connector in self.connections.items():
-                # Type is required - if connector exists, it must have a type
                 conn_type = connector.connection.db_type
-                implementation = connector.connection.implementation
-
                 servers = _display_hosts_for_connector(connector)
 
                 conn_info = {
@@ -182,10 +184,9 @@ class ReadOnlySQLServer:
                     "servers": servers,
                     "database": connector.database,
                     "databases": connector.allowed_databases,
-                    "user": connector.username or ""
+                    "user": connector.username or "",
                 }
 
-                # Add security limits if configured
                 if connector.query_timeout != DEFAULT_QUERY_TIMEOUT:
                     conn_info["query_timeout"] = connector.query_timeout
                 if connector.connection_timeout != DEFAULT_CONNECTION_TIMEOUT:
@@ -195,12 +196,18 @@ class ReadOnlySQLServer:
 
                 conn_list.append(conn_info)
 
-            # Return as TSV for consistency with query results
             if not conn_list:
                 return "name\ttype\tdescription\tservers\tdatabase\tdatabases\tuser"
 
-            # Build TSV with headers
-            headers = ["name", "type", "description", "servers", "database", "databases", "user"]
+            headers = [
+                "name",
+                "type",
+                "description",
+                "servers",
+                "database",
+                "databases",
+                "user",
+            ]
             rows = ["\t".join(headers)]
 
             for conn in conn_list:
@@ -208,40 +215,67 @@ class ReadOnlySQLServer:
                     conn.get("name", ""),
                     conn.get("type", ""),
                     conn.get("description", ""),
-                    ",".join(conn.get("servers", [])),  # Join multiple servers with comma
+                    ",".join(conn.get("servers", [])),
                     conn.get("database", ""),
                     ",".join(conn.get("databases", [])),
-                    conn.get("user", "")
+                    conn.get("user", ""),
                 ]
                 rows.append("\t".join(row))
 
             return "\n".join(rows)
 
-    def run(self):
-        """Run the FastMCP server"""
+    def run(self) -> None:
         if not self.connections:
             logger.warning("No connections loaded. Check your configuration file.")
         else:
-            logger.info(f"Loaded {len(self.connections)} connection(s)")
+            logger.info("Loaded %s connection(s)", len(self.connections))
 
-        # Run the FastMCP server (defaults to stdio transport)
         self.mcp.run()
 
 
-def main():
-    """Main entry point for the MCP server"""
-    # Get config file path from command line or use default
-    config_path = sys.argv[1] if len(sys.argv) > 1 else "connections.yaml"
+def build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="MCP Read-Only SQL Server")
+    parser.add_argument(
+        "--config-dir",
+        help="Directory containing connections.yaml",
+    )
+    parser.add_argument(
+        "--state-dir",
+        help="Directory reserved for local state files",
+    )
+    parser.add_argument(
+        "--cache-dir",
+        help="Directory reserved for cache files",
+    )
+    parser.add_argument(
+        "--print-paths",
+        action="store_true",
+        help="Print resolved config/state/cache paths and exit",
+    )
+    return parser
 
-    # Check if config file exists
-    if not Path(config_path).exists():
-        logger.error(f"Configuration file not found: {config_path}")
-        logger.info("Please create a connections.yaml file or specify a different path")
+
+def main() -> None:
+    parser = build_arg_parser()
+    args = parser.parse_args()
+
+    runtime_paths = resolve_runtime_paths(
+        config_dir=args.config_dir,
+        state_dir=args.state_dir,
+        cache_dir=args.cache_dir,
+    )
+
+    if args.print_paths:
+        print(runtime_paths.render())
+        return
+
+    if not runtime_paths.connections_file.exists():
+        logger.error("Configuration file not found: %s", runtime_paths.connections_file)
+        logger.info("Expected SQL config at %s", runtime_paths.config_dir)
         sys.exit(1)
 
-    # Create and run server
-    logger.info(f"Loading connections from {config_path}")
-    server = ReadOnlySQLServer(config_path)
+    logger.info("Loading connections from %s", runtime_paths.connections_file)
+    server = ReadOnlySQLServer(runtime_paths)
     server.run()
 
 

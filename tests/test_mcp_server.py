@@ -8,8 +8,10 @@ import pytest
 from pathlib import Path
 from tests.conftest import call_tool, execute_query, list_connections
 
-
-pytestmark = pytest.mark.filterwarnings("ignore::pytest.PytestUnraisableExceptionWarning")
+pytestmark = pytest.mark.filterwarnings(
+    "ignore::pytest.PytestUnraisableExceptionWarning"
+)
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.mark.anyio
@@ -42,11 +44,7 @@ class TestServerBasics:
 
     async def test_invalid_connection(self, mcp_client):
         """Test error handling for invalid connection"""
-        result = await execute_query(
-            mcp_client,
-            "non_existent_connection",
-            "SELECT 1"
-        )
+        result = await execute_query(mcp_client, "non_existent_connection", "SELECT 1")
 
         assert not result.get("success", False)
         assert "not found" in result.get("error", "").lower()
@@ -55,25 +53,46 @@ class TestServerBasics:
     async def test_query_missing_params(self, mcp_client):
         """Test error handling for missing parameters"""
         # Call with missing connection_name - should return error
-        result = await mcp_client.call_tool("run_query_read_only", arguments={"query": "SELECT 1"})
+        result = await mcp_client.call_tool(
+            "run_query_read_only", arguments={"query": "SELECT 1"}
+        )
         # Should have error in result
-        assert result.isError or (result.content and "error" in str(result.content[0]).lower())
+        assert result.isError or (
+            result.content and "error" in str(result.content[0]).lower()
+        )
 
     async def test_run_query_with_server_override(self, mcp_client):
         """Server parameter should route query to the requested host."""
         result = await execute_query(
-            mcp_client,
-            "test_connection",
-            "SELECT 1",
-            server="127.0.0.1"
+            mcp_client, "test_connection", "SELECT 1", server="127.0.0.1"
         )
 
         if result.get("success"):
             assert result.get("rows")
-            assert result["rows"][0][0] == '1'
+            assert result["rows"][0][0] == "1"
         else:
             error_msg = result.get("error", "").lower()
             assert "127.0.0.1" in error_msg or "connection refused" in error_msg
+
+    async def test_tool_descriptions_explain_behavior(self, mcp_client):
+        """Tool metadata should describe parameters and TSV/path behavior."""
+        tools = await mcp_client.list_tools()
+
+        run_query_tool = next(t for t in tools.tools if t.name == "run_query_read_only")
+        list_connections_tool = next(
+            t for t in tools.tools if t.name == "list_connections"
+        )
+
+        run_query_desc = run_query_tool.description.lower()
+        assert "tab-separated" in run_query_desc
+        assert "database" in run_query_desc
+        assert "server" in run_query_desc
+        assert "file_path" in run_query_desc
+
+        list_connections_desc = list_connections_tool.description.lower()
+        assert "tab-separated" in list_connections_desc
+        assert "database connections" in list_connections_desc
+        assert "servers" in list_connections_desc
 
 
 @pytest.mark.anyio
@@ -97,7 +116,7 @@ class TestResolvedEndpoints:
     port: 22
     private_key: /tmp/nonexistent
 """
-        config_file = tmp_path / "ssh_resolved.yaml"
+        config_file = tmp_path / "connections.yaml"
         config_file.write_text(config_content)
         return str(config_file)
 
@@ -110,7 +129,16 @@ class TestResolvedEndpoints:
 
         server_params = StdioServerParameters(
             command="uv",
-            args=["run", "python", "-m", "src.server", ssh_resolved_config],
+            args=[
+                "--directory",
+                str(PROJECT_ROOT),
+                "run",
+                "python",
+                "-m",
+                "src.server",
+                "--config-dir",
+                str(Path(ssh_resolved_config).parent),
+            ],
             env=dict(os.environ),
         )
 
@@ -165,7 +193,7 @@ class TestMultipleConnections:
   username: user3
   password: pass3
 """
-        config_file = tmp_path / "multi_config.yaml"
+        config_file = tmp_path / "connections.yaml"
         config_file.write_text(config_content)
         return str(config_file)
 
@@ -173,9 +201,19 @@ class TestMultipleConnections:
     async def multi_server(self, multi_config_file):
         """Server with multiple connections"""
         from mcp import StdioServerParameters
+
         return StdioServerParameters(
             command="uv",
-            args=["run", "python", "-m", "src.server", multi_config_file]
+            args=[
+                "--directory",
+                str(PROJECT_ROOT),
+                "run",
+                "python",
+                "-m",
+                "src.server",
+                "--config-dir",
+                str(Path(multi_config_file).parent),
+            ],
         )
 
     @pytest.fixture
@@ -226,7 +264,7 @@ class TestSecurityLimits:
   connection_timeout: 5
   max_result_bytes: 5242880
 """
-        config_file = tmp_path / "secure_config.yaml"
+        config_file = tmp_path / "connections.yaml"
         config_file.write_text(config_content)
         return str(config_file)
 
@@ -234,9 +272,19 @@ class TestSecurityLimits:
     async def secure_server(self, secure_config_file):
         """Server with security limits"""
         from mcp import StdioServerParameters
+
         return StdioServerParameters(
             command="uv",
-            args=["run", "python", "-m", "src.server", secure_config_file]
+            args=[
+                "--directory",
+                str(PROJECT_ROOT),
+                "run",
+                "python",
+                "-m",
+                "src.server",
+                "--config-dir",
+                str(Path(secure_config_file).parent),
+            ],
         )
 
     @pytest.fixture
@@ -286,7 +334,7 @@ class TestServerParameter:
   username: user
   password: pass
 """
-        config_file = tmp_path / "multi_server_config.yaml"
+        config_file = tmp_path / "connections.yaml"
         config_file.write_text(config_content)
         return str(config_file)
 
@@ -298,7 +346,16 @@ class TestServerParameter:
 
         server_params = StdioServerParameters(
             command="uv",
-            args=["run", "python", "-m", "src.server", multi_server_config_file]
+            args=[
+                "--directory",
+                str(PROJECT_ROOT),
+                "run",
+                "python",
+                "-m",
+                "src.server",
+                "--config-dir",
+                str(Path(multi_server_config_file).parent),
+            ],
         )
 
         async with stdio_client(server_params) as (read, write):
@@ -314,8 +371,8 @@ class TestServerParameter:
             {
                 "connection_name": "multi_server_conn",
                 "query": "SELECT 1",
-                "server": "nonexistent.example.com"
-            }
+                "server": "nonexistent.example.com",
+            },
         )
 
         assert not result.get("success", False)
@@ -332,8 +389,8 @@ class TestServerParameter:
             {
                 "connection_name": "multi_server_conn",
                 "query": "SELECT 1",
-                "server": "server1.example.com:invalid"
-            }
+                "server": "server1.example.com:invalid",
+            },
         )
 
         assert not result.get("success", False)
@@ -347,5 +404,7 @@ class TestServerParameter:
         run_query_tool = next(t for t in tools.tools if t.name == "run_query_read_only")
 
         # Check tool description mentions server parameter
-        assert "server" in run_query_tool.description.lower() or \
-               (run_query_tool.inputSchema and "server" in str(run_query_tool.inputSchema).lower())
+        assert "server" in run_query_tool.description.lower() or (
+            run_query_tool.inputSchema
+            and "server" in str(run_query_tool.inputSchema).lower()
+        )

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Test database connections"""
+"""Test database connections."""
 
-import sys
 import asyncio
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -10,36 +10,35 @@ from typing import Optional
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from src.config import load_connections
-from src.connectors.postgresql.python import PostgreSQLPythonConnector
-from src.connectors.postgresql.cli import PostgreSQLCLIConnector
-from src.connectors.clickhouse.python import ClickHousePythonConnector
 from src.connectors.clickhouse.cli import ClickHouseCLIConnector
+from src.connectors.clickhouse.python import ClickHousePythonConnector
+from src.connectors.postgresql.cli import PostgreSQLCLIConnector
+from src.connectors.postgresql.python import PostgreSQLPythonConnector
+from src.runtime_paths import resolve_runtime_paths, RuntimePaths
 
 
-async def test_connection(config_path: str, connection_name: Optional[str] = None) -> bool:
-    """Test database connection(s)"""
-
+async def test_connection(
+    runtime_paths: RuntimePaths,
+    connection_name: Optional[str] = None,
+) -> bool:
+    """Test database connection(s)."""
     try:
-        # Load validated connections
-        connections = load_connections(config_path)
+        connections = load_connections(runtime_paths.connections_file)
 
         if not connections:
             print("❌ No connections found in configuration")
             return False
 
-        # Filter to specific connection if requested
         if connection_name:
             if connection_name not in connections:
                 print(f"❌ Connection not found: {connection_name}")
                 print("Available connections:")
-                for name in connections.keys():
+                for name in connections:
                     print(f"  - {name}")
                 return False
-            # Filter to just the requested connection
             connections = {connection_name: connections[connection_name]}
 
         all_success = True
-
         local_hosts = {"localhost", "127.0.0.1", "::1"}
 
         for name, connection in connections.items():
@@ -51,18 +50,14 @@ async def test_connection(config_path: str, connection_name: Optional[str] = Non
             print(f"  Type: {db_type}")
             print(f"  Implementation: {impl}")
 
-            if connection.password_env_var:
-                status = "found" if connection.password_env_found else "missing"
-                status_icon = "✅" if connection.password_env_found else "❌"
-                print(f"  Password env var: {connection.password_env_var} {status_icon} ({status})")
+            if connection.password:
+                print("  Password: configured")
             else:
-                print("  Password env var: n/a (inline password configured)")
+                print("  Password: empty / not set")
 
-            # SSH tunnel info
             if connection.ssh_tunnel:
                 print(f"  SSH Tunnel: {connection.ssh_tunnel.host}")
 
-            # Get list of servers to test
             server_entries = []
             for server in servers:
                 display_host = server.host
@@ -72,7 +67,6 @@ async def test_connection(config_path: str, connection_name: Optional[str] = Non
                         display_host = ssh_host
                 server_entries.append((display_host, server))
 
-            # Deduplicate by display host so we don't attempt duplicate selections
             seen_hosts = set()
             unique_entries = []
             for entry in server_entries:
@@ -80,10 +74,7 @@ async def test_connection(config_path: str, connection_name: Optional[str] = Non
                     seen_hosts.add(entry[0])
                     unique_entries.append(entry)
 
-            if not unique_entries:
-                servers_to_test = [("default", None)]
-            else:
-                servers_to_test = unique_entries
+            servers_to_test = unique_entries or [("default", None)]
 
             display_labels = []
             for display_host, server in servers_to_test:
@@ -99,99 +90,109 @@ async def test_connection(config_path: str, connection_name: Optional[str] = Non
             print(f"  Servers: {', '.join(display_labels)}")
             print()
 
-            # Test each server
-            for i, (display_host, server) in enumerate(servers_to_test, 1):
-                label = display_labels[i - 1]
+            for index, (display_host, server) in enumerate(servers_to_test, start=1):
+                label = display_labels[index - 1]
                 if len(servers_to_test) > 1:
-                    print(f"  [{i}/{len(servers_to_test)}] Testing server: {label}")
+                    print(f"  [{index}/{len(servers_to_test)}] Testing server: {label}")
                 else:
                     print(f"  Testing server: {label}")
 
-                # Select connector
                 connector = None
                 try:
                     if db_type == "postgresql":
-                        if impl == "python":
-                            connector = PostgreSQLPythonConnector(connection)
-                        else:
-                            connector = PostgreSQLCLIConnector(connection)
+                        connector = (
+                            PostgreSQLPythonConnector(connection)
+                            if impl == "python"
+                            else PostgreSQLCLIConnector(connection)
+                        )
                     elif db_type == "clickhouse":
-                        if impl == "python":
-                            connector = ClickHousePythonConnector(connection)
-                        else:
-                            connector = ClickHouseCLIConnector(connection)
+                        connector = (
+                            ClickHousePythonConnector(connection)
+                            if impl == "python"
+                            else ClickHouseCLIConnector(connection)
+                        )
                     else:
                         print(f"    ❌ Unknown database type: {db_type}")
                         all_success = False
                         continue
 
-                    # Test with a simple query, using server parameter if not default
                     query = "SELECT version()"
                     server_param = None if display_host == "default" else display_host
-
                     if server_param:
-                        result = await connector.execute_query(query, server=server_param)
+                        result = await connector.execute_query(
+                            query, server=server_param
+                        )
                     else:
                         result = await connector.execute_query(query)
 
-                    # Parse result to show version
-                    lines = result.strip().split('\n')
+                    lines = result.strip().split("\n")
                     if len(lines) > 1:
-                        version_line = lines[1].strip()  # Skip header
-                        print(f"    ✅ Connected successfully")
+                        version_line = lines[1].strip()
+                        print("    ✅ Connected successfully")
                         print(f"    Database version: {version_line}")
                     else:
-                        print(f"    ✅ Connected successfully")
+                        print("    ✅ Connected successfully")
 
-                except FileNotFoundError as e:
-                    print(f"    ❌ CLI tool not found: {e}")
+                except FileNotFoundError as exc:
+                    print(f"    ❌ CLI tool not found: {exc}")
                     all_success = False
-                except TimeoutError as e:
-                    print(f"    ❌ Connection timeout: {e}")
+                except TimeoutError as exc:
+                    print(f"    ❌ Connection timeout: {exc}")
                     all_success = False
-                except Exception as e:
-                    error_msg = str(e)
+                except Exception as exc:
+                    error_msg = str(exc)
                     lowered = error_msg.lower()
 
-                    # Fallback for ClickHouse CLI hitting HTTP/HAProxy endpoints
                     if (
                         db_type == "clickhouse"
                         and impl == "cli"
                         and "unexpected packet" in lowered
                     ):
-                        print("    ⚠️ Native protocol rejected; retrying with clickhouse-connect (HTTP)")
+                        print(
+                            "    ⚠️ Native protocol rejected; retrying with clickhouse-connect (HTTP)"
+                        )
                         try:
                             fallback_connector = ClickHousePythonConnector(connection)
                             if server_param:
-                                result = await fallback_connector.execute_query(query, server=server_param)
+                                result = await fallback_connector.execute_query(
+                                    query, server=server_param
+                                )
                             else:
                                 result = await fallback_connector.execute_query(query)
 
-                            lines = result.strip().split('\n')
+                            lines = result.strip().split("\n")
                             if len(lines) > 1:
                                 version_line = lines[1].strip()
-                                print("    ✅ Connected successfully via HTTP implementation")
+                                print(
+                                    "    ✅ Connected successfully via HTTP implementation"
+                                )
                                 print(f"    Database version: {version_line}")
                             else:
-                                print("    ✅ Connected successfully via HTTP implementation")
+                                print(
+                                    "    ✅ Connected successfully via HTTP implementation"
+                                )
                             continue
                         except Exception as fallback_exc:
-                            error_msg = str(fallback_exc)
-                            lowered = error_msg.lower()
-                            print(f"    ❌ Fallback via HTTP implementation failed: {error_msg[:200]}")
+                            print(
+                                f"    ❌ Fallback via HTTP implementation failed: {str(fallback_exc)[:200]}"
+                            )
                             all_success = False
                             print()
                             continue
 
-                    # Clean up error messages
                     if "password" in lowered and "failed" in lowered:
-                        print(f"    ❌ Authentication failed - check username/password")
-                    elif "could not connect" in lowered or "connection refused" in lowered:
-                        print(f"    ❌ Cannot connect to server - check host/port")
+                        print("    ❌ Authentication failed - check username/password")
+                    elif (
+                        "could not connect" in lowered
+                        or "connection refused" in lowered
+                    ):
+                        print("    ❌ Cannot connect to server - check host/port")
                     elif "database" in lowered and "does not exist" in lowered:
-                        print(f"    ❌ Database not found - check database name")
+                        print("    ❌ Database not found - check database name")
                     elif "read-only" in lowered:
-                        print(f"    ✅ Connected successfully (read-only enforcement working)")
+                        print(
+                            "    ✅ Connected successfully (read-only enforcement working)"
+                        )
                     else:
                         print(f"    ❌ Connection failed: {error_msg[:200]}")
                     all_success = False
@@ -203,32 +204,53 @@ async def test_connection(config_path: str, connection_name: Optional[str] = Non
         return all_success
 
     except FileNotFoundError:
-        print(f"❌ Configuration file not found: {config_path}")
+        print(f"❌ Configuration file not found: {runtime_paths.connections_file}")
         return False
-    except Exception as e:
-        print(f"❌ Error: {e}")
+    except Exception as exc:
+        print(f"❌ Error: {exc}")
         return False
 
 
 def main():
-    """Main entry point"""
+    """Main entry point."""
     import argparse
 
     parser = argparse.ArgumentParser(description="Test MCP SQL Server connections")
     parser.add_argument(
         "connection",
         nargs="?",
-        help="Specific connection name to test (tests all if not specified)"
+        help="Specific connection name to test (tests all if not specified)",
     )
     parser.add_argument(
-        "--config",
-        default="connections.yaml",
-        help="Path to configuration file (default: connections.yaml)"
+        "--config-dir",
+        help="Directory containing connections.yaml",
+    )
+    parser.add_argument(
+        "--state-dir",
+        help="Directory reserved for local state files",
+    )
+    parser.add_argument(
+        "--cache-dir",
+        help="Directory reserved for cache files",
+    )
+    parser.add_argument(
+        "--print-paths",
+        action="store_true",
+        help="Print resolved config/state/cache paths and exit",
     )
 
     args = parser.parse_args()
+    runtime_paths = resolve_runtime_paths(
+        config_dir=args.config_dir,
+        state_dir=args.state_dir,
+        cache_dir=args.cache_dir,
+    )
 
-    success = asyncio.run(test_connection(args.config, args.connection))
+    if args.print_paths:
+        print(runtime_paths.render())
+        return
+
+    success = asyncio.run(test_connection(runtime_paths, args.connection))
     sys.exit(0 if success else 1)
 
 

@@ -11,8 +11,17 @@ import sys
 # Add parent directory to path to import from utils
 sys.path.append(str(Path(__file__).parent.parent))
 from utils.connection_utils import get_connection_target
+from runtime_paths import resolve_runtime_paths
 
 logger = logging.getLogger(__name__)
+
+
+def _write_text_file_secure(path: Path, content: str) -> None:
+    """Write a text file and restrict it to user-only permissions."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as handle:
+        handle.write(content)
+    os.chmod(path, 0o600)
 
 
 class DBeaverImporter:
@@ -35,18 +44,24 @@ class DBeaverImporter:
 
         # Use OpenSSL to decrypt
         cmd = [
-            "openssl", "aes-128-cbc",
+            "openssl",
+            "aes-128-cbc",
             "-d",
-            "-K", key,
-            "-iv", iv,
-            "-in", str(self.credentials_path)
+            "-K",
+            key,
+            "-iv",
+            iv,
+            "-in",
+            str(self.credentials_path),
         ]
 
         try:
             result = subprocess.run(cmd, capture_output=True)
 
             if result.returncode != 0:
-                logger.warning(f"Could not decrypt credentials: {result.stderr.decode()}")
+                logger.warning(
+                    f"Could not decrypt credentials: {result.stderr.decode()}"
+                )
                 return {}
 
             # Skip the first 16 bytes (padding) and parse JSON
@@ -63,17 +78,23 @@ class DBeaverImporter:
                     if "network/ssh_tunnel" in conn_data:
                         ssh_credentials[conn_id] = conn_data["network/ssh_tunnel"]
 
-            logger.info(f"Successfully decrypted credentials for {len(credentials)} connections")
+            logger.info(
+                f"Successfully decrypted credentials for {len(credentials)} connections"
+            )
             return credentials, ssh_credentials
 
         except (subprocess.SubprocessError, json.JSONDecodeError) as e:
             logger.warning(f"Could not decrypt credentials file: {e}")
             return {}
 
-    def import_connections(self, merge_clusters: bool = True, only_names: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+    def import_connections(
+        self, merge_clusters: bool = True, only_names: Optional[List[str]] = None
+    ) -> List[Dict[str, Any]]:
         """Import connections from DBeaver configuration"""
         if not self.data_sources_path.exists():
-            raise FileNotFoundError(f"DBeaver data sources file not found: {self.data_sources_path}")
+            raise FileNotFoundError(
+                f"DBeaver data sources file not found: {self.data_sources_path}"
+            )
 
         with open(self.data_sources_path, "r") as f:
             data_sources = json.load(f)
@@ -96,7 +117,9 @@ class DBeaverImporter:
                             credentials[conn_id] = conn_creds["#connection"]
                     logger.info("Credentials file was not encrypted")
             except (json.JSONDecodeError, UnicodeDecodeError):
-                logger.warning("Could not read credentials file. Usernames will need to be set manually.")
+                logger.warning(
+                    "Could not read credentials file. Usernames will need to be set manually."
+                )
 
         requested = [name for name in (only_names or []) if name]
         only_set = set(requested) if requested else None
@@ -115,8 +138,12 @@ class DBeaverImporter:
                 seen_names.append(original_name)
             # Pass both DB and SSH credentials
             db_creds = credentials.get(conn_id)
-            ssh_creds = ssh_credentials.get(conn_id) if 'ssh_credentials' in locals() else None
-            converted = self._convert_connection(conn_id, conn_data, db_creds, ssh_creds)
+            ssh_creds = (
+                ssh_credentials.get(conn_id) if "ssh_credentials" in locals() else None
+            )
+            converted = self._convert_connection(
+                conn_id, conn_data, db_creds, ssh_creds
+            )
             if converted:
                 connections.append(converted)
                 imported_names.append(original_name)
@@ -128,7 +155,13 @@ class DBeaverImporter:
         self.last_seen_names = seen_names
         return connections
 
-    def _convert_connection(self, conn_id: str, conn_data: Dict[str, Any], creds: Dict[str, Any] = None, ssh_creds: Dict[str, Any] = None) -> Dict[str, Any]:
+    def _convert_connection(
+        self,
+        conn_id: str,
+        conn_data: Dict[str, Any],
+        creds: Dict[str, Any] = None,
+        ssh_creds: Dict[str, Any] = None,
+    ) -> Dict[str, Any]:
         """Convert a DBeaver connection to our format"""
         provider = conn_data.get("provider", "")
         config = conn_data.get("configuration", {})
@@ -144,7 +177,7 @@ class DBeaverImporter:
         # Create connection configuration
         connection = {
             "connection_name": self._sanitize_name(conn_data.get("name", conn_id)),
-            "type": provider
+            "type": provider,
         }
 
         # Extract host and port
@@ -171,15 +204,14 @@ class DBeaverImporter:
                 connection["username"] = username
                 print(f"    Username: {username}")
             else:
-                print(f"    Warning: No username found in credentials")
+                print("    Warning: No username found in credentials")
 
-            # Store password for later .env update (don't put in YAML)
             password = creds.get("password")
             if password:
-                connection["_password"] = password  # Temporary field, removed before saving
-                print(f"    Password: {'*' * 8} (will be added to .env)")
+                connection["password"] = password
+                print("    Password: ******** (stored in connections.yaml)")
         else:
-            print(f"    Warning: No credentials available for this connection")
+            print("    Warning: No credentials available for this connection")
 
         # Check for SSH tunnel configuration
         handlers = config.get("handlers", {})  # handlers is inside configuration
@@ -205,8 +237,8 @@ class DBeaverImporter:
 
             # Store SSH password if available
             if ssh_creds and "password" in ssh_creds:
-                connection["_ssh_password"] = ssh_creds["password"]
-                print(f"    SSH Password: {'*' * 8} (will be added to .env)")
+                connection["ssh_tunnel"]["password"] = ssh_creds["password"]
+                print("    SSH Password: ******** (stored in connections.yaml)")
 
             # Add SSH port if non-standard
             ssh_port = ssh_props.get("port", 22)
@@ -221,9 +253,7 @@ class DBeaverImporter:
                 connection["ssh_tunnel"]["private_key"] = key_path
                 print(f"    SSH: Key authentication with {key_path}")
             elif auth_type == "PASSWORD":
-                # Mark that password auth is needed
-                connection["ssh_tunnel"]["auth_type"] = "password"
-                print(f"    SSH: Password authentication required")
+                print("    SSH: Password authentication required")
 
         # Default to CLI implementation
         connection["implementation"] = "cli"
@@ -246,7 +276,9 @@ class DBeaverImporter:
             description = f"{db_type} on {host}/{db}"
 
         # Add import source
-        connection["description"] = f"{description} (imported from DBeaver: {original_name})"
+        connection["description"] = (
+            f"{description} (imported from DBeaver: {original_name})"
+        )
 
         return connection
 
@@ -254,11 +286,12 @@ class DBeaverImporter:
         """Sanitize connection name for use as identifier"""
         # Replace spaces and special characters with underscores
         import re
-        sanitized = re.sub(r'[^\w\-]', '_', name)
+
+        sanitized = re.sub(r"[^\w\-]", "_", name)
         # Remove consecutive underscores
-        sanitized = re.sub(r'_+', '_', sanitized)
+        sanitized = re.sub(r"_+", "_", sanitized)
         # Remove leading/trailing underscores
-        sanitized = sanitized.strip('_')
+        sanitized = sanitized.strip("_")
         # Convert to lowercase
         sanitized = sanitized.lower()
         return sanitized or "connection"
@@ -266,7 +299,7 @@ class DBeaverImporter:
     def _host_pattern(self, server: str) -> Tuple[str, str]:
         """Extract pattern from host for grouping (replaces digits with #)"""
         host, _, port = server.partition(":")
-        digit_re = re.compile(r'\d+')
+        digit_re = re.compile(r"\d+")
         return digit_re.sub("#", host), port
 
     def _group_key(self, conn: Dict[str, Any]) -> Tuple:
@@ -278,6 +311,7 @@ class DBeaverImporter:
             conn.get("type"),
             conn.get("db", ""),  # Single database, not list
             conn.get("username"),
+            conn.get("password"),
             ssh_serialized,
         )
 
@@ -286,7 +320,9 @@ class DBeaverImporter:
 
         return fields_part, patterns
 
-    def _merge_cluster_connections(self, connections: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _merge_cluster_connections(
+        self, connections: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
         """Merge connections that appear to be part of the same cluster"""
         groups: Dict[Tuple, Dict[str, Any]] = {}
         order: List[Tuple] = []
@@ -294,8 +330,8 @@ class DBeaverImporter:
         for conn in connections:
             servers = conn.get("servers", []) or []
             ssh = conn.get("ssh_tunnel")
-            conn_password = conn.get("_password")
-            conn_ssh_password = conn.get("_ssh_password")
+            conn_password = conn.get("password")
+            conn_ssh_password = ssh.get("password") if isinstance(ssh, dict) else None
 
             # Add default SSH user if SSH tunnel exists but no user specified
             if isinstance(ssh, dict) and not ssh.get("user"):
@@ -312,29 +348,22 @@ class DBeaverImporter:
                     "servers": [],
                     "db": conn.get("db", ""),  # Single database
                     "username": conn.get("username"),
-                    "ssh_tunnel": ssh,
+                    "password": conn_password,
+                    "ssh_tunnel": dict(ssh) if isinstance(ssh, dict) else ssh,
                     "implementation": conn.get("implementation", "python"),
-                    "original_names": []  # Track original DBeaver names
+                    "original_names": [],  # Track original DBeaver names
                 }
                 groups[key] = group
                 order.append(key)
-                if conn_password:
-                    group["_password"] = conn_password
-                if conn_ssh_password:
-                    group["_ssh_password"] = conn_ssh_password
             else:
-                if conn_password:
-                    if "_password" not in group:
-                        group["_password"] = conn_password
-                    elif group.get("_password") != conn_password:
-                        logger.warning(
-                            "Multiple passwords found while merging cluster %s; keeping the first",
-                            group.get("connection_name"),
-                        )
                 if conn_ssh_password:
-                    if "_ssh_password" not in group:
-                        group["_ssh_password"] = conn_ssh_password
-                    elif group.get("_ssh_password") != conn_ssh_password:
+                    group_ssh = group.get("ssh_tunnel")
+                    if isinstance(group_ssh, dict) and not group_ssh.get("password"):
+                        group_ssh["password"] = conn_ssh_password
+                    elif (
+                        isinstance(group_ssh, dict)
+                        and group_ssh.get("password") != conn_ssh_password
+                    ):
                         logger.warning(
                             "Multiple SSH passwords found while merging cluster %s; keeping the first",
                             group.get("connection_name"),
@@ -346,9 +375,14 @@ class DBeaverImporter:
                     group["servers"].append(server)
 
             # Track original DBeaver name
-            if "description" in conn and "(imported from DBeaver:" in conn["description"]:
+            if (
+                "description" in conn
+                and "(imported from DBeaver:" in conn["description"]
+            ):
                 # Extract original name from description
-                import_part = conn["description"].split("(imported from DBeaver:")[-1].rstrip(")")
+                import_part = (
+                    conn["description"].split("(imported from DBeaver:")[-1].rstrip(")")
+                )
                 if import_part not in group["original_names"]:
                     group["original_names"].append(import_part)
 
@@ -374,7 +408,9 @@ class DBeaverImporter:
             # Add import source with original names
             if group.get("original_names"):
                 original = ", ".join(group["original_names"])
-                group["description"] = f"{description} (imported from DBeaver: {original})"
+                group["description"] = (
+                    f"{description} (imported from DBeaver: {original})"
+                )
             else:
                 group["description"] = f"{description} (imported from DBeaver)"
 
@@ -386,11 +422,15 @@ class DBeaverImporter:
         original_count = len(connections)
         merged_count = len(merged)
         if original_count > merged_count:
-            logger.info(f"Merged {original_count} connections into {merged_count} groups")
+            logger.info(
+                f"Merged {original_count} connections into {merged_count} groups"
+            )
 
         return merged
 
-    def _build_merge_report(self, connections: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _build_merge_report(
+        self, connections: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
         """Build a report of which connections would be merged together"""
         groups: Dict[Tuple, Dict[str, Any]] = {}
         order: List[Tuple] = []
@@ -427,12 +467,30 @@ def main():
     from datetime import datetime
 
     parser = argparse.ArgumentParser(description="Import DBeaver connections")
-    parser.add_argument("dbeaver_path", help="Path to DBeaver .dbeaver directory")
-    parser.add_argument("--no-merge", action="store_true", help="Don't merge cluster connections")
-    parser.add_argument("--output", "-o", help="Output file (default: connections.yaml)")
-    parser.add_argument("--env-file", "-e", help="Environment file (default: .env)")
-    parser.add_argument("--update-passwords", action="store_true", help="Update passwords in .env from DBeaver")
-    parser.add_argument("--dry-run", action="store_true", help="Show results without writing files")
+    parser.add_argument(
+        "dbeaver_path",
+        nargs="?",
+        help="Path to DBeaver .dbeaver directory",
+    )
+    parser.add_argument(
+        "--no-merge", action="store_true", help="Don't merge cluster connections"
+    )
+    parser.add_argument(
+        "--output",
+        "-o",
+        help="Output file (default: ~/.config/lukleh/mcp-read-only-sql/connections.yaml)",
+    )
+    parser.add_argument("--config-dir", help="Directory containing connections.yaml")
+    parser.add_argument("--state-dir", help="Directory reserved for local state files")
+    parser.add_argument("--cache-dir", help="Directory reserved for cache files")
+    parser.add_argument(
+        "--print-paths",
+        action="store_true",
+        help="Print resolved config/state/cache paths and exit",
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Show results without writing files"
+    )
     parser.add_argument(
         "--only",
         action="append",
@@ -440,19 +498,36 @@ def main():
     )
     args = parser.parse_args()
 
+    runtime_paths = resolve_runtime_paths(
+        config_dir=args.config_dir,
+        state_dir=args.state_dir,
+        cache_dir=args.cache_dir,
+    )
+
+    if args.print_paths:
+        print(runtime_paths.render())
+        return
+
+    if not args.dbeaver_path:
+        parser.error("the following arguments are required: dbeaver_path")
+
     dbeaver_path = args.dbeaver_path
     merge_clusters = not args.no_merge
-    output_path = Path(args.output) if args.output else Path("connections.yaml")
-    env_path = Path(args.env_file) if args.env_file else Path(".env")
+    output_path = (
+        Path(args.output).expanduser()
+        if args.output
+        else runtime_paths.connections_file
+    )
     dry_run = args.dry_run
     only_names: List[str] = []
     if args.only:
         for entry in args.only:
-            only_names.extend([name.strip() for name in entry.split(",") if name.strip()])
+            only_names.extend(
+                [name.strip() for name in entry.split(",") if name.strip()]
+            )
 
     print(f"\nImporting DBeaver connections from: {dbeaver_path}")
     print(f"Output file: {output_path}")
-    print(f"Environment file: {env_path}")
     print(f"Merge clusters: {merge_clusters}\n")
     if dry_run:
         print("Dry run: no files will be written\n")
@@ -460,7 +535,9 @@ def main():
     try:
         importer = DBeaverImporter(dbeaver_path)
         # Always import raw connections first so we can report on merges clearly.
-        raw_connections = importer.import_connections(merge_clusters=False, only_names=only_names)
+        raw_connections = importer.import_connections(
+            merge_clusters=False, only_names=only_names
+        )
         merge_report = []
         if merge_clusters:
             merge_report = importer._build_merge_report(raw_connections)
@@ -476,37 +553,29 @@ def main():
                     print(f"  • {name}")
 
         backup_path = None
-        env_backup_path = None
-
-        # Track credentials that need to be added to .env
-        ssh_credentials = []
         new_connections = []
-        password_updates = {}  # Track passwords to update
+        imported_db_passwords = 0
+        imported_ssh_passwords = 0
+        missing_db_passwords: List[str] = []
+        missing_ssh_passwords: List[str] = []
 
-        print(f"\nImporting connections...")
+        print("\nImporting connections...")
         for conn in connections:
             conn_name = conn["connection_name"]
             new_connections.append(conn_name)
             print(f"  ✓ Imported: {conn_name}")
 
-            # Extract password if present (stored temporarily)
-            if "_password" in conn:
-                password_updates[conn_name] = conn.pop("_password")
+            if conn.get("password"):
+                imported_db_passwords += 1
+            else:
+                missing_db_passwords.append(conn_name)
 
-            # Extract SSH password if present
-            if "_ssh_password" in conn:
-                ssh_pass_key = f"SSH_PASSWORD_{conn_name.upper().replace('-', '_')}"
-                password_updates[ssh_pass_key] = conn.pop("_ssh_password")
-
-            # Track SSH credentials if needed
             ssh = conn.get("ssh_tunnel")
             if ssh:
-                ssh_cred = {
-                    "connection": conn_name,
-                    "user": ssh.get("user"),
-                    "needs_password": ssh.get("auth_type") == "password"
-                }
-                ssh_credentials.append(ssh_cred)
+                if ssh.get("password"):
+                    imported_ssh_passwords += 1
+                elif not ssh.get("private_key"):
+                    missing_ssh_passwords.append(conn_name)
 
         # Save new config (replacing the old one completely, unless --only is used)
         # Clean out null values before saving
@@ -534,7 +603,11 @@ def main():
                 existing_connections = []
                 print(f"\n⚠ Could not read existing {output_path} for merge: {e}")
 
-            new_by_name = {c.get("connection_name"): c for c in clean_connections if isinstance(c, dict)}
+            new_by_name = {
+                c.get("connection_name"): c
+                for c in clean_connections
+                if isinstance(c, dict)
+            }
             used = set()
             merged_connections = []
             for conn in existing_connections:
@@ -556,13 +629,16 @@ def main():
         if dry_run:
             print(f"\nDry run: skipping write to {output_path}")
         else:
-            new_yaml = yaml.dump(output_connections, default_flow_style=False, sort_keys=False)
+            new_yaml = yaml.dump(
+                output_connections, default_flow_style=False, sort_keys=False
+            )
             existing_yaml = None
             if output_path.exists():
                 with open(output_path, "r") as f:
                     existing_yaml = f.read()
 
             if existing_yaml is not None and existing_yaml == new_yaml:
+                os.chmod(output_path, 0o600)
                 print(f"\n✓ {output_path} unchanged; skipped write and backup")
             else:
                 if existing_yaml is not None:
@@ -570,111 +646,14 @@ def main():
                     # Create backup filename: connections.yaml.bak.20241230_143022
                     backup_name = f"{output_path.stem}.yaml.bak.{timestamp}"
                     backup_path = output_path.parent / backup_name
-                    with open(backup_path, "w") as f:
-                        f.write(existing_yaml)
+                    _write_text_file_secure(backup_path, existing_yaml)
                     print(f"✓ Created backup: {backup_path}")
 
-                with open(output_path, "w") as f:
-                    f.write(new_yaml)
-
-        # Update .env file with required credentials
-        if new_connections:
-            env_lines = []
-            if env_path.exists():
-                with open(env_path, "r") as f:
-                    env_lines = f.readlines()
-
-            # Parse existing env lines into key-value pairs and comments.
-            env_dict = {}
-            comment_lines = []
-            for line in env_lines:
-                line = line.rstrip('\n')
-                if line.startswith('#') or not line.strip():
-                    comment_lines.append(line)
-                elif '=' in line:
-                    key, value = line.split('=', 1)
-                    env_dict[key.strip()] = value.strip()
-
-            existing_env_keys = set(env_dict.keys())
-
-            new_env_entries = []
-
-            # Add database passwords
-            for name in new_connections:
-                env_key = f"DB_PASSWORD_{name.upper().replace('-', '_')}"
-                # If the key doesn't exist yet, prefer DBeaver's password when available.
-                if env_key not in existing_env_keys:
-                    new_env_entries.append((env_key, password_updates.get(name, "")))
-                # If the key exists, only update when explicitly requested.
-                elif name in password_updates and (args.update_passwords or env_dict.get(env_key, "") == ""):
-                    new_env_entries.append((env_key, password_updates[name]))
-
-            # Add SSH passwords (usernames are already in YAML config)
-            for ssh_cred in ssh_credentials:
-                conn_name = ssh_cred["connection"].upper().replace('-', '_')
-
-                # SSH password (if password auth)
-                if ssh_cred["needs_password"]:
-                    ssh_pass_key = f"SSH_PASSWORD_{conn_name}"
-                    if ssh_pass_key not in existing_env_keys:
-                        new_env_entries.append((ssh_pass_key, password_updates.get(ssh_pass_key, "")))
-                    elif ssh_pass_key in password_updates and (args.update_passwords or env_dict.get(ssh_pass_key, "") == ""):
-                        new_env_entries.append((ssh_pass_key, password_updates[ssh_pass_key]))
-
-            # Append new entries to .env file
-            if new_env_entries:
-                # Add new entries to dictionary
-                for key, value in new_env_entries:
-                    env_dict[key] = value
-
-                # Sort all entries by key
-                sorted_entries = sorted(env_dict.items())
-
-                if dry_run:
-                    additions = [key for key, _ in new_env_entries if key not in existing_env_keys]
-                    updates = [key for key, _ in new_env_entries if key in existing_env_keys]
-                    print(f"\nDry run: would update {env_path} with {len(new_env_entries)} credential entries (sorted)")
-                    if additions:
-                        print(f"  • Add ({len(additions)}): {', '.join(additions)}")
-                    if updates:
-                        print(f"  • Update ({len(updates)}): {', '.join(updates)}")
-                else:
-                    existing_env_content = ""
-                    if env_path.exists():
-                        with open(env_path, "r") as f:
-                            existing_env_content = f.read()
-
-                    # Backup .env before writing (only if it exists)
-                    new_env_content_lines = []
-                    if comment_lines:
-                        for comment in comment_lines:
-                            new_env_content_lines.append(comment)
-                        new_env_content_lines.append("")
-
-                    for key, value in sorted_entries:
-                        new_env_content_lines.append(f"{key}={value}")
-
-                    new_env_content = "\n".join(new_env_content_lines) + "\n"
-
-                    if existing_env_content == new_env_content:
-                        print(f"\n✓ {env_path} unchanged; skipped write and backup")
-                    else:
-                        if env_path.exists():
-                            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                            env_backup_name = f"{env_path.name}.bak.{timestamp}"
-                            env_backup_path = env_path.parent / env_backup_name
-                            with open(env_backup_path, "w") as f:
-                                f.write(existing_env_content)
-                            print(f"\n✓ Created backup: {env_backup_path}")
-
-                        # Write back sorted entries
-                        with open(env_path, "w") as f:
-                            f.write(new_env_content)
-
-                        print(f"\n✓ Updated {env_path} with {len(new_env_entries)} new credential entries (sorted)")
+                _write_text_file_secure(output_path, new_yaml)
 
         # Dry-run preview of changes vs existing connections.yaml
         if dry_run:
+
             def _normalize(conn: Dict[str, Any]) -> Dict[str, Any]:
                 normalized = dict(conn)
                 servers = normalized.get("servers")
@@ -693,25 +672,51 @@ def main():
                     existing = []
                     print(f"\nDry run: could not read {output_path}: {e}")
 
-                existing_by_name = {c.get("connection_name"): _normalize(c) for c in existing if isinstance(c, dict)}
-                new_by_name = {c.get("connection_name"): _normalize(c) for c in output_connections if isinstance(c, dict)}
+                existing_by_name = {
+                    c.get("connection_name"): _normalize(c)
+                    for c in existing
+                    if isinstance(c, dict)
+                }
+                new_by_name = {
+                    c.get("connection_name"): _normalize(c)
+                    for c in output_connections
+                    if isinstance(c, dict)
+                }
 
-                added = sorted([n for n in new_by_name.keys() if n not in existing_by_name])
-                removed = sorted([n for n in existing_by_name.keys() if n not in new_by_name])
-                changed = sorted([
-                    n for n in new_by_name.keys()
-                    if n in existing_by_name and new_by_name[n] != existing_by_name[n]
-                ])
+                added = sorted(
+                    [n for n in new_by_name.keys() if n not in existing_by_name]
+                )
+                removed = sorted(
+                    [n for n in existing_by_name.keys() if n not in new_by_name]
+                )
+                changed = sorted(
+                    [
+                        n
+                        for n in new_by_name.keys()
+                        if n in existing_by_name
+                        and new_by_name[n] != existing_by_name[n]
+                    ]
+                )
 
                 print("\nDry run: connections.yaml change preview")
-                print(f"  • Added ({len(added)}): {', '.join(added) if added else 'none'}")
-                print(f"  • Removed ({len(removed)}): {', '.join(removed) if removed else 'none'}")
-                print(f"  • Changed ({len(changed)}): {', '.join(changed) if changed else 'none'}")
+                print(
+                    f"  • Added ({len(added)}): {', '.join(added) if added else 'none'}"
+                )
+                print(
+                    f"  • Removed ({len(removed)}): {', '.join(removed) if removed else 'none'}"
+                )
+                print(
+                    f"  • Changed ({len(changed)}): {', '.join(changed) if changed else 'none'}"
+                )
             else:
-                print(f"\nDry run: {output_path} does not exist; it would be created with {len(clean_connections)} connections")
+                print(
+                    f"\nDry run: {output_path} does not exist; it would be created with {len(clean_connections)} connections"
+                )
 
             if merge_clusters:
-                merged_groups = [g for g in merge_report if len(g.get("members", [])) > 1]
+                merged_groups = [
+                    g for g in merge_report if len(g.get("members", [])) > 1
+                ]
                 print("\nDry run: merge preview")
                 if merged_groups:
                     for group in merged_groups:
@@ -722,38 +727,32 @@ def main():
 
         # Summary
         print(f"\n{'='*60}")
-        print(f"Import Summary:")
+        print("Import Summary:")
         print(f"  • Imported: {len(connections)} connections")
         print(f"  • Output file: {output_path}")
         if backup_path:
             print(f"  • Backup saved: {backup_path}")
-        if env_backup_path:
-            print(f"  • Env backup saved: {env_backup_path}")
+        print(f"  • Database passwords imported: {imported_db_passwords}")
+        if imported_ssh_passwords:
+            print(f"  • SSH passwords imported: {imported_ssh_passwords}")
+        if missing_db_passwords:
+            print(
+                f"  • Database passwords still missing: {', '.join(sorted(missing_db_passwords))}"
+            )
+        if missing_ssh_passwords:
+            print(
+                f"  • SSH passwords still missing: {', '.join(sorted(missing_ssh_passwords))}"
+            )
 
-        if new_connections:
-            if args.update_passwords and password_updates:
-                print(f"\n✓ Added {len(password_updates)} passwords to {env_path}")
-            else:
-                # Only show missing passwords
-                missing_passwords = []
-                for name in new_connections:
-                    env_key = f"DB_PASSWORD_{name.upper().replace('-', '_')}"
-                    if name not in password_updates:
-                        missing_passwords.append(env_key)
-
-                if missing_passwords:
-                    print(f"\n⚠ Remember to update passwords in {env_path}:")
-                    for env_key in missing_passwords:
-                        print(f"  • {env_key}")
-
-                for ssh_cred in ssh_credentials:
-                    if ssh_cred["needs_password"]:
-                        conn_name = ssh_cred["connection"].upper().replace('-', '_')
-                        print(f"  • SSH_PASSWORD_{conn_name}")
+        if missing_db_passwords or missing_ssh_passwords:
+            print(
+                "\n⚠ Some passwords were not available from DBeaver. Fill them in manually in connections.yaml before validating or connecting."
+            )
 
     except Exception as e:
         print(f"\n✗ Error: {e}")
         import traceback
+
         traceback.print_exc()
         sys.exit(1)
 

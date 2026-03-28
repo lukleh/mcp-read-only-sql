@@ -1,8 +1,6 @@
 import os
 import tempfile
 import yaml
-import pytest
-from pathlib import Path
 
 from src.config.parser import ConfigParser
 
@@ -16,14 +14,14 @@ def test_load_empty_config():
 
 def test_process_connection():
     """Test processing a single connection"""
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
         config_data = [
             {
                 "connection_name": "test_db",
                 "type": "postgresql",
                 "servers": ["localhost:5432"],
                 "db": "testdb",
-                "username": "testuser"
+                "username": "testuser",
             }
         ]
         yaml.dump(config_data, f)
@@ -45,17 +43,16 @@ def test_process_connection():
         os.unlink(temp_path)
 
 
-def test_password_from_environment():
-    """Test password loading from environment"""
-    os.environ["DB_PASSWORD_TEST_CONN"] = "secret123"
-
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+def test_password_from_yaml():
+    """Test password loading directly from YAML."""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
         config_data = [
             {
                 "connection_name": "test_conn",
                 "type": "postgresql",
                 "servers": ["localhost"],
-                "username": "user"
+                "username": "user",
+                "password": "secret123",
             }
         ]
         yaml.dump(config_data, f)
@@ -68,12 +65,11 @@ def test_password_from_environment():
         assert config[0]["password"] == "secret123"
     finally:
         os.unlink(temp_path)
-        del os.environ["DB_PASSWORD_TEST_CONN"]
 
 
 def test_ssh_tunnel_config():
     """Test SSH tunnel configuration processing"""
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
         config_data = [
             {
                 "connection_name": "remote_db",
@@ -83,8 +79,8 @@ def test_ssh_tunnel_config():
                 "ssh_tunnel": {
                     "host": "bastion.example.com",
                     "user": "tunnel_user",
-                    "private_key": "~/ssh/key"
-                }
+                    "private_key": "~/ssh/key",
+                },
             }
         ]
         yaml.dump(config_data, f)
@@ -104,7 +100,7 @@ def test_ssh_tunnel_config():
 
 def test_multiple_servers():
     """Test multiple server configuration"""
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
         config_data = [
             {
                 "connection_name": "cluster",
@@ -112,9 +108,9 @@ def test_multiple_servers():
                 "servers": [
                     "ch1.example.com:8123",
                     "ch2.example.com:8124",
-                    "ch3.example.com"  # Should use default port
+                    "ch3.example.com",  # Should use default port
                 ],
-                "username": "reader"
+                "username": "reader",
             }
         ]
         yaml.dump(config_data, f)
@@ -128,6 +124,9 @@ def test_multiple_servers():
         assert len(servers) == 3
         assert servers[0] == {"host": "ch1.example.com", "port": 8123}
         assert servers[1] == {"host": "ch2.example.com", "port": 8124}
-        assert servers[2] == {"host": "ch3.example.com", "port": 9000}  # Default ClickHouse CLI port
+        assert servers[2] == {
+            "host": "ch3.example.com",
+            "port": 9000,
+        }  # Default ClickHouse CLI port
     finally:
         os.unlink(temp_path)

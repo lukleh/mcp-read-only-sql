@@ -3,7 +3,7 @@ name = "mcp-read-only-sql"
 version = "0.1.0"
 description = "MCP server for read-only SQL queries supporting PostgreSQL and ClickHouse"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 authors = [
     {name = "Lukas Lehner", email = "lehner.lukas@gmail.com"}
 ]
@@ -11,7 +11,6 @@ license = {text = "MIT"}
 dependencies = [
     "mcp>=1.0.0",
     "pyyaml>=6.0",
-    "python-dotenv>=1.0.0",
     "psycopg2-binary>=2.9.0",
     "clickhouse-connect>=0.7.0",
     "paramiko>=3.0.0",
@@ -36,8 +35,8 @@ import-dbeaver = "src.config.dbeaver_import:main"
 [tool.hatch.build.targets.wheel]
 packages = ["src"]
 
-[tool.uv]
-dev-dependencies = [
+[dependency-groups]
+dev = [
     "pytest>=7.0.0",
     "pytest-timeout>=2.2.0",
     "black>=23.0.0",

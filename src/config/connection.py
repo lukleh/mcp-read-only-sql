@@ -1,11 +1,8 @@
-"""
-Connection configuration classes with validation
-"""
+"""Connection configuration classes with validation."""
 
 import os
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
-
 
 # Default values
 DEFAULT_IMPLEMENTATION = "cli"
@@ -38,11 +35,14 @@ def _normalize_database_list(value: Any, field_name: str) -> List[str]:
 @dataclass
 class Server:
     """Database server configuration"""
+
     host: str
     port: int
 
     @classmethod
-    def from_dict(cls, data: Any, db_type: str = "", implementation: str = "cli") -> "Server":
+    def from_dict(
+        cls, data: Any, db_type: str = "", implementation: str = "cli"
+    ) -> "Server":
         """
         Create Server from dict or string with validation.
 
@@ -71,7 +71,9 @@ class Server:
                     # ClickHouse default depends on implementation
                     default_port = 9000 if implementation == "cli" else 8123
                 else:
-                    raise ValueError(f"Cannot determine default port for server '{data}' without database type")
+                    raise ValueError(
+                        f"Cannot determine default port for server '{data}' without database type"
+                    )
                 return cls(host=data, port=default_port)
 
         raise ValueError(f"Invalid server format: {data}. Must be dict or string")
@@ -79,7 +81,8 @@ class Server:
 
 @dataclass
 class SSHTunnelConfig:
-    """SSH tunnel configuration with validation"""
+    """SSH tunnel configuration with validation."""
+
     host: str
     port: int
     user: str
@@ -88,18 +91,18 @@ class SSHTunnelConfig:
     ssh_timeout: Optional[int] = None
 
     def __post_init__(self):
-        """Validate SSH tunnel configuration"""
+        """Validate SSH tunnel configuration."""
         if not self.private_key and not self.password:
             raise ValueError(
-                f"SSH tunnel to {self.host} requires either 'private_key' or 'password'/'password_env'"
+                f"SSH tunnel to {self.host} requires either 'private_key' or 'password'"
             )
         if self.ssh_timeout is not None:
             if self.ssh_timeout <= 0:
                 raise ValueError("SSH tunnel timeout must be a positive integer")
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any], env: Optional[Dict[str, str]] = None) -> "SSHTunnelConfig":
-        """Create SSHTunnelConfig from dict with validation"""
+    def from_dict(cls, data: Dict[str, Any]) -> "SSHTunnelConfig":
+        """Create SSHTunnelConfig from dict with validation."""
         if not data.get("enabled", True):
             return None
 
@@ -109,17 +112,12 @@ class SSHTunnelConfig:
         if "user" not in data:
             raise ValueError("SSH tunnel configuration missing required field 'user'")
 
-        # Load password from env if needed
-        password = None
         if "password_env" in data:
-            env_dict = env if env is not None else os.environ
-            password_env_var = data["password_env"]
-            password = env_dict.get(password_env_var)
-            if password is None:
-                raise ValueError(f"SSH tunnel password environment variable '{password_env_var}' not found")
-        elif "password" in data:
-            password = data["password"]
-        # Note: SSH password can be None if using private key auth
+            raise ValueError(
+                "Field 'password_env' is no longer supported; put the SSH password in 'password'"
+            )
+
+        password = data.get("password")
 
         # Expand private key path if present
         private_key = data.get("private_key")
@@ -149,27 +147,30 @@ class Connection:
     Validated database connection configuration.
 
     This class loads and validates all connection parameters,
-    including environment variable resolution for passwords.
+    including validation of inline passwords.
     """
 
-    def __init__(self, config: Dict[str, Any], env: Optional[Dict[str, str]] = None):
+    def __init__(self, config: Dict[str, Any]):
         """
         Initialize and validate connection configuration.
 
         Args:
             config: Raw configuration dict from YAML
-            env: Optional environment dict (defaults to os.environ)
 
         Raises:
             ValueError: If configuration is invalid or incomplete
         """
         # Required fields
         if "connection_name" not in config:
-            raise ValueError("Connection configuration missing required field 'connection_name'")
+            raise ValueError(
+                "Connection configuration missing required field 'connection_name'"
+            )
         if "type" not in config:
             raise ValueError("Connection configuration missing required field 'type'")
         if "servers" not in config or not config["servers"]:
-            raise ValueError("Connection configuration missing required field 'servers' (must be non-empty list)")
+            raise ValueError(
+                "Connection configuration missing required field 'servers' (must be non-empty list)"
+            )
         if (
             "db" not in config
             and "default_database" not in config
@@ -180,47 +181,30 @@ class Connection:
                 "Connection configuration missing required field 'db' or 'allowed_databases'"
             )
         if "username" not in config:
-            raise ValueError("Connection configuration missing required field 'username'")
+            raise ValueError(
+                "Connection configuration missing required field 'username'"
+            )
 
         # Validate type
-        conn_name = config["connection_name"]
         db_type = config["type"]
         if db_type not in ("postgresql", "clickhouse"):
-            raise ValueError(f"Invalid database type: '{db_type}'. Must be 'postgresql' or 'clickhouse'")
+            raise ValueError(
+                f"Invalid database type: '{db_type}'. Must be 'postgresql' or 'clickhouse'"
+            )
 
         # Validate implementation
         implementation = config.get("implementation", DEFAULT_IMPLEMENTATION)
         if implementation not in ("python", "cli"):
-            raise ValueError(f"Invalid implementation: '{implementation}'. Must be 'python' or 'cli'")
+            raise ValueError(
+                f"Invalid implementation: '{implementation}'. Must be 'python' or 'cli'"
+            )
 
-        # Load password
-        env_dict = env if env is not None else os.environ
-        password = None
-        password_env_var: Optional[str] = None
-        password_env_found = False
-        password_from_env = False
         if "password_env" in config:
-            password_env_var = config["password_env"]
-            password = env_dict.get(password_env_var)
-            password_from_env = True
-            password_env_found = password is not None
-            if not password_env_found:
-                raise ValueError(f"Password environment variable '{password_env_var}' not found")
-        elif "password" in config:
-            password = config["password"]
-        else:
-            # Auto-detect password from environment using naming convention
-            # DB_PASSWORD_{CONNECTION_NAME_UPPER_WITH_UNDERSCORES}
-            conn_name_env = conn_name.upper().replace('-', '_')
-            password_env_var = f"DB_PASSWORD_{conn_name_env}"
-            password = env_dict.get(password_env_var)
-            if password is not None:
-                password_from_env = True
-                password_env_found = True
-            else:
-                password = ""
-            # Note: Empty password is allowed (for compatibility with existing configs)
-            # but authentication will likely fail at connection time
+            raise ValueError(
+                "Field 'password_env' is no longer supported; put the database password in 'password'"
+            )
+
+        password = config.get("password", "")
 
         # Parse database allowlist/defaults
         if "allowed_databases" in config and "databases" in config:
@@ -234,10 +218,16 @@ class Connection:
             raise ValueError("Field 'default_database' must be a string database name")
 
         allowed_raw = config.get("allowed_databases", config.get("databases"))
-        allowed_databases = _normalize_database_list(allowed_raw, "allowed_databases") if allowed_raw is not None else []
+        allowed_databases = (
+            _normalize_database_list(allowed_raw, "allowed_databases")
+            if allowed_raw is not None
+            else []
+        )
 
         if db_field and default_db and db_field.strip() != default_db.strip():
-            raise ValueError("'db' and 'default_database' must match when both are provided")
+            raise ValueError(
+                "'db' and 'default_database' must match when both are provided"
+            )
 
         if default_db is None:
             if db_field:
@@ -247,12 +237,16 @@ class Connection:
         default_db = (default_db or "").strip()
 
         if not default_db:
-            raise ValueError("Connection configuration missing required field 'db' or 'default_database'")
+            raise ValueError(
+                "Connection configuration missing required field 'db' or 'default_database'"
+            )
 
         if not allowed_databases:
             allowed_databases = [default_db]
         elif default_db not in allowed_databases:
-            raise ValueError("'default_database' must be included in 'allowed_databases'")
+            raise ValueError(
+                "'default_database' must be included in 'allowed_databases'"
+            )
 
         # Parse servers
         servers = []
@@ -267,21 +261,8 @@ class Connection:
         if "ssh_tunnel" in config and config["ssh_tunnel"] is not None:
             ssh_config_data = dict(config["ssh_tunnel"])
 
-            # If no private key is provided, attempt to hydrate password from the
-            # legacy SSH_PASSWORD_<CONNECTION_NAME> environment variable.
-            if not ssh_config_data.get("private_key"):
-                has_password_fields = any(
-                    field in ssh_config_data for field in ("password", "password_env")
-                )
-                if not has_password_fields:
-                    conn_name_env = conn_name.upper().replace('-', '_')
-                    ssh_password_env = f"SSH_PASSWORD_{conn_name_env}"
-                    password_from_env = env_dict.get(ssh_password_env)
-                    if password_from_env:
-                        ssh_config_data["password"] = password_from_env
-
             try:
-                ssh_tunnel = SSHTunnelConfig.from_dict(ssh_config_data, env)
+                ssh_tunnel = SSHTunnelConfig.from_dict(ssh_config_data)
             except ValueError as e:
                 raise ValueError(f"SSH tunnel configuration error: {e}")
 
@@ -293,14 +274,15 @@ class Connection:
         self._allowed_databases = allowed_databases
         self._username = config["username"]
         self._password = password
-        self._password_env_var = password_env_var
-        self._password_env_found = password_env_found
-        self._password_from_env = password_from_env
         self._implementation = implementation
         self._ssh_tunnel = ssh_tunnel
         self._query_timeout = config.get("query_timeout", DEFAULT_QUERY_TIMEOUT)
-        self._connection_timeout = config.get("connection_timeout", DEFAULT_CONNECTION_TIMEOUT)
-        self._max_result_bytes = config.get("max_result_bytes", DEFAULT_MAX_RESULT_BYTES)
+        self._connection_timeout = config.get(
+            "connection_timeout", DEFAULT_CONNECTION_TIMEOUT
+        )
+        self._max_result_bytes = config.get(
+            "max_result_bytes", DEFAULT_MAX_RESULT_BYTES
+        )
         self._description = config.get("description", "")
 
     @property
@@ -350,23 +332,8 @@ class Connection:
 
     @property
     def password(self) -> str:
-        """Database password (resolved from env if needed)"""
+        """Database password."""
         return self._password
-
-    @property
-    def password_env_var(self) -> Optional[str]:
-        """Environment variable name used for the password, if any"""
-        return self._password_env_var
-
-    @property
-    def password_env_found(self) -> bool:
-        """Whether the password environment variable was present"""
-        return self._password_env_found
-
-    @property
-    def password_from_env(self) -> bool:
-        """Whether the password value originated from the environment"""
-        return self._password_from_env
 
     @property
     def implementation(self) -> str:

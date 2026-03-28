@@ -4,19 +4,19 @@ Shared test fixtures for MCP SQL Server tests
 Uses the minimal_client.py pattern for real MCP protocol testing
 """
 
-import json
 import os
 import subprocess
+from pathlib import Path
 from typing import Any, Dict
 
 import pytest
-import anyio
-from anyio import create_task_group
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 from src.config import Connection
 from src.connectors.base import BaseConnector
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 # Helper function to create Connection objects from dict configs
@@ -56,27 +56,31 @@ def make_recording_connector(config_dict: Dict[str, Any]) -> RecordingConnector:
 @pytest.fixture
 def postgres_config():
     """PostgreSQL test configuration as Connection object"""
-    return make_connection({
-        "connection_name": "test_postgres",
-        "type": "postgresql",
-        "servers": [{"host": "localhost", "port": 5432}],
-        "username": "testuser",
-        "password": "testpass",
-        "db": "testdb"
-    })
+    return make_connection(
+        {
+            "connection_name": "test_postgres",
+            "type": "postgresql",
+            "servers": [{"host": "localhost", "port": 5432}],
+            "username": "testuser",
+            "password": "testpass",
+            "db": "testdb",
+        }
+    )
 
 
 @pytest.fixture
 def clickhouse_config():
     """ClickHouse test configuration as Connection object"""
-    return make_connection({
-        "connection_name": "test_clickhouse",
-        "type": "clickhouse",
-        "servers": [{"host": "localhost", "port": 9000}],
-        "username": "testuser",
-        "password": "testpass",
-        "db": "testdb"
-    })
+    return make_connection(
+        {
+            "connection_name": "test_clickhouse",
+            "type": "clickhouse",
+            "servers": [{"host": "localhost", "port": 9000}],
+            "username": "testuser",
+            "password": "testpass",
+            "db": "testdb",
+        }
+    )
 
 
 # Configure anyio to use asyncio backend only
@@ -100,7 +104,7 @@ def test_config_file(tmp_path):
   username: testuser
   password: testpass
 """
-    config_file = tmp_path / "test_config.yaml"
+    config_file = tmp_path / "connections.yaml"
     config_file.write_text(config_content)
     return str(config_file)
 
@@ -113,8 +117,17 @@ async def mcp_client(test_config_file):
     """
     server_params = StdioServerParameters(
         command="uv",
-        args=["run", "python", "-m", "src.server", test_config_file],
-        env=dict(os.environ)
+        args=[
+            "--directory",
+            str(PROJECT_ROOT),
+            "run",
+            "python",
+            "-m",
+            "src.server",
+            "--config-dir",
+            str(Path(test_config_file).parent),
+        ],
+        env=dict(os.environ),
     )
 
     # Use the pattern from minimal_client.py exactly
@@ -129,13 +142,14 @@ async def mcp_client(test_config_file):
 def docker_check():
     """Check if Docker containers are running"""
     result = subprocess.run(
-        ["docker", "ps", "--format", "table {{.Names}}"],
-        capture_output=True,
-        text=True
+        ["docker", "ps", "--format", "table {{.Names}}"], capture_output=True, text=True
     )
     running_containers = result.stdout
 
-    if "mcp-postgres" not in running_containers or "mcp-clickhouse" not in running_containers:
+    if (
+        "mcp-postgres" not in running_containers
+        or "mcp-clickhouse" not in running_containers
+    ):
         pytest.skip("Docker containers not running. Run: just docker-test-setup")
 
 
@@ -143,14 +157,14 @@ def docker_check():
 def ssh_container_check():
     """Check if SSH bastion container is running"""
     result = subprocess.run(
-        ["docker", "ps", "--format", "{{.Names}}"],
-        capture_output=True,
-        text=True
+        ["docker", "ps", "--format", "{{.Names}}"], capture_output=True, text=True
     )
     running_containers = result.stdout
 
     if "mcp-ssh-bastion" not in running_containers:
-        pytest.skip("SSH bastion container not running. Run: docker-compose --profile test up -d")
+        pytest.skip(
+            "SSH bastion container not running. Run: docker-compose --profile test up -d"
+        )
 
 
 @pytest.fixture
@@ -208,20 +222,8 @@ def integration_config_file(tmp_path):
   max_result_bytes: 10000
 """
 
-    config_file = tmp_path / "integration_config.yaml"
+    config_file = tmp_path / "connections.yaml"
     config_file.write_text(config_content)
-
-    # Set password environment variables
-    env_vars = {
-        "DB_PASSWORD_TEST_POSTGRES_PYTHON": "testpass",
-        "DB_PASSWORD_TEST_POSTGRES_CLI": "testpass",
-        "DB_PASSWORD_TEST_CLICKHOUSE_PYTHON": "testpass",
-        "DB_PASSWORD_TEST_CLICKHOUSE_CLI": "testpass",
-        "DB_PASSWORD_TEST_POSTGRES_STRICT": "testpass",
-    }
-    for key, value in env_vars.items():
-        os.environ[key] = value
-
     return str(config_file)
 
 
@@ -230,8 +232,17 @@ async def integration_client(integration_config_file, docker_check):
     """Client connected to integration test server"""
     server_params = StdioServerParameters(
         command="uv",
-        args=["run", "python", "-m", "src.server", integration_config_file],
-        env=dict(os.environ)
+        args=[
+            "--directory",
+            str(PROJECT_ROOT),
+            "run",
+            "python",
+            "-m",
+            "src.server",
+            "--config-dir",
+            str(Path(integration_config_file).parent),
+        ],
+        env=dict(os.environ),
     )
 
     async with stdio_client(server_params) as (read, write):
@@ -241,7 +252,9 @@ async def integration_client(integration_config_file, docker_check):
 
 
 # Helper functions for tests
-async def call_tool(session: ClientSession, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+async def call_tool(
+    session: ClientSession, tool_name: str, arguments: Dict[str, Any]
+) -> Dict[str, Any]:
     """
     Helper to call a tool and parse the response.
     All responses are now in TSV format or plain text (no JSON).
@@ -257,7 +270,7 @@ async def call_tool(session: ClientSession, tool_name: str, arguments: Dict[str,
     result = await session.call_tool(tool_name, arguments=arguments)
 
     # Check if this is an error response
-    if hasattr(result, 'isError') and result.isError:
+    if hasattr(result, "isError") and result.isError:
         if result.content and len(result.content) > 0:
             error_text = result.content[0].text
             return {"success": False, "error": error_text}
@@ -275,14 +288,14 @@ async def call_tool(session: ClientSession, tool_name: str, arguments: Dict[str,
 
         # For list_connections, parse TSV format
         if tool_name == "list_connections":
-            lines = text_content.strip().split('\n')
+            lines = text_content.strip().split("\n")
             if lines:
                 # First line is headers
-                headers = lines[0].split('\t')
+                headers = lines[0].split("\t")
                 connections = []
                 for line in lines[1:]:
                     if line:  # Skip empty lines
-                        values = line.split('\t')
+                        values = line.split("\t")
                         conn = {}
                         for i, header in enumerate(headers):
                             if i < len(values):
@@ -292,19 +305,19 @@ async def call_tool(session: ClientSession, tool_name: str, arguments: Dict[str,
             return []
 
         # For queries, parse TSV response
-        lines = text_content.strip().split('\n')
+        lines = text_content.strip().split("\n")
         if lines:
             # First line is headers
-            columns = lines[0].split('\t')
+            columns = lines[0].split("\t")
             rows = []
             for line in lines[1:]:
                 if line:  # Skip empty lines
-                    rows.append(line.split('\t'))
+                    rows.append(line.split("\t"))
             return {
                 "success": True,
                 "columns": columns,
                 "rows": rows,
-                "rowCount": len(rows)
+                "rowCount": len(rows),
             }
         return {"success": True, "data": text_content}
 
@@ -328,10 +341,7 @@ async def execute_query(
     Returns:
         Query result as dict
     """
-    payload = {
-        "connection_name": connection_name,
-        "query": query
-    }
+    payload = {"connection_name": connection_name, "query": query}
     if server is not None:
         payload["server"] = server
 
