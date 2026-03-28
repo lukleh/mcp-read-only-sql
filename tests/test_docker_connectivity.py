@@ -9,13 +9,14 @@ import pytest
 from src.config.parser import ConfigParser
 from src.connectors.postgresql.python import PostgreSQLPythonConnector
 from src.connectors.clickhouse.python import ClickHousePythonConnector
+from tests.docker_test_config import apply_docker_test_overrides
 
 
 @pytest.fixture(scope="module")
 def test_connections():
     """Load test connections configuration"""
     parser = ConfigParser("tests/connections-test.yaml")
-    return parser.load_config()
+    return [apply_docker_test_overrides(config) for config in parser.load_config()]
 
 
 @pytest.fixture

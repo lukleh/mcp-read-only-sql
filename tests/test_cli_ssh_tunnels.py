@@ -9,6 +9,7 @@ import shutil
 import pytest
 from src.connectors.postgresql.cli import PostgreSQLCLIConnector
 from src.connectors.clickhouse.cli import ClickHouseCLIConnector
+from tests.docker_test_config import docker_test_server, docker_test_ssh_tunnel
 
 
 @pytest.fixture(scope="module")
@@ -35,13 +36,7 @@ class TestCLISSHTunnels:
             "db": "testdb",
             "username": "testuser",
             "password": "testpass",
-            "ssh_tunnel": {
-                "enabled": True,
-                "host": "localhost",
-                "port": 2222,  # SSH container port
-                "user": "tunnel",
-                "private_key": "/tmp/docker_test_key"  # Use key instead of password for CLI
-            }
+            "ssh_tunnel": docker_test_ssh_tunnel(private_key="/tmp/docker_test_key")
         })
         connector = PostgreSQLCLIConnector(config)
 
@@ -67,13 +62,7 @@ class TestCLISSHTunnels:
             "db": "testdb",
             "username": "testuser",
             "password": "testpass",
-            "ssh_tunnel": {
-                "enabled": True,
-                "host": "localhost",
-                "port": 2222,
-                "user": "tunnel",
-                "password": "tunnelpass"
-            }
+            "ssh_tunnel": docker_test_ssh_tunnel(password="tunnelpass")
         })
 
         connector = PostgreSQLCLIConnector(config)
@@ -95,13 +84,7 @@ class TestCLISSHTunnels:
             "db": "testdb",
             "username": "testuser",
             "password": "testpass",
-            "ssh_tunnel": {
-                "enabled": True,
-                "host": "localhost",
-                "port": 2222,
-                "user": "tunnel",
-                "private_key": "/tmp/docker_test_key"
-            }
+            "ssh_tunnel": docker_test_ssh_tunnel(private_key="/tmp/docker_test_key")
         })
         connector = ClickHouseCLIConnector(config)
 
@@ -124,13 +107,7 @@ class TestCLISSHTunnels:
             "db": "testdb",
             "username": "testuser",
             "password": "testpass",
-            "ssh_tunnel": {
-                "enabled": True,
-                "host": "localhost",
-                "port": 2222,
-                "user": "tunnel",
-                "private_key": "/tmp/docker_test_key"
-            }
+            "ssh_tunnel": docker_test_ssh_tunnel(private_key="/tmp/docker_test_key")
         })
         connector = PostgreSQLCLIConnector(config)
 
@@ -156,13 +133,7 @@ class TestCLISSHTunnels:
             "db": "testdb",
             "username": "testuser",
             "password": "testpass",
-            "ssh_tunnel": {
-                "enabled": True,
-                "host": "localhost",
-                "port": 2222,
-                "user": "wronguser",
-                "password": "wrongpass"
-            }
+            "ssh_tunnel": docker_test_ssh_tunnel(user="wronguser", password="wrongpass")
         })
         connector = PostgreSQLCLIConnector(config)
 
@@ -181,17 +152,11 @@ class TestCLISSHTunnels:
         config = make_connection({
             "connection_name": "no_ssh_cli",
             "type": "postgresql",
-            "servers": [{"host": "localhost", "port": 5432}],
+            "servers": [docker_test_server("postgresql")],
             "db": "testdb",
             "username": "testuser",
             "password": "testpass",
-            "ssh_tunnel": {
-                "enabled": False,  # Explicitly disabled
-                "host": "localhost",
-                "port": 2222,
-                "user": "tunnel",
-                "password": "tunnelpass"
-            }
+            "ssh_tunnel": docker_test_ssh_tunnel(enabled=False, password="tunnelpass")
         })
         connector = PostgreSQLCLIConnector(config)
 
@@ -214,13 +179,7 @@ class TestCLISSHTunnels:
             "db": "testdb",
             "username": "testuser",
             "password": "testpass",
-            "ssh_tunnel": {
-                "enabled": True,
-                "host": "localhost",
-                "port": 2222,
-                "user": "tunnel",
-                "private_key": "/tmp/docker_test_key"
-            }
+            "ssh_tunnel": docker_test_ssh_tunnel(private_key="/tmp/docker_test_key")
         })
         connector = PostgreSQLCLIConnector(config)
 

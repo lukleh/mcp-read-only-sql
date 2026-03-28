@@ -14,6 +14,12 @@ SETUP_TIMEOUT_SECONDS="${TEST_SETUP_TIMEOUT_SECONDS:-180}"
 SEED_TIMEOUT_SECONDS="${TEST_SEED_TIMEOUT_SECONDS:-180}"
 SSH_TIMEOUT_SECONDS="${TEST_SSH_TIMEOUT_SECONDS:-120}"
 WAIT_INTERVAL_SECONDS="${TEST_WAIT_INTERVAL_SECONDS:-1}"
+TEST_DOCKER_HOST="${TEST_DOCKER_HOST:-localhost}"
+TEST_POSTGRES_PORT="${TEST_POSTGRES_PORT:-5432}"
+TEST_CLICKHOUSE_HTTP_PORT="${TEST_CLICKHOUSE_HTTP_PORT:-8123}"
+TEST_CLICKHOUSE_PORT="${TEST_CLICKHOUSE_PORT:-9000}"
+TEST_SSH_HOST="${TEST_SSH_HOST:-$TEST_DOCKER_HOST}"
+TEST_SSH_PORT="${TEST_SSH_PORT:-2222}"
 
 echo "Running MCP Read-Only SQL Server tests..."
 echo "=========================================="
@@ -63,12 +69,14 @@ show_host_forwarding_hint() {
 
     echo -e "${RED}${service_name} is healthy in Docker, but ${host}:${port} is still unreachable from this shell.${NC}"
     echo "Current Docker context: ${DOCKER_CONTEXT}"
+    echo "Configured Docker DB host: ${TEST_DOCKER_HOST}"
+    echo "Configured SSH host: ${TEST_SSH_HOST}"
 
     if [ "${DOCKER_CONTEXT}" = "colima" ]; then
         echo "This machine is using Colima, and the containers appear to be listening inside the VM."
-        echo "The remaining failure is host port forwarding from Colima back to macOS."
+        echo "The remaining failure is shell-to-container reachability across Colima networking."
         echo "Try restarting Colima, switching to a Docker context with working localhost forwarding,"
-        echo "or adjusting Colima networking before rerunning the suite."
+        echo "or adjusting TEST_DOCKER_HOST / TEST_SSH_HOST to an address that is reachable from macOS."
     else
         echo "Check Docker port forwarding, localhost binding, and any local VPN or firewall rules."
     fi
@@ -131,8 +139,8 @@ check_ssh_login() {
         -o UserKnownHostsFile=/dev/null \
         -o ConnectTimeout=2 \
         -i /tmp/docker_test_key \
-        -p 2222 \
-        tunnel@localhost true
+        -p "${TEST_SSH_PORT}" \
+        "tunnel@${TEST_SSH_HOST}" true
 }
 
 trap on_interrupt INT TERM
@@ -147,6 +155,8 @@ trap cleanup EXIT
 
 echo "Using Compose command: ${COMPOSE_NAME}"
 echo "Using Docker context: ${DOCKER_CONTEXT}"
+echo "Using Docker DB host: ${TEST_DOCKER_HOST}"
+echo "Using SSH host: ${TEST_SSH_HOST}"
 echo "Waiting for databases and SSH infrastructure to be ready..."
 rm -f /tmp/docker_test_key
 
@@ -160,20 +170,20 @@ if ! wait_for "ClickHouse container" "${SETUP_TIMEOUT_SECONDS}" "${WAIT_INTERVAL
     exit 1
 fi
 
-if ! wait_for "PostgreSQL host port 5432" "${SETUP_TIMEOUT_SECONDS}" "${WAIT_INTERVAL_SECONDS}" check_host_port localhost 5432; then
-    show_host_forwarding_hint "PostgreSQL" "localhost" "5432"
+if ! wait_for "PostgreSQL host port ${TEST_POSTGRES_PORT}" "${SETUP_TIMEOUT_SECONDS}" "${WAIT_INTERVAL_SECONDS}" check_host_port "${TEST_DOCKER_HOST}" "${TEST_POSTGRES_PORT}"; then
+    show_host_forwarding_hint "PostgreSQL" "${TEST_DOCKER_HOST}" "${TEST_POSTGRES_PORT}"
     show_setup_logs
     exit 1
 fi
 
-if ! wait_for "ClickHouse host port 8123" "${SETUP_TIMEOUT_SECONDS}" "${WAIT_INTERVAL_SECONDS}" check_host_port localhost 8123; then
-    show_host_forwarding_hint "ClickHouse HTTP" "localhost" "8123"
+if ! wait_for "ClickHouse host port ${TEST_CLICKHOUSE_HTTP_PORT}" "${SETUP_TIMEOUT_SECONDS}" "${WAIT_INTERVAL_SECONDS}" check_host_port "${TEST_DOCKER_HOST}" "${TEST_CLICKHOUSE_HTTP_PORT}"; then
+    show_host_forwarding_hint "ClickHouse HTTP" "${TEST_DOCKER_HOST}" "${TEST_CLICKHOUSE_HTTP_PORT}"
     show_setup_logs
     exit 1
 fi
 
-if ! wait_for "ClickHouse host port 9000" "${SETUP_TIMEOUT_SECONDS}" "${WAIT_INTERVAL_SECONDS}" check_host_port localhost 9000; then
-    show_host_forwarding_hint "ClickHouse native" "localhost" "9000"
+if ! wait_for "ClickHouse host port ${TEST_CLICKHOUSE_PORT}" "${SETUP_TIMEOUT_SECONDS}" "${WAIT_INTERVAL_SECONDS}" check_host_port "${TEST_DOCKER_HOST}" "${TEST_CLICKHOUSE_PORT}"; then
+    show_host_forwarding_hint "ClickHouse native" "${TEST_DOCKER_HOST}" "${TEST_CLICKHOUSE_PORT}"
     show_setup_logs
     exit 1
 fi
@@ -188,8 +198,8 @@ if ! wait_for "ClickHouse seed data" "${SEED_TIMEOUT_SECONDS}" "${WAIT_INTERVAL_
     exit 1
 fi
 
-if ! wait_for "SSH bastion host port 2222" "${SSH_TIMEOUT_SECONDS}" "${WAIT_INTERVAL_SECONDS}" check_host_port localhost 2222; then
-    show_host_forwarding_hint "SSH bastion" "localhost" "2222"
+if ! wait_for "SSH bastion host port ${TEST_SSH_PORT}" "${SSH_TIMEOUT_SECONDS}" "${WAIT_INTERVAL_SECONDS}" check_host_port "${TEST_SSH_HOST}" "${TEST_SSH_PORT}"; then
+    show_host_forwarding_hint "SSH bastion" "${TEST_SSH_HOST}" "${TEST_SSH_PORT}"
     show_setup_logs
     exit 1
 fi

@@ -46,7 +46,17 @@ pytest tests/test_mcp_*.py       # All MCP protocol tests
 # Run with Docker containers
 docker compose up -d
 pytest -m docker                 # Tests requiring Docker
+
+# Override the Docker-exposed host/ports when localhost is not correct
+TEST_DOCKER_HOST=your-db-host TEST_SSH_HOST=your-ssh-host pytest -m docker
 ```
+
+Docker-backed tests default to `localhost` plus the standard published ports.
+You can override them when your Docker runtime exposes services elsewhere:
+- `TEST_DOCKER_HOST` for PostgreSQL and ClickHouse direct connections
+- `TEST_SSH_HOST` for SSH-tunnel tests
+- `TEST_POSTGRES_PORT`, `TEST_CLICKHOUSE_PORT`, and `TEST_SSH_PORT` for nonstandard published ports
+- `TEST_CLICKHOUSE_HTTP_PORT` for `run_tests.sh` preflight checks of ClickHouse's HTTP port
 
 ## Test Markers
 

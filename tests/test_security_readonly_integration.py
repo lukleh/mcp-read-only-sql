@@ -9,6 +9,7 @@ from src.connectors.postgresql.python import PostgreSQLPythonConnector
 from src.connectors.clickhouse.cli import ClickHouseCLIConnector
 from src.connectors.clickhouse.python import ClickHousePythonConnector
 from src.utils.sql_guard import ReadOnlyQueryError
+from tests.docker_test_config import docker_test_server
 
 from tests.sql_statement_lists import (
     CLICKHOUSE_ALLOWED_LITERAL_QUERIES,
@@ -21,7 +22,7 @@ from tests.sql_statement_lists import (
 POSTGRES_BASE_CONFIG = {
     "connection_name": "integration_postgres",
     "type": "postgresql",
-    "servers": [{"host": "localhost", "port": 5432}],
+    "servers": [docker_test_server("postgresql")],
     "db": "testdb",
     "username": "testuser",
     "password": "testpass",
@@ -30,7 +31,7 @@ POSTGRES_BASE_CONFIG = {
 CLICKHOUSE_BASE_CONFIG = {
     "connection_name": "integration_clickhouse",
     "type": "clickhouse",
-    "servers": [{"host": "localhost", "port": 9000}],
+    "servers": [docker_test_server("clickhouse")],
     "db": "testdb",
     "username": "testuser",
     "password": "testpass",

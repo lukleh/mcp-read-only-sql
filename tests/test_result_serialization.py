@@ -12,6 +12,7 @@ from src.connectors.postgresql.python import PostgreSQLPythonConnector
 from src.connectors.postgresql.cli import PostgreSQLCLIConnector
 from src.connectors.clickhouse.python import ClickHousePythonConnector
 from src.connectors.clickhouse.cli import ClickHouseCLIConnector
+from tests.docker_test_config import docker_test_server
 
 
 def parse_tsv(tsv_str):
@@ -36,7 +37,7 @@ def postgres_python_conn():
     config = make_connection({
         "connection_name": "test_pg",
         "type": "postgresql",
-        "servers": [{"host": "localhost", "port": 5432}],
+        "servers": [docker_test_server("postgresql")],
         "db": "testdb",
         "username": "testuser",
         "password": "testpass"
@@ -51,7 +52,7 @@ def postgres_cli_conn():
     config = make_connection({
         "connection_name": "test_pg",
         "type": "postgresql",
-        "servers": [{"host": "localhost", "port": 5432}],
+        "servers": [docker_test_server("postgresql")],
         "db": "testdb",
         "username": "testuser",
         "password": "testpass"
@@ -66,7 +67,7 @@ def clickhouse_python_conn():
     config = make_connection({
         "connection_name": "test_ch",
         "type": "clickhouse",
-        "servers": [{"host": "localhost", "port": 9000}],
+        "servers": [docker_test_server("clickhouse")],
         "db": "testdb",
         "username": "testuser",
         "password": "testpass"
@@ -81,7 +82,7 @@ def clickhouse_cli_conn():
     config = make_connection({
         "connection_name": "test_ch",
         "type": "clickhouse",
-        "servers": [{"host": "localhost", "port": 9000}],
+        "servers": [docker_test_server("clickhouse")],
         "db": "testdb",
         "username": "testuser",
         "password": "testpass"
