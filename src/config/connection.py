@@ -12,6 +12,24 @@ DEFAULT_CONNECTION_TIMEOUT = 10
 DEFAULT_MAX_RESULT_BYTES = 10_000_000
 
 
+def _normalize_positive_timeout(value: Any, field_name: str) -> float:
+    """Validate numeric timeout values used at runtime."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"Field '{field_name}' must be a positive number")
+    if value <= 0:
+        raise ValueError(f"Field '{field_name}' must be a positive number")
+    return value
+
+
+def _normalize_positive_int(value: Any, field_name: str) -> int:
+    """Validate positive integer settings used at runtime."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"Field '{field_name}' must be a positive integer")
+    if value <= 0:
+        raise ValueError(f"Field '{field_name}' must be a positive integer")
+    return value
+
+
 def _normalize_database_list(value: Any, field_name: str) -> List[str]:
     """Normalize a database list field to a deduplicated list of names."""
     if value is None:
@@ -276,12 +294,17 @@ class Connection:
         self._password = password
         self._implementation = implementation
         self._ssh_tunnel = ssh_tunnel
-        self._query_timeout = config.get("query_timeout", DEFAULT_QUERY_TIMEOUT)
-        self._connection_timeout = config.get(
-            "connection_timeout", DEFAULT_CONNECTION_TIMEOUT
+        self._query_timeout = _normalize_positive_timeout(
+            config.get("query_timeout", DEFAULT_QUERY_TIMEOUT),
+            "query_timeout",
         )
-        self._max_result_bytes = config.get(
-            "max_result_bytes", DEFAULT_MAX_RESULT_BYTES
+        self._connection_timeout = _normalize_positive_timeout(
+            config.get("connection_timeout", DEFAULT_CONNECTION_TIMEOUT),
+            "connection_timeout",
+        )
+        self._max_result_bytes = _normalize_positive_int(
+            config.get("max_result_bytes", DEFAULT_MAX_RESULT_BYTES),
+            "max_result_bytes",
         )
         self._description = config.get("description", "")
 
@@ -346,12 +369,12 @@ class Connection:
         return self._ssh_tunnel
 
     @property
-    def query_timeout(self) -> int:
+    def query_timeout(self) -> float:
         """Query timeout in seconds"""
         return self._query_timeout
 
     @property
-    def connection_timeout(self) -> int:
+    def connection_timeout(self) -> float:
         """Connection timeout in seconds"""
         return self._connection_timeout
 

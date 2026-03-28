@@ -83,6 +83,7 @@ class _FakeProcess:
     def __init__(self, stderr_message: str, stdout_lines=None, returncode: int = 1):
         self.stdout = _FakeStdout(stdout_lines)
         self.stderr = _FakeStderr(stderr_message)
+        self.stdin = None
         self.returncode = returncode
 
     async def wait(self):
@@ -100,6 +101,8 @@ def _assert_readonly_error(exc_info, connector_name: str):
 
 
 @pytest.mark.anyio
+@pytest.mark.docker
+@pytest.mark.usefixtures("docker_check")
 async def test_postgresql_python_readonly(postgres_config):
     """Test PostgreSQL Python connector enforces read-only mode"""
     connector = PostgreSQLPythonConnector(postgres_config)
@@ -124,6 +127,8 @@ async def test_postgresql_python_readonly(postgres_config):
 
 
 @pytest.mark.anyio
+@pytest.mark.docker
+@pytest.mark.usefixtures("docker_check")
 async def test_postgresql_cli_readonly(postgres_config):
     """Test PostgreSQL CLI connector enforces read-only mode"""
     connector = PostgreSQLCLIConnector(postgres_config)
@@ -398,6 +403,8 @@ async def test_clickhouse_cli_includes_readonly_flag(clickhouse_config, monkeypa
     cmd = captured["cmd"]
     assert "--readonly" in cmd
     assert "--max_execution_time" in cmd
+    assert "--ask-password" in cmd
+    assert "--password" not in cmd
     assert any(part == "SELECT 1" for part in cmd)
     # No environment mutations expected, but keep assertion for completeness
     assert captured["env"] is not None
@@ -660,6 +667,8 @@ async def test_clickhouse_python_write_attempt_raises_runtime(monkeypatch, click
 
 
 @pytest.mark.anyio
+@pytest.mark.docker
+@pytest.mark.usefixtures("docker_check")
 async def test_clickhouse_python_readonly(clickhouse_config):
     """Test ClickHouse Python connector enforces read-only mode"""
     connector = ClickHousePythonConnector(clickhouse_config)
@@ -683,6 +692,8 @@ async def test_clickhouse_python_readonly(clickhouse_config):
 
 
 @pytest.mark.anyio
+@pytest.mark.docker
+@pytest.mark.usefixtures("docker_check")
 async def test_clickhouse_cli_readonly(clickhouse_config):
     """Test ClickHouse CLI connector enforces read-only mode"""
     connector = ClickHouseCLIConnector(clickhouse_config)
@@ -705,6 +716,8 @@ async def test_clickhouse_cli_readonly(clickhouse_config):
 
 
 @pytest.mark.anyio
+@pytest.mark.docker
+@pytest.mark.usefixtures("docker_check")
 class TestReadOnlyEnforcement:
     """Test suite for read-only enforcement across all implementations"""
 
@@ -734,6 +747,8 @@ class TestReadOnlyEnforcement:
 
 
 @pytest.mark.anyio
+@pytest.mark.docker
+@pytest.mark.usefixtures("docker_check")
 async def test_postgres_malicious_queries_blocked(postgres_config):
     """Ensure advanced PostgreSQL write attempts are rejected."""
 
@@ -756,6 +771,8 @@ async def test_postgres_malicious_queries_blocked(postgres_config):
 
 
 @pytest.mark.anyio
+@pytest.mark.docker
+@pytest.mark.usefixtures("docker_check")
 async def test_clickhouse_malicious_queries_blocked(clickhouse_config):
     """Ensure ClickHouse rejects trickier write or DDL statements."""
 

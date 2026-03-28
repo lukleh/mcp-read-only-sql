@@ -7,6 +7,7 @@ import clickhouse_connect
 from clickhouse_connect.driver.exceptions import ClickHouseError
 
 from ..base import BaseConnector
+from ...utils.sql_guard import sanitize_read_only_sql
 from ...utils.tsv_formatter import format_tsv_line
 from ...utils.ssh_tunnel_cli import CLISSHTunnel
 
@@ -72,6 +73,7 @@ class ClickHousePythonConnector(BaseConnector):
 
     async def execute_query(self, query: str, database: Optional[str] = None, server: Optional[str] = None) -> str:
         """Execute a read-only query using clickhouse-connect and return TSV"""
+        sanitized_query = sanitize_read_only_sql(query)
         selected_server = self._select_server(server)
         original_port = selected_server.port  # Track the original port for protocol detection
 
@@ -102,7 +104,7 @@ class ClickHousePythonConnector(BaseConnector):
                         host,
                         port,
                         db_name,
-                        query,
+                        sanitized_query,
                         max_bytes,
                         original_port,  # Pass original port for protocol detection
                         is_ssh_tunnel

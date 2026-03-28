@@ -150,12 +150,12 @@ class ReadOnlySQLServer:
                     result = await execute(query, database=database, server=server)
 
                 output_path = Path(file_path).expanduser().resolve()
-
-                if output_path.exists():
-                    raise ValueError(f"File path already exists: {output_path}")
-
                 output_path.parent.mkdir(parents=True, exist_ok=True)
-                output_path.write_text(result, encoding="utf-8")
+                try:
+                    with output_path.open("x", encoding="utf-8") as handle:
+                        handle.write(result)
+                except FileExistsError as exc:
+                    raise ValueError(f"File path already exists: {output_path}") from exc
                 return str(output_path)
 
             return await execute(query, database=database, server=server)

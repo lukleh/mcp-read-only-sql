@@ -178,7 +178,7 @@ class PostgreSQLCLIConnector(BaseCLIConnector):
                         and use_pgoptions
                         and "unsupported startup parameter" in message
                     ):
-                        logger.info(
+                        logger.warning(
                             "psql: remote server rejected default_transaction_read_only; retrying without PGOPTIONS"
                         )
                         continue
