@@ -58,6 +58,13 @@ You can override them when your Docker runtime exposes services elsewhere:
 - `TEST_POSTGRES_PORT`, `TEST_CLICKHOUSE_PORT`, and `TEST_SSH_PORT` for nonstandard published ports
 - `TEST_CLICKHOUSE_HTTP_PORT` for `run_tests.sh` preflight checks of ClickHouse's HTTP port
 
+On macOS with Colima, if published container ports are not reachable from `localhost`,
+enable a host-reachable VM address before running the Docker-backed suite:
+
+```bash
+colima start --network-address
+```
+
 ## Test Markers
 
 - `@pytest.mark.docker` - Requires Docker containers running
