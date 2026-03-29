@@ -20,11 +20,11 @@ This repo follows the same package and release model as the other published MCP 
 
 ## Current package status
 
-- PyPI package: not published yet
-- Publish workflow: pending merge on the public-release branch
-- GitHub `pypi` environment: not configured yet
-- Required reviewer: not configured yet
-- Self-review: not configured yet
+- PyPI package: published as `0.1.0`
+- Publish workflow: active on `main`
+- GitHub `pypi` environment: configured
+- Required reviewer: `lukleh`
+- Self-review: allowed
 
 ## One-time setup
 
@@ -45,26 +45,31 @@ This repo follows the same package and release model as the other published MCP 
 2. Add at least one required reviewer.
 3. Decide whether self-review is allowed.
 
+Current repo configuration:
+
+- Environment: `pypi`
+- Required reviewer: `lukleh`
+- Self-review: allowed
+
 ## Release flow
 
-1. Merge the release-prep branch into `main`.
-2. Confirm `version` in `pyproject.toml`.
-3. Push a matching tag:
+1. Confirm `version` in `pyproject.toml` on `main`.
+2. Push a matching tag:
 
 ```bash
 git tag v0.1.0
 git push origin v0.1.0
 ```
 
-4. GitHub Actions starts the `Publish` workflow automatically.
-5. The workflow runs the full release gate before approval:
+3. GitHub Actions starts the `Publish` workflow automatically.
+4. The workflow runs the full release gate before approval:
    - test matrix
    - package build
    - wheel smoke tests
    - sdist smoke tests
-6. The final `publish` job pauses on the GitHub `pypi` environment.
-7. Approve the deployment.
-8. After approval, GitHub uploads the built package to PyPI.
+5. The final `publish` job pauses on the GitHub `pypi` environment.
+6. Approve the deployment.
+7. After approval, GitHub uploads the built package to PyPI.
 
 ## Prereleases
 
