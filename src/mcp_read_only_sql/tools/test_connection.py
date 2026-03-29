@@ -212,7 +212,10 @@ def main() -> None:
     """Main entry point."""
     import argparse
 
-    parser = argparse.ArgumentParser(description="Test MCP SQL Server connections")
+    parser = argparse.ArgumentParser(
+        prog="mcp-read-only-sql test-connection",
+        description="Test MCP SQL Server connections",
+    )
     parser.add_argument(
         "--version",
         action="version",

@@ -263,7 +263,10 @@ def write_sample_config(
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="MCP Read-Only SQL Server")
+    parser = argparse.ArgumentParser(
+        prog="mcp-read-only-sql",
+        description="MCP Read-Only SQL Server",
+    )
     parser.add_argument(
         "--version",
         action="version",

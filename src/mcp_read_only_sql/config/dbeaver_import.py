@@ -464,7 +464,10 @@ def main() -> None:
     import argparse
     from datetime import datetime
 
-    parser = argparse.ArgumentParser(description="Import DBeaver connections")
+    parser = argparse.ArgumentParser(
+        prog="mcp-read-only-sql import-dbeaver",
+        description="Import DBeaver connections",
+    )
     parser.add_argument(
         "--version",
         action="version",

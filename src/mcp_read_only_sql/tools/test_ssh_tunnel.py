@@ -180,7 +180,10 @@ def main() -> None:
     """Main entry point."""
     import argparse
 
-    parser = argparse.ArgumentParser(description="Test SSH tunnel connectivity")
+    parser = argparse.ArgumentParser(
+        prog="mcp-read-only-sql test-ssh-tunnel",
+        description="Test SSH tunnel connectivity",
+    )
     parser.add_argument(
         "--version",
         action="version",

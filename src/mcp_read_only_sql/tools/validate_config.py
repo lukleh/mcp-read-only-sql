@@ -329,7 +329,8 @@ def main() -> None:
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Validate MCP SQL Server configuration"
+        prog="mcp-read-only-sql validate-config",
+        description="Validate MCP SQL Server configuration",
     )
     parser.add_argument(
         "--version",
