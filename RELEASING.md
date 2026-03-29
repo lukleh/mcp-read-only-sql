@@ -7,6 +7,17 @@ This repo follows the same package and release model as the other published MCP 
 - PyPI trusted publishing via the GitHub `pypi` environment
 - manual approval at the `pypi` environment before the final upload job
 
+## CLI convention
+
+- The public interface starts with the package command: `mcp-read-only-sql`.
+- Repository-facing docs should prefer the root command plus flags or subcommands, not extra top-level helper scripts.
+- This repo already uses subcommands for auxiliary operations:
+  - `mcp-read-only-sql import-dbeaver`
+  - `mcp-read-only-sql validate-config`
+  - `mcp-read-only-sql test-connection`
+  - `mcp-read-only-sql test-ssh-tunnel`
+- Future auxiliary operations should extend that subcommand surface instead of adding new public console entry points.
+
 ## Current package status
 
 - PyPI package: not published yet
