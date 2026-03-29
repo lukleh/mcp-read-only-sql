@@ -3,18 +3,14 @@
 
 import asyncio
 import sys
-from pathlib import Path
 from typing import Optional
 
-# Add parent directory to path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-
-from src.config import load_connections
-from src.connectors.clickhouse.cli import ClickHouseCLIConnector
-from src.connectors.clickhouse.python import ClickHousePythonConnector
-from src.connectors.postgresql.cli import PostgreSQLCLIConnector
-from src.connectors.postgresql.python import PostgreSQLPythonConnector
-from src.runtime_paths import resolve_runtime_paths, RuntimePaths
+from ..config import load_connections
+from ..connectors.clickhouse.cli import ClickHouseCLIConnector
+from ..connectors.clickhouse.python import ClickHousePythonConnector
+from ..connectors.postgresql.cli import PostgreSQLCLIConnector
+from ..connectors.postgresql.python import PostgreSQLPythonConnector
+from ..runtime_paths import RuntimePaths, resolve_runtime_paths
 
 
 async def test_connection(
@@ -211,7 +207,7 @@ async def test_connection(
         return False
 
 
-def main():
+def main() -> None:
     """Main entry point."""
     import argparse
 

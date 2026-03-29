@@ -13,8 +13,8 @@ import pytest
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-from src.config import Connection
-from src.connectors.base import BaseConnector
+from mcp_read_only_sql.config import Connection
+from mcp_read_only_sql.connectors.base import BaseConnector
 from tests.docker_test_config import (
     docker_test_server,
     docker_test_server_string,
@@ -127,7 +127,7 @@ async def mcp_client(test_config_file):
             "run",
             "python",
             "-m",
-            "src.server",
+            "mcp_read_only_sql.server",
             "--config-dir",
             str(Path(test_config_file).parent),
         ],
@@ -242,7 +242,7 @@ async def integration_client(integration_config_file, docker_check):
             "run",
             "python",
             "-m",
-            "src.server",
+            "mcp_read_only_sql.server",
             "--config-dir",
             str(Path(integration_config_file).parent),
         ],

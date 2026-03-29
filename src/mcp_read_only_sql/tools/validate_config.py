@@ -7,11 +7,8 @@ from typing import Any, List
 
 import yaml
 
-# Add parent directory to path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-
-from src.config.parser import ConfigParser
-from src.runtime_paths import resolve_runtime_paths
+from ..config.parser import ConfigParser
+from ..runtime_paths import resolve_runtime_paths
 
 
 def find_legacy_credential_errors(raw_config: List[Any]) -> List[str]:

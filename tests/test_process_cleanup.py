@@ -2,12 +2,9 @@
 
 import asyncio
 import pytest
-import signal
-import os
 from unittest.mock import patch, MagicMock, AsyncMock
-import anyio
-from src.connectors.postgresql.cli import PostgreSQLCLIConnector
-from src.connectors.clickhouse.cli import ClickHouseCLIConnector
+from mcp_read_only_sql.connectors.postgresql.cli import PostgreSQLCLIConnector
+from mcp_read_only_sql.connectors.clickhouse.cli import ClickHouseCLIConnector
 
 
 @pytest.mark.anyio

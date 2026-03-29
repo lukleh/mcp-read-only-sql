@@ -1,9 +1,8 @@
 import asyncio
-import types
 
 import pytest
 
-from src.connectors.postgresql.cli import PostgreSQLCLIConnector
+from mcp_read_only_sql.connectors.postgresql.cli import PostgreSQLCLIConnector
 
 
 class DummyStdout:

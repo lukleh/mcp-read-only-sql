@@ -9,7 +9,6 @@ import logging
 import os
 import signal
 import shutil
-from typing import Optional, Dict, Any
 from contextlib import closing
 
 logger = logging.getLogger(__name__)

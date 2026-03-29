@@ -5,9 +5,9 @@ Test that the default implementation is CLI when not specified.
 import tempfile
 import yaml
 import os
-from src.config.parser import ConfigParser
-from src.server import ReadOnlySQLServer
-from src.runtime_paths import resolve_runtime_paths
+from mcp_read_only_sql.config.parser import ConfigParser
+from mcp_read_only_sql.server import ReadOnlySQLServer
+from mcp_read_only_sql.runtime_paths import resolve_runtime_paths
 
 
 def test_parser_default_implementation():
@@ -60,7 +60,7 @@ def test_server_default_implementation(tmp_path):
     assert conn is not None, "Connection should be loaded"
 
     # Check it's a CLI connector
-    from src.connectors.postgresql.cli import PostgreSQLCLIConnector
+    from mcp_read_only_sql.connectors.postgresql.cli import PostgreSQLCLIConnector
 
     assert isinstance(conn, PostgreSQLCLIConnector), "Should use CLI connector by default"
 
@@ -91,7 +91,7 @@ def test_explicit_python_implementation(tmp_path):
     assert conn is not None, "Connection should be loaded"
 
     # Check it's a Python connector
-    from src.connectors.postgresql.python import PostgreSQLPythonConnector
+    from mcp_read_only_sql.connectors.postgresql.python import PostgreSQLPythonConnector
 
     assert isinstance(conn, PostgreSQLPythonConnector), "Should use Python connector when explicitly specified"
 
@@ -122,6 +122,6 @@ def test_explicit_cli_implementation(tmp_path):
     assert conn is not None, "Connection should be loaded"
 
     # Check it's a CLI connector
-    from src.connectors.clickhouse.cli import ClickHouseCLIConnector
+    from mcp_read_only_sql.connectors.clickhouse.cli import ClickHouseCLIConnector
 
     assert isinstance(conn, ClickHouseCLIConnector), "Should use CLI connector when explicitly specified"

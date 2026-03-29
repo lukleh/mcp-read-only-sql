@@ -3,15 +3,9 @@ Alternative conftest with fixed async fixture handling.
 This avoids the anyio/pytest-asyncio incompatibility.
 """
 
-import json
-import asyncio
 import os
-import subprocess
-import tempfile
 from pathlib import Path
-from typing import Any, Dict
 
-import pytest
 import pytest_asyncio
 from mcp.client.session import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
@@ -34,7 +28,7 @@ async def integration_client_fixed(integration_config_file, docker_check):
             "run",
             "python",
             "-m",
-            "src.server",
+            "mcp_read_only_sql.server",
             "--config-dir",
             str(Path(integration_config_file).parent),
         ],
@@ -88,7 +82,7 @@ async def mcp_client_fixed(test_config_file):
             "run",
             "python",
             "-m",
-            "src.server",
+            "mcp_read_only_sql.server",
             "--config-dir",
             str(Path(test_config_file).parent),
         ],

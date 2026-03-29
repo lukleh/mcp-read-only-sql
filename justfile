@@ -5,11 +5,11 @@ default:
 
 # Install dependencies
 install:
-    uv sync
+    uv sync --extra dev
 
 # Run the server
 run:
-    uv run -- python -m src.server
+    uv run mcp-read-only-sql
 
 # Import DBeaver connections (supports name=value options)
 # Examples:
@@ -33,32 +33,36 @@ import-dbeaver path="$HOME/Library/DBeaverData/workspace6/General/.dbeaver" only
     if [ -n "{{output}}" ]; then
         args+=(--output "{{output}}")
     fi
-    uv run -- python -m src.config.dbeaver_import "{{path}}" "${args[@]}"
+    uv run mcp-read-only-sql-import-dbeaver "{{path}}" "${args[@]}"
 
 # Validate configuration file
 validate:
-    uv run -- python -m src.tools.validate_config
+    uv run mcp-read-only-sql-validate-config
 
 # Show resolved paths
 print-paths:
-    uv run -- python -m src.server --print-paths
+    uv run mcp-read-only-sql --print-paths
+
+# Write the packaged sample config to the resolved config directory
+write-sample-config:
+    uv run mcp-read-only-sql --write-sample-config
 
 # Test database connection(s)
 test-connection connection="":
     #!/usr/bin/env bash
     if [ -z "{{connection}}" ]; then
-        uv run -- python -m src.tools.test_connection
+        uv run mcp-read-only-sql-test-connection
     else
-        uv run -- python -m src.tools.test_connection {{connection}}
+        uv run mcp-read-only-sql-test-connection {{connection}}
     fi
 
 # Test SSH tunnel(s) connectivity only
 test-ssh-tunnel connection="":
     #!/usr/bin/env bash
     if [ -z "{{connection}}" ]; then
-        uv run -- python -m src.tools.test_ssh_tunnel
+        uv run mcp-read-only-sql-test-ssh-tunnel
     else
-        uv run -- python -m src.tools.test_ssh_tunnel {{connection}}
+        uv run mcp-read-only-sql-test-ssh-tunnel {{connection}}
     fi
 
 # Run tests with Docker isolation

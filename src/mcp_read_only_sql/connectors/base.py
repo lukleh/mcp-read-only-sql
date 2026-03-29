@@ -1,13 +1,12 @@
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
-import asyncio
+from typing import Any, List, Optional
 import sys
 import contextvars
 from contextlib import asynccontextmanager, contextmanager
 
-from ..config import Connection, Server, SSHTunnelConfig
+from ..config import Connection, Server
 from ..utils.ssh_tunnel import SSHTunnel
-from ..utils.timeout_wrapper import with_hard_timeout, HardTimeoutError
+from ..utils.timeout_wrapper import with_hard_timeout
 
 
 class ConnectionTimeoutError(Exception):

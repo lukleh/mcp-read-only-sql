@@ -5,6 +5,7 @@ A secure MCP server providing read-only SQL query capabilities for PostgreSQL an
 """
 
 import argparse
+from importlib.resources import files
 import logging
 import sys
 from pathlib import Path
@@ -27,6 +28,9 @@ from .runtime_paths import resolve_runtime_paths, RuntimePaths
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+SAMPLE_CONNECTIONS_YAML = files("mcp_read_only_sql").joinpath(
+    "connections.yaml.sample"
+).read_text(encoding="utf-8")
 
 
 def _display_hosts_for_connector(connector: BaseConnector) -> List[str]:
@@ -233,6 +237,23 @@ class ReadOnlySQLServer:
         self.mcp.run()
 
 
+def write_sample_config(
+    runtime_paths: RuntimePaths, *, overwrite: bool = False
+) -> Path:
+    """Write a sample connections.yaml for package-based installs."""
+    runtime_paths.ensure_directories()
+
+    config_path = runtime_paths.connections_file
+    if config_path.exists() and not overwrite:
+        raise FileExistsError(
+            f"Config file already exists at {config_path}. Re-run with --overwrite to replace it."
+        )
+
+    config_path.write_text(SAMPLE_CONNECTIONS_YAML, encoding="utf-8")
+    config_path.chmod(0o600)
+    return config_path
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="MCP Read-Only SQL Server")
     parser.add_argument(
@@ -252,6 +273,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print resolved config/state/cache paths and exit",
     )
+    parser.add_argument(
+        "--write-sample-config",
+        action="store_true",
+        help="Write a sample connections.yaml to the resolved config path and exit",
+    )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Replace connections.yaml when used with --write-sample-config",
+    )
     return parser
 
 
@@ -259,11 +290,23 @@ def main() -> None:
     parser = build_arg_parser()
     args = parser.parse_args()
 
+    if args.overwrite and not args.write_sample_config:
+        parser.error("--overwrite can only be used with --write-sample-config")
+
     runtime_paths = resolve_runtime_paths(
         config_dir=args.config_dir,
         state_dir=args.state_dir,
         cache_dir=args.cache_dir,
     )
+
+    if args.write_sample_config:
+        try:
+            config_path = write_sample_config(runtime_paths, overwrite=args.overwrite)
+        except FileExistsError as exc:
+            parser.error(str(exc))
+        print(f"Wrote sample config to {config_path}")
+        if not args.print_paths:
+            return
 
     if args.print_paths:
         print(runtime_paths.render())

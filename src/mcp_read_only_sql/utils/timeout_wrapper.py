@@ -1,7 +1,7 @@
 """Hard timeout wrapper for all database operations"""
 import asyncio
 import logging
-from typing import Any, Dict, Optional, Callable
+from typing import Any, Dict, Callable
 from functools import wraps
 
 logger = logging.getLogger(__name__)

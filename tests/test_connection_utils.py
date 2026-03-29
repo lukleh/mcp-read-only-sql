@@ -1,5 +1,4 @@
-import pytest
-from src.utils.connection_utils import get_connection_target
+from mcp_read_only_sql.utils.connection_utils import get_connection_target
 
 
 class TestGetConnectionTarget:

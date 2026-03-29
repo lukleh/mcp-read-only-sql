@@ -1,6 +1,6 @@
 """Tests for server selection parameter feature"""
 import pytest
-from src.connectors.base import BaseConnector
+from mcp_read_only_sql.connectors.base import BaseConnector
 
 
 class MockConnector(BaseConnector):
