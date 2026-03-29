@@ -7,6 +7,7 @@ from typing import Any, List
 
 import yaml
 
+from .. import __version__
 from ..config.parser import ConfigParser
 from ..runtime_paths import resolve_runtime_paths
 
@@ -329,6 +330,11 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(
         description="Validate MCP SQL Server configuration"
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
     )
     parser.add_argument(
         "--config-dir",

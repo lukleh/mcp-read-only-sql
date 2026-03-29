@@ -13,6 +13,7 @@ from typing import Dict, List, Optional
 
 from mcp.server.fastmcp import FastMCP
 
+from . import __version__
 from .config import load_connections
 from .config.connection import (
     DEFAULT_CONNECTION_TIMEOUT,
@@ -256,6 +257,11 @@ def write_sample_config(
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="MCP Read-Only SQL Server")
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
+    )
     parser.add_argument(
         "--config-dir",
         help="Directory containing connections.yaml",

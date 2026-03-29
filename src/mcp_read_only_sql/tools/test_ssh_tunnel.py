@@ -5,6 +5,7 @@ import asyncio
 import sys
 from typing import Optional
 
+from .. import __version__
 from ..config import load_connections
 from ..runtime_paths import RuntimePaths, resolve_runtime_paths
 from ..utils.ssh_tunnel import SSHTunnel
@@ -180,6 +181,11 @@ def main() -> None:
     import argparse
 
     parser = argparse.ArgumentParser(description="Test SSH tunnel connectivity")
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
+    )
     parser.add_argument(
         "connection",
         nargs="?",

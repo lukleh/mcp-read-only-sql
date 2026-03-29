@@ -7,6 +7,7 @@ import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from .. import __version__
 from ..runtime_paths import resolve_runtime_paths
 from ..utils.connection_utils import get_connection_target
 
@@ -464,6 +465,11 @@ def main() -> None:
     from datetime import datetime
 
     parser = argparse.ArgumentParser(description="Import DBeaver connections")
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
+    )
     parser.add_argument(
         "dbeaver_path",
         nargs="?",

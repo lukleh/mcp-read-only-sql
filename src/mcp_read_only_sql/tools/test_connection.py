@@ -5,6 +5,7 @@ import asyncio
 import sys
 from typing import Optional
 
+from .. import __version__
 from ..config import load_connections
 from ..connectors.clickhouse.cli import ClickHouseCLIConnector
 from ..connectors.clickhouse.python import ClickHousePythonConnector
@@ -212,6 +213,11 @@ def main() -> None:
     import argparse
 
     parser = argparse.ArgumentParser(description="Test MCP SQL Server connections")
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
+    )
     parser.add_argument(
         "connection",
         nargs="?",
