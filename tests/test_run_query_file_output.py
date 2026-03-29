@@ -6,9 +6,9 @@ from pathlib import Path
 import pytest
 from mcp.server.fastmcp import FastMCP
 
-from src.config import Connection
-from src.connectors.base import BaseConnector, DataSizeLimitError
-from src.server import ReadOnlySQLServer
+from mcp_read_only_sql.config import Connection
+from mcp_read_only_sql.connectors.base import BaseConnector, DataSizeLimitError
+from mcp_read_only_sql.server import ReadOnlySQLServer
 
 
 class StubConnector(BaseConnector):

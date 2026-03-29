@@ -7,11 +7,9 @@ from typing import Any, List
 
 import yaml
 
-# Add parent directory to path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-
-from src.config.parser import ConfigParser
-from src.runtime_paths import resolve_runtime_paths
+from .. import __version__
+from ..config.parser import ConfigParser
+from ..runtime_paths import resolve_runtime_paths
 
 
 def find_legacy_credential_errors(raw_config: List[Any]) -> List[str]:
@@ -96,7 +94,7 @@ def validate_config(
     print("-" * 50)
 
     try:
-        with open(config_path) as raw_file:
+        with open(config_path, encoding="utf-8") as raw_file:
             raw_configs = yaml.safe_load(raw_file) or []
 
         if not isinstance(raw_configs, list):
@@ -312,8 +310,7 @@ def validate_config(
             print()
 
         if has_errors:
-            if has_errors:
-                print("❌ Configuration has errors")
+            print("❌ Configuration has errors")
             return False
         else:
             print("✅ Configuration is valid")
@@ -327,12 +324,18 @@ def validate_config(
         return False
 
 
-def main():
+def main() -> None:
     """Main entry point"""
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Validate MCP SQL Server configuration"
+        prog="mcp-read-only-sql validate-config",
+        description="Validate MCP SQL Server configuration",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
     )
     parser.add_argument(
         "--config-dir",

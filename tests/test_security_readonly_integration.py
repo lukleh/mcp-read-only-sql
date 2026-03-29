@@ -4,11 +4,11 @@ import shutil
 
 import pytest
 
-from src.connectors.postgresql.cli import PostgreSQLCLIConnector
-from src.connectors.postgresql.python import PostgreSQLPythonConnector
-from src.connectors.clickhouse.cli import ClickHouseCLIConnector
-from src.connectors.clickhouse.python import ClickHousePythonConnector
-from src.utils.sql_guard import ReadOnlyQueryError
+from mcp_read_only_sql.connectors.postgresql.cli import PostgreSQLCLIConnector
+from mcp_read_only_sql.connectors.postgresql.python import PostgreSQLPythonConnector
+from mcp_read_only_sql.connectors.clickhouse.cli import ClickHouseCLIConnector
+from mcp_read_only_sql.connectors.clickhouse.python import ClickHousePythonConnector
+from mcp_read_only_sql.utils.sql_guard import ReadOnlyQueryError
 from tests.docker_test_config import docker_test_server
 
 from tests.sql_statement_lists import (

@@ -26,7 +26,7 @@ def load_connections(yaml_path: str | Path) -> Dict[str, Connection]:
     if not yaml_file.exists():
         raise FileNotFoundError(f"Configuration file not found: {yaml_path}")
 
-    with open(yaml_file) as f:
+    with open(yaml_file, encoding="utf-8") as f:
         raw_configs = yaml.safe_load(f)
 
     if not raw_configs:

@@ -4,7 +4,6 @@ MCP Protocol tests
 Tests the MCP server/client communication and protocol handling
 """
 
-import asyncio
 import pytest
 from tests.conftest import execute_query, list_connections
 

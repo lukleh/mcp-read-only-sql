@@ -5,10 +5,10 @@ Tests various error conditions and ensures proper error messages are returned
 """
 
 import pytest
-from src.connectors.postgresql.python import PostgreSQLPythonConnector
-from src.connectors.postgresql.cli import PostgreSQLCLIConnector
-from src.connectors.clickhouse.python import ClickHousePythonConnector
-from src.connectors.clickhouse.cli import ClickHouseCLIConnector
+from mcp_read_only_sql.connectors.postgresql.python import PostgreSQLPythonConnector
+from mcp_read_only_sql.connectors.postgresql.cli import PostgreSQLCLIConnector
+from mcp_read_only_sql.connectors.clickhouse.python import ClickHousePythonConnector
+from mcp_read_only_sql.connectors.clickhouse.cli import ClickHouseCLIConnector
 from tests.docker_test_config import docker_test_host, docker_test_server
 
 
@@ -146,7 +146,7 @@ class TestConnectionErrors:
     async def test_cli_connection_error(self, postgres_cli_conn):
         """Test CLI connector handles connection errors"""
         # Temporarily break the connection by using wrong port
-        from src.config.connection import Server
+        from mcp_read_only_sql.config.connection import Server
         postgres_cli_conn.servers = [Server(host=docker_test_host(), port=9999)]
 
         with pytest.raises(RuntimeError) as exc_info:
@@ -299,5 +299,5 @@ class TestErrorMessageQuality:
             )
 
         # Error should be a RuntimeError with a message
-        assert exc_info.type == RuntimeError
+        assert exc_info.type is RuntimeError
         assert str(exc_info.value)  # Should have a message

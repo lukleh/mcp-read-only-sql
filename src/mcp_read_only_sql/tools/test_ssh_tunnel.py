@@ -3,16 +3,13 @@
 
 import asyncio
 import sys
-from pathlib import Path
 from typing import Optional
 
-# Add parent directory to path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-
-from src.config import load_connections
-from src.runtime_paths import resolve_runtime_paths, RuntimePaths
-from src.utils.ssh_tunnel import SSHTunnel
-from src.utils.ssh_tunnel_cli import CLISSHTunnel
+from .. import __version__
+from ..config import load_connections
+from ..runtime_paths import RuntimePaths, resolve_runtime_paths
+from ..utils.ssh_tunnel import SSHTunnel
+from ..utils.ssh_tunnel_cli import CLISSHTunnel
 
 
 async def test_ssh_tunnels(
@@ -179,11 +176,19 @@ async def test_ssh_tunnels(
         return False
 
 
-def main():
+def main() -> None:
     """Main entry point."""
     import argparse
 
-    parser = argparse.ArgumentParser(description="Test SSH tunnel connectivity")
+    parser = argparse.ArgumentParser(
+        prog="mcp-read-only-sql test-ssh-tunnel",
+        description="Test SSH tunnel connectivity",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
+    )
     parser.add_argument(
         "connection",
         nargs="?",

@@ -42,45 +42,90 @@ See [READ_ONLY_ENFORCEMENT_MATRIX.md](READ_ONLY_ENFORCEMENT_MATRIX.md) for a sta
 
 ## Prerequisites
 
-- [uv](https://github.com/astral-sh/uv) - Fast Python package installer and resolver
-- [just](https://github.com/casey/just) - Command runner (for project tasks)
+- [uv](https://github.com/astral-sh/uv) for package installs and ephemeral `uvx` runs
+- `psql` if you want PostgreSQL connections with `implementation: cli`
+- `clickhouse-client` if you want ClickHouse connections with `implementation: cli`
+- `sshpass` only if you want CLI-based SSH tunnels with password authentication
+- [just](https://github.com/casey/just) is optional and only needed for repo-local contributor workflows
+
+Install the optional CLI binaries with your operating system's package manager or the official PostgreSQL / ClickHouse packages for your environment.
+
+The SQL package keeps both execution models first-class:
+
+- `implementation: cli` uses the official database client binaries you already trust in operations.
+- `implementation: python` stays fully supported when you want a pure-Python setup with no external database client binaries.
+
+You can verify optional CLI dependencies with:
+
+```bash
+psql --version
+clickhouse-client --version
+sshpass -V
+```
 
 ## Quick Start
 
-### 1. Install Dependencies
+### 1. Install or Run from This Checkout
+
+For one-off runs from this checkout, use `uvx --from .`:
 
 ```bash
-uv sync
+uvx --from . mcp-read-only-sql --write-sample-config
 ```
 
-If you plan to use CLI connectors with SSH password authentication, install `sshpass` as well (for example, `brew install sshpass` on macOS or `apt-get install sshpass` on Debian-based Linux).
-
-### 2. Configure Database Connections
-
-Create the config directory:
+For a persistent local install from this checkout:
 
 ```bash
-mkdir -p ~/.config/lukleh/mcp-read-only-sql
+uv tool install .
+mcp-read-only-sql --write-sample-config
 ```
 
-**Option A: Create from sample**
+After the package is published to PyPI, you can replace `.` with `mcp-read-only-sql`.
+
+That creates:
+
+- `~/.config/lukleh/mcp-read-only-sql/connections.yaml`
+- `~/.local/state/lukleh/mcp-read-only-sql/`
+- `~/.cache/lukleh/mcp-read-only-sql/`
+
+### 2. Choose an Implementation Per Connection
+
+`connections.yaml` supports both implementations side by side:
+
+```yaml
+- connection_name: postgres_cli
+  type: postgresql
+  implementation: cli
+  servers:
+    - "db.example.com:5432"
+  db: analytics
+  username: analyst
+  password: change_me
+
+- connection_name: clickhouse_python
+  type: clickhouse
+  implementation: python
+  servers:
+    - "analytics.example.com:8123"
+  db: default
+  username: analyst
+  password: change_me
+```
+
+Use CLI mode when you want the behavior of `psql` or `clickhouse-client`, or when those tools are already part of your operational setup. Use Python mode when you want a package-only setup with no extra system binaries.
+
+### 3. Import or Edit `connections.yaml`
+
+You can edit the generated sample directly, or import a DBeaver workspace:
+
 ```bash
-cp connections.yaml.sample ~/.config/lukleh/mcp-read-only-sql/connections.yaml
-# Edit ~/.config/lukleh/mcp-read-only-sql/connections.yaml with your database details
+uvx --from . mcp-read-only-sql import-dbeaver \
+  ~/Library/DBeaverData/workspace6/General/.dbeaver
 ```
 
-**Option B: Import from DBeaver**
-```bash
-just import-dbeaver
-# This creates ~/.config/lukleh/mcp-read-only-sql/connections.yaml
-# with any decrypted passwords written directly into that file
-```
+That writes `connections.yaml` with any decrypted passwords stored directly in the file. The importer writes user-only permissions and keeps timestamped backups when it overwrites an existing file.
 
-> **Note:** The server reads `connections.yaml` during startup. Restart the MCP
-> process after editing the file so changes take effect.
->
-> `connections.yaml` contains credentials, so keep it private and never commit
-> it. The DBeaver importer writes the file with user-only permissions.
+> `connections.yaml` contains credentials. Keep it private, do not commit it, and restart the MCP process after editing it so changes take effect.
 
 To allow a connection to access multiple databases, add an explicit allowlist:
 
@@ -99,43 +144,45 @@ To allow a connection to access multiple databases, add an explicit allowlist:
 
 If you only set `db`, that single database is implicitly the allowlist.
 
-### 3. Set Up Credentials
-
-Put database passwords in each connection's `password` field. For SSH tunnels,
-use either `ssh_tunnel.private_key` or `ssh_tunnel.password`.
-
 ### 4. Validate and Test Connections
 
+The package includes management subcommands for connection validation and dry-run testing:
+
 ```bash
-# Validate configuration file
+uvx --from . mcp-read-only-sql validate-config
+uvx --from . mcp-read-only-sql test-connection
+uvx --from . mcp-read-only-sql test-connection my_postgres
+uvx --from . mcp-read-only-sql test-ssh-tunnel
+uvx --from . mcp-read-only-sql --print-paths
+```
+
+If you are working from a clone, the same helpers are available through `just`:
+
+```bash
 just validate
-
-# Test database connectivity
-just test-connection              # Test all connections
-just test-connection my_postgres  # Test specific connection
-
-# Show the exact runtime paths
+just test-connection
+just test-connection my_postgres
 just print-paths
 ```
 
-### 5. Add MCP Server to Your Client
+### 5. Add the MCP Server to Your Client
 
-**For Claude Code:**
+For Claude Code:
+
 ```bash
-claude mcp add mcp-read-only-sql -- uv --directory {PATH_TO_MCP_READ_ONLY_SQL} run python -m src.server
+claude mcp add mcp-read-only-sql -- uvx --from . mcp-read-only-sql
 ```
 
-**For Codex:**
+For Codex:
+
 ```bash
-codex mcp add mcp-read-only-sql -- uv --directory {PATH_TO_MCP_READ_ONLY_SQL} run python -m src.server
+codex mcp add mcp-read-only-sql -- uvx --from . mcp-read-only-sql
 ```
 
-Replace `{PATH_TO_MCP_READ_ONLY_SQL}` with the full path to where you cloned this repository (e.g., `/Users/yourname/projects/mcp-read-only-sql`).
-
-To use a different config root during manual testing:
+For manual testing with a different config root:
 
 ```bash
-uv run -- python -m src.server --config-dir /path/to/config-dir
+uvx --from . mcp-read-only-sql --config-dir /path/to/config-dir --print-paths
 ```
 
 ## MCP Tools

@@ -1,17 +1,15 @@
+import getpass
 import json
+import logging
 import os
 import re
-import getpass
 import subprocess
 from pathlib import Path
-from typing import Any, Dict, List, Tuple, Optional
-import logging
-import sys
+from typing import Any, Dict, List, Optional, Tuple
 
-# Add parent directory to path to import from utils
-sys.path.append(str(Path(__file__).parent.parent))
-from utils.connection_utils import get_connection_target
-from runtime_paths import resolve_runtime_paths
+from .. import __version__
+from ..runtime_paths import resolve_runtime_paths
+from ..utils.connection_utils import get_connection_target
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +17,7 @@ logger = logging.getLogger(__name__)
 def _write_text_file_secure(path: Path, content: str) -> None:
     """Write a text file and restrict it to user-only permissions."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w") as handle:
+    with path.open("w", encoding="utf-8") as handle:
         handle.write(content)
     os.chmod(path, 0o600)
 
@@ -96,8 +94,8 @@ class DBeaverImporter:
                 f"DBeaver data sources file not found: {self.data_sources_path}"
             )
 
-        with open(self.data_sources_path, "r") as f:
-            data_sources = json.load(f)
+        with self.data_sources_path.open("r", encoding="utf-8") as handle:
+            data_sources = json.load(handle)
 
         # Try to decrypt credentials
         decrypt_result = self._decrypt_credentials()
@@ -110,8 +108,8 @@ class DBeaverImporter:
         if not credentials and self.credentials_path.exists():
             # Fallback: try to read as plaintext JSON (some DBeaver versions don't encrypt)
             try:
-                with open(self.credentials_path, "r") as f:
-                    cred_data = json.load(f)
+                with self.credentials_path.open("r", encoding="utf-8") as handle:
+                    cred_data = json.load(handle)
                     for conn_id, conn_creds in cred_data.items():
                         if isinstance(conn_creds, dict) and "#connection" in conn_creds:
                             credentials[conn_id] = conn_creds["#connection"]
@@ -459,14 +457,22 @@ class DBeaverImporter:
         return [groups[key] for key in order]
 
 
-def main():
+def main() -> None:
     """Command-line entry point for importing DBeaver connections"""
     import sys
     import yaml
     import argparse
     from datetime import datetime
 
-    parser = argparse.ArgumentParser(description="Import DBeaver connections")
+    parser = argparse.ArgumentParser(
+        prog="mcp-read-only-sql import-dbeaver",
+        description="Import DBeaver connections",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
+    )
     parser.add_argument(
         "dbeaver_path",
         nargs="?",
@@ -597,7 +603,7 @@ def main():
         if only_names and output_path.exists():
             # Merge into existing instead of replacing when importing a subset.
             try:
-                with open(output_path, "r") as f:
+                with open(output_path, "r", encoding="utf-8") as f:
                     existing_connections = yaml.safe_load(f) or []
             except Exception as e:
                 existing_connections = []
@@ -634,7 +640,7 @@ def main():
             )
             existing_yaml = None
             if output_path.exists():
-                with open(output_path, "r") as f:
+                with open(output_path, "r", encoding="utf-8") as f:
                     existing_yaml = f.read()
 
             if existing_yaml is not None and existing_yaml == new_yaml:
@@ -666,7 +672,7 @@ def main():
 
             if output_path.exists():
                 try:
-                    with open(output_path, "r") as f:
+                    with open(output_path, "r", encoding="utf-8") as f:
                         existing = yaml.safe_load(f) or []
                 except Exception as e:
                     existing = []

@@ -3,7 +3,6 @@ import logging
 import socket
 import select
 import threading
-from typing import Any, Dict, Optional
 import paramiko
 
 logger = logging.getLogger(__name__)
@@ -155,7 +154,7 @@ class SSHTunnel:
             except paramiko.SSHException as e:
                 logger.error(f"SSH connection error: {e}")
                 raise RuntimeError(f"SSH: {e}")
-            except socket.timeout as e:
+            except socket.timeout:
                 logger.error(f"SSH connection timed out after {self.ssh_timeout}s")
                 raise TimeoutError(f"SSH: Connection timeout after {self.ssh_timeout}s")
             except socket.error as e:

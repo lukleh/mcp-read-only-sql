@@ -5,8 +5,8 @@ Test SSH timeout handling
 
 import pytest
 import asyncio
-from src.connectors.postgresql.python import PostgreSQLPythonConnector
-from src.connectors.postgresql.cli import PostgreSQLCLIConnector
+from mcp_read_only_sql.connectors.postgresql.python import PostgreSQLPythonConnector
+from mcp_read_only_sql.connectors.postgresql.cli import PostgreSQLCLIConnector
 
 
 @pytest.mark.anyio
@@ -74,7 +74,6 @@ class TestSSHTimeout:
         # Test CLI implementation
         connector = PostgreSQLCLIConnector(config)
 
-        start_time = asyncio.get_event_loop().time()
         with pytest.raises(RuntimeError) as exc_info:
             await connector.execute_query("SELECT 1")
 

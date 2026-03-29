@@ -5,14 +5,16 @@ A secure MCP server providing read-only SQL query capabilities for PostgreSQL an
 """
 
 import argparse
+from importlib.resources import files
 import logging
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 from mcp.server.fastmcp import FastMCP
 
-from .config import load_connections
+from . import __version__
+from .config import dbeaver_import, load_connections
 from .config.connection import (
     DEFAULT_CONNECTION_TIMEOUT,
     DEFAULT_MAX_RESULT_BYTES,
@@ -24,9 +26,19 @@ from .connectors.clickhouse.python import ClickHousePythonConnector
 from .connectors.postgresql.cli import PostgreSQLCLIConnector
 from .connectors.postgresql.python import PostgreSQLPythonConnector
 from .runtime_paths import resolve_runtime_paths, RuntimePaths
+from .tools import test_connection, test_ssh_tunnel, validate_config
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+SAMPLE_CONNECTIONS_YAML = files("mcp_read_only_sql").joinpath(
+    "connections.yaml.sample"
+).read_text(encoding="utf-8")
+SUBCOMMAND_HANDLERS: dict[str, Callable[[], None]] = {
+    "import-dbeaver": dbeaver_import.main,
+    "validate-config": validate_config.main,
+    "test-connection": test_connection.main,
+    "test-ssh-tunnel": test_ssh_tunnel.main,
+}
 
 
 def _display_hosts_for_connector(connector: BaseConnector) -> List[str]:
@@ -233,8 +245,33 @@ class ReadOnlySQLServer:
         self.mcp.run()
 
 
+def write_sample_config(
+    runtime_paths: RuntimePaths, *, overwrite: bool = False
+) -> Path:
+    """Write a sample connections.yaml for package-based installs."""
+    runtime_paths.ensure_directories()
+
+    config_path = runtime_paths.connections_file
+    if config_path.exists() and not overwrite:
+        raise FileExistsError(
+            f"Config file already exists at {config_path}. Re-run with --overwrite to replace it."
+        )
+
+    config_path.write_text(SAMPLE_CONNECTIONS_YAML, encoding="utf-8")
+    config_path.chmod(0o600)
+    return config_path
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="MCP Read-Only SQL Server")
+    parser = argparse.ArgumentParser(
+        prog="mcp-read-only-sql",
+        description="MCP Read-Only SQL Server",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
+    )
     parser.add_argument(
         "--config-dir",
         help="Directory containing connections.yaml",
@@ -252,18 +289,90 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print resolved config/state/cache paths and exit",
     )
+    parser.add_argument(
+        "--write-sample-config",
+        action="store_true",
+        help="Write a sample connections.yaml to the resolved config path and exit",
+    )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Replace connections.yaml when used with --write-sample-config",
+    )
+    parser.add_argument(
+        "command",
+        nargs="?",
+        choices=sorted(SUBCOMMAND_HANDLERS),
+        help="Optional management command to run instead of starting the MCP server",
+    )
+    parser.add_argument(
+        "command_args",
+        nargs=argparse.REMAINDER,
+        help=argparse.SUPPRESS,
+    )
     return parser
+
+
+def _forward_shared_runtime_args(args: argparse.Namespace) -> list[str]:
+    forwarded: list[str] = []
+    if args.config_dir:
+        forwarded.extend(["--config-dir", args.config_dir])
+    if args.state_dir:
+        forwarded.extend(["--state-dir", args.state_dir])
+    if args.cache_dir:
+        forwarded.extend(["--cache-dir", args.cache_dir])
+    if args.print_paths:
+        forwarded.append("--print-paths")
+    return forwarded
+
+
+def _dispatch_subcommand(args: argparse.Namespace) -> None:
+    """Execute a management subcommand through the public root CLI."""
+    forwarded_args = _forward_shared_runtime_args(args)
+    command_argv = [
+        f"mcp-read-only-sql {args.command}",
+        *forwarded_args,
+        *args.command_args,
+    ]
+
+    original_argv = sys.argv
+    try:
+        sys.argv = command_argv
+        SUBCOMMAND_HANDLERS[args.command]()
+    finally:
+        sys.argv = original_argv
 
 
 def main() -> None:
     parser = build_arg_parser()
     args = parser.parse_args()
 
+    if args.command and (args.write_sample_config or args.overwrite):
+        parser.error(
+            "--write-sample-config and --overwrite can only be used without a subcommand"
+        )
+
+    if args.command:
+        _dispatch_subcommand(args)
+        return
+
+    if args.overwrite and not args.write_sample_config:
+        parser.error("--overwrite can only be used with --write-sample-config")
+
     runtime_paths = resolve_runtime_paths(
         config_dir=args.config_dir,
         state_dir=args.state_dir,
         cache_dir=args.cache_dir,
     )
+
+    if args.write_sample_config:
+        try:
+            config_path = write_sample_config(runtime_paths, overwrite=args.overwrite)
+        except FileExistsError as exc:
+            parser.error(str(exc))
+        print(f"Wrote sample config to {config_path}")
+        if not args.print_paths:
+            return
 
     if args.print_paths:
         print(runtime_paths.render())

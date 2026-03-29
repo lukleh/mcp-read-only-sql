@@ -5,7 +5,7 @@ from pathlib import Path
 
 import yaml
 
-from src.config.dbeaver_import import DBeaverImporter, main
+from mcp_read_only_sql.config.dbeaver_import import DBeaverImporter, main
 
 
 def _write_dbeaver_workspace(tmp_path: Path, connections: list[dict]) -> Path:

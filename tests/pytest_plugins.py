@@ -15,7 +15,7 @@ def pytest_runtest_teardown(item, nextitem):
     outcome = yield
     if outcome.get_result() is None:
         excinfo = outcome.get_excinfo()
-        if excinfo and excinfo[0] == RuntimeError:
+        if excinfo and excinfo[0] is RuntimeError:
             exc_value = excinfo[1]
             if "cancel scope" in str(exc_value):
                 # This is the known anyio/pytest-asyncio issue

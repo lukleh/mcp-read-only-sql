@@ -2,8 +2,7 @@
 Base class for CLI connectors with system SSH support
 """
 
-import asyncio
-from typing import Any, Dict, Optional
+from typing import Optional
 from contextlib import asynccontextmanager
 import logging
 

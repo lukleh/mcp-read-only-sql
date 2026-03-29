@@ -8,12 +8,12 @@ import asyncio
 import psycopg2
 import pytest
 import clickhouse_connect
-from src.connectors.postgresql.python import PostgreSQLPythonConnector
-from src.connectors.postgresql.cli import PostgreSQLCLIConnector
-from src.connectors.clickhouse.python import ClickHousePythonConnector
-from src.connectors.clickhouse.cli import ClickHouseCLIConnector
+from mcp_read_only_sql.connectors.postgresql.python import PostgreSQLPythonConnector
+from mcp_read_only_sql.connectors.postgresql.cli import PostgreSQLCLIConnector
+from mcp_read_only_sql.connectors.clickhouse.python import ClickHousePythonConnector
+from mcp_read_only_sql.connectors.clickhouse.cli import ClickHouseCLIConnector
 from clickhouse_connect.driver.exceptions import ClickHouseError
-from src.utils.sql_guard import sanitize_read_only_sql, ReadOnlyQueryError
+from mcp_read_only_sql.utils.sql_guard import sanitize_read_only_sql, ReadOnlyQueryError
 
 from tests.sql_statement_lists import (
     CLICKHOUSE_DDL_STATEMENTS,

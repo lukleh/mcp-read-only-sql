@@ -5,7 +5,7 @@ Ensures the serializer never fails by converting unknown types to strings.
 """
 
 import json
-from src.utils.json_serializer import serialize_result, DatabaseJSONEncoder
+from mcp_read_only_sql.utils.json_serializer import serialize_result, DatabaseJSONEncoder
 
 
 class CustomClass:

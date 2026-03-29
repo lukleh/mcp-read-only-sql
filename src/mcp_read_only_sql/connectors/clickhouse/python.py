@@ -161,13 +161,13 @@ class ClickHousePythonConnector(BaseConnector):
                 interface = 'http'
                 if not is_ssh_tunnel:
                     port = 8123
-                    logger.debug(f"Switching from native port 9000 to HTTP port 8123")
+                    logger.debug("Switching from native port 9000 to HTTP port 8123")
             elif config_port == 9440:
                 # Secure native port - convert to HTTPS
                 interface = 'https'
                 if not is_ssh_tunnel:
                     port = 8443
-                    logger.debug(f"Switching from secure native port 9440 to HTTPS port 8443")
+                    logger.debug("Switching from secure native port 9440 to HTTPS port 8443")
             else:
                 # Unknown/custom port - assume HTTP
                 interface = 'http'

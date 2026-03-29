@@ -4,7 +4,7 @@ import pytest
 @pytest.mark.anyio
 async def test_clickhouse_python_falls_back_to_cli(monkeypatch):
     from tests.conftest import make_connection
-    from src.connectors.clickhouse.python import ClickHousePythonConnector
+    from mcp_read_only_sql.connectors.clickhouse.python import ClickHousePythonConnector
     from types import SimpleNamespace
 
     config = make_connection(
@@ -63,9 +63,9 @@ async def test_clickhouse_python_falls_back_to_cli(monkeypatch):
         def close(self):
             pass
 
-    monkeypatch.setattr("src.utils.ssh_tunnel.SSHTunnel", FakeSSHTunnel)
-    monkeypatch.setattr("src.connectors.clickhouse.python.CLISSHTunnel", FakeCLITunnel)
-    monkeypatch.setattr("src.connectors.clickhouse.python.clickhouse_connect.get_client", lambda **kw: FakeClient(**kw))
+    monkeypatch.setattr("mcp_read_only_sql.utils.ssh_tunnel.SSHTunnel", FakeSSHTunnel)
+    monkeypatch.setattr("mcp_read_only_sql.connectors.clickhouse.python.CLISSHTunnel", FakeCLITunnel)
+    monkeypatch.setattr("mcp_read_only_sql.connectors.clickhouse.python.clickhouse_connect.get_client", lambda **kw: FakeClient(**kw))
 
     result = await connector.execute_query("SELECT version()")
 

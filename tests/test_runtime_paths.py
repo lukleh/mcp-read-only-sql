@@ -1,4 +1,4 @@
-from src.runtime_paths import resolve_runtime_paths
+from mcp_read_only_sql.runtime_paths import resolve_runtime_paths
 
 
 def test_resolve_runtime_paths_env_overrides(monkeypatch, tmp_path):

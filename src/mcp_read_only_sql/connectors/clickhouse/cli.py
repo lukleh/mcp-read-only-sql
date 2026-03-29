@@ -30,10 +30,10 @@ class ClickHouseCLIConnector(BaseCLIConnector):
             remote_port = selected_server.port
             remote_host = selected_server.host
             if remote_port == 8123:
-                logger.debug(f"Changing SSH tunnel remote port from 8123 to 9000 for clickhouse-client")
+                logger.debug("Changing SSH tunnel remote port from 8123 to 9000 for clickhouse-client")
                 remote_port = 9000
             elif remote_port == 8443:
-                logger.debug(f"Changing SSH tunnel remote port from 8443 to 9440 for clickhouse-client")
+                logger.debug("Changing SSH tunnel remote port from 8443 to 9440 for clickhouse-client")
                 remote_port = 9440
 
             tunnel = CLISSHTunnel(self.ssh_config, remote_host, remote_port)
@@ -61,10 +61,10 @@ class ClickHouseCLIConnector(BaseCLIConnector):
 
                 # For direct connections, if port is HTTP (8123/8443), convert to native
                 if port == 8123:
-                    logger.debug(f"Changing port from 8123 to 9000 for clickhouse-client direct connection")
+                    logger.debug("Changing port from 8123 to 9000 for clickhouse-client direct connection")
                     port = 9000
                 elif port == 8443:
-                    logger.debug(f"Changing port from 8443 to 9440 for clickhouse-client direct connection")
+                    logger.debug("Changing port from 8443 to 9440 for clickhouse-client direct connection")
                     port = 9440
 
             # Use specified database or configured database (validated)
@@ -87,7 +87,7 @@ class ClickHouseCLIConnector(BaseCLIConnector):
             # Add --secure flag for TLS ports (9440)
             if port == 9440:
                 cmd.insert(1, "--secure")  # Insert after "clickhouse-client"
-                logger.debug(f"Adding --secure flag for TLS port 9440")
+                logger.debug("Adding --secure flag for TLS port 9440")
 
             # Add password if provided
             if self.password:

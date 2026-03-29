@@ -2,7 +2,7 @@ import os
 import tempfile
 import yaml
 
-from src.config.parser import ConfigParser
+from mcp_read_only_sql.config.parser import ConfigParser
 
 
 def test_load_empty_config():

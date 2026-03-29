@@ -6,7 +6,7 @@ Tests for Connection configuration classes
 import pytest
 import tempfile
 import os
-from src.config import Connection, Server, SSHTunnelConfig, load_connections
+from mcp_read_only_sql.config import Connection, Server, SSHTunnelConfig, load_connections
 
 
 class TestServer:
