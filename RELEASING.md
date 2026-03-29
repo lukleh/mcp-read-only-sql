@@ -21,10 +21,18 @@ This repo follows the same package and release model as the other published MCP 
 ## Current package status
 
 - PyPI package: published as `0.1.0`
+- Next planned release from current branch: `0.1.1`
 - Publish workflow: active on `main`
 - GitHub `pypi` environment: configured
 - Required reviewer: `lukleh`
 - Self-review: allowed
+
+## Changelog policy
+
+- Keep upcoming user-visible changes under `## [Unreleased]` in `CHANGELOG.md`.
+- On release, move those entries into a dated version section such as `## [0.1.1] - 2026-03-29`.
+- Prefer concise bullets grouped under `Added`, `Changed`, and `Fixed`.
+- When creating GitHub release notes, reuse the matching `CHANGELOG.md` section instead of writing a second summary from scratch.
 
 ## One-time setup
 
@@ -53,23 +61,25 @@ Current repo configuration:
 
 ## Release flow
 
-1. Confirm `version` in `pyproject.toml` on `main`.
-2. Push a matching tag:
+1. Update `CHANGELOG.md` for the release.
+2. Confirm `version` in `pyproject.toml` on `main`.
+3. Commit the release changes to `main`.
+4. Push a matching tag:
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag vX.Y.Z
+git push origin vX.Y.Z
 ```
 
-3. GitHub Actions starts the `Publish` workflow automatically.
-4. The workflow runs the full release gate before approval:
+5. GitHub Actions starts the `Publish` workflow automatically.
+6. The workflow runs the full release gate before approval:
    - test matrix
    - package build
    - wheel smoke tests
    - sdist smoke tests
-5. The final `publish` job pauses on the GitHub `pypi` environment.
-6. Approve the deployment.
-7. After approval, GitHub uploads the built package to PyPI.
+7. The final `publish` job pauses on the GitHub `pypi` environment.
+8. Approve the deployment.
+9. After approval, GitHub uploads the built package to PyPI.
 
 ## Prereleases
 
