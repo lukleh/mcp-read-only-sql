@@ -456,7 +456,7 @@ class DBeaverImporter:
         return [groups[key] for key in order]
 
 
-def main():
+def main() -> None:
     """Command-line entry point for importing DBeaver connections"""
     import sys
     import yaml
@@ -594,7 +594,7 @@ def main():
         if only_names and output_path.exists():
             # Merge into existing instead of replacing when importing a subset.
             try:
-                with open(output_path, "r") as f:
+                with open(output_path, "r", encoding="utf-8") as f:
                     existing_connections = yaml.safe_load(f) or []
             except Exception as e:
                 existing_connections = []
@@ -631,7 +631,7 @@ def main():
             )
             existing_yaml = None
             if output_path.exists():
-                with open(output_path, "r") as f:
+                with open(output_path, "r", encoding="utf-8") as f:
                     existing_yaml = f.read()
 
             if existing_yaml is not None and existing_yaml == new_yaml:
@@ -663,7 +663,7 @@ def main():
 
             if output_path.exists():
                 try:
-                    with open(output_path, "r") as f:
+                    with open(output_path, "r", encoding="utf-8") as f:
                         existing = yaml.safe_load(f) or []
                 except Exception as e:
                     existing = []

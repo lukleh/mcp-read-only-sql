@@ -14,7 +14,7 @@ class ConfigParser:
         if not self.config_path.exists():
             return []
 
-        with open(self.config_path, "r") as f:
+        with open(self.config_path, "r", encoding="utf-8") as f:
             config = yaml.safe_load(f) or []
 
         # Process each connection
@@ -81,7 +81,7 @@ class ConfigParser:
 
         return conn
 
-    def save_config(self, config: List[Dict[str, Any]]):
+    def save_config(self, config: List[Dict[str, Any]]) -> None:
         """Save configuration to YAML file."""
         clean_config = []
         for conn in config:
@@ -98,6 +98,6 @@ class ConfigParser:
             clean_config.append(clean_conn)
 
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.config_path, "w") as f:
+        with open(self.config_path, "w", encoding="utf-8") as f:
             yaml.dump(clean_config, f, default_flow_style=False, sort_keys=False)
         os.chmod(self.config_path, 0o600)

@@ -2,7 +2,7 @@
   "mcpServers": {
     "mcp-read-only-sql": {
       "command": "uvx",
-      "args": ["mcp-read-only-sql"],
+      "args": ["--from", ".", "mcp-read-only-sql"],
       "env": {}
     }
   }

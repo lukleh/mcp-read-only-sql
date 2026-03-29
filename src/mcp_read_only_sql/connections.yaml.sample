@@ -1,6 +1,6 @@
 # MCP Read-Only SQL Server - Connection Configuration Sample
 # This file demonstrates all connection variations and options.
-# `uvx mcp-read-only-sql --write-sample-config` writes it to
+# `uvx --from . mcp-read-only-sql --write-sample-config` writes it to
 # ~/.config/lukleh/mcp-read-only-sql/connections.yaml
 
 # ============================================================================

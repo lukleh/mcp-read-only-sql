@@ -65,20 +65,22 @@ sshpass -V
 
 ## Quick Start
 
-### 1. Install or Run the Package
+### 1. Install or Run from This Checkout
 
-For one-off runs, use `uvx`:
+For one-off runs from this checkout, use `uvx --from .`:
 
 ```bash
-uvx mcp-read-only-sql --write-sample-config
+uvx --from . mcp-read-only-sql --write-sample-config
 ```
 
-For a persistent local install:
+For a persistent local install from this checkout:
 
 ```bash
-uv tool install mcp-read-only-sql
+uv tool install .
 mcp-read-only-sql --write-sample-config
 ```
+
+After the package is published to PyPI, you can replace `.` with `mcp-read-only-sql`.
 
 That creates:
 
@@ -117,7 +119,7 @@ Use CLI mode when you want the behavior of `psql` or `clickhouse-client`, or whe
 You can edit the generated sample directly, or import a DBeaver workspace:
 
 ```bash
-uvx --from mcp-read-only-sql mcp-read-only-sql-import-dbeaver \
+uvx --from . mcp-read-only-sql-import-dbeaver \
   ~/Library/DBeaverData/workspace6/General/.dbeaver
 ```
 
@@ -147,10 +149,10 @@ If you only set `db`, that single database is implicitly the allowlist.
 The package includes helper commands for connection validation and dry-run testing:
 
 ```bash
-uvx --from mcp-read-only-sql mcp-read-only-sql-validate-config
-uvx --from mcp-read-only-sql mcp-read-only-sql-test-connection
-uvx --from mcp-read-only-sql mcp-read-only-sql-test-connection my_postgres
-uvx mcp-read-only-sql --print-paths
+uvx --from . mcp-read-only-sql-validate-config
+uvx --from . mcp-read-only-sql-test-connection
+uvx --from . mcp-read-only-sql-test-connection my_postgres
+uvx --from . mcp-read-only-sql --print-paths
 ```
 
 If you are working from a clone, the same helpers are available through `just`:
@@ -167,19 +169,19 @@ just print-paths
 For Claude Code:
 
 ```bash
-claude mcp add mcp-read-only-sql -- uvx mcp-read-only-sql
+claude mcp add mcp-read-only-sql -- uvx --from . mcp-read-only-sql
 ```
 
 For Codex:
 
 ```bash
-codex mcp add mcp-read-only-sql -- uvx mcp-read-only-sql
+codex mcp add mcp-read-only-sql -- uvx --from . mcp-read-only-sql
 ```
 
 For manual testing with a different config root:
 
 ```bash
-uvx mcp-read-only-sql --config-dir /path/to/config-dir --print-paths
+uvx --from . mcp-read-only-sql --config-dir /path/to/config-dir --print-paths
 ```
 
 ## MCP Tools

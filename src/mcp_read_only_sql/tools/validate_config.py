@@ -93,7 +93,7 @@ def validate_config(
     print("-" * 50)
 
     try:
-        with open(config_path) as raw_file:
+        with open(config_path, encoding="utf-8") as raw_file:
             raw_configs = yaml.safe_load(raw_file) or []
 
         if not isinstance(raw_configs, list):
@@ -309,8 +309,7 @@ def validate_config(
             print()
 
         if has_errors:
-            if has_errors:
-                print("❌ Configuration has errors")
+            print("❌ Configuration has errors")
             return False
         else:
             print("✅ Configuration is valid")
@@ -324,7 +323,7 @@ def validate_config(
         return False
 
 
-def main():
+def main() -> None:
     """Main entry point"""
     import argparse
 
