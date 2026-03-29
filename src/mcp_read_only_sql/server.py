@@ -9,12 +9,12 @@ from importlib.resources import files
 import logging
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 from mcp.server.fastmcp import FastMCP
 
 from . import __version__
-from .config import load_connections
+from .config import dbeaver_import, load_connections
 from .config.connection import (
     DEFAULT_CONNECTION_TIMEOUT,
     DEFAULT_MAX_RESULT_BYTES,
@@ -26,12 +26,19 @@ from .connectors.clickhouse.python import ClickHousePythonConnector
 from .connectors.postgresql.cli import PostgreSQLCLIConnector
 from .connectors.postgresql.python import PostgreSQLPythonConnector
 from .runtime_paths import resolve_runtime_paths, RuntimePaths
+from .tools import test_connection, test_ssh_tunnel, validate_config
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 SAMPLE_CONNECTIONS_YAML = files("mcp_read_only_sql").joinpath(
     "connections.yaml.sample"
 ).read_text(encoding="utf-8")
+SUBCOMMAND_HANDLERS: dict[str, Callable[[], None]] = {
+    "import-dbeaver": dbeaver_import.main,
+    "validate-config": validate_config.main,
+    "test-connection": test_connection.main,
+    "test-ssh-tunnel": test_ssh_tunnel.main,
+}
 
 
 def _display_hosts_for_connector(connector: BaseConnector) -> List[str]:
@@ -289,12 +296,62 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Replace connections.yaml when used with --write-sample-config",
     )
+    parser.add_argument(
+        "command",
+        nargs="?",
+        choices=sorted(SUBCOMMAND_HANDLERS),
+        help="Optional management command to run instead of starting the MCP server",
+    )
+    parser.add_argument(
+        "command_args",
+        nargs=argparse.REMAINDER,
+        help=argparse.SUPPRESS,
+    )
     return parser
+
+
+def _forward_shared_runtime_args(args: argparse.Namespace) -> list[str]:
+    forwarded: list[str] = []
+    if args.config_dir:
+        forwarded.extend(["--config-dir", args.config_dir])
+    if args.state_dir:
+        forwarded.extend(["--state-dir", args.state_dir])
+    if args.cache_dir:
+        forwarded.extend(["--cache-dir", args.cache_dir])
+    if args.print_paths:
+        forwarded.append("--print-paths")
+    return forwarded
+
+
+def _dispatch_subcommand(args: argparse.Namespace) -> None:
+    """Execute a management subcommand through the public root CLI."""
+    forwarded_args = _forward_shared_runtime_args(args)
+    command_argv = [
+        f"mcp-read-only-sql {args.command}",
+        *forwarded_args,
+        *args.command_args,
+    ]
+
+    original_argv = sys.argv
+    try:
+        sys.argv = command_argv
+        SUBCOMMAND_HANDLERS[args.command]()
+    finally:
+        sys.argv = original_argv
 
 
 def main() -> None:
     parser = build_arg_parser()
     args = parser.parse_args()
+
+    if args.command and (args.write_sample_config or args.overwrite):
+        parser.error(
+            "--write-sample-config and --overwrite can only be used without a subcommand"
+        )
+
+    if args.command:
+        _dispatch_subcommand(args)
+        return
 
     if args.overwrite and not args.write_sample_config:
         parser.error("--overwrite can only be used with --write-sample-config")

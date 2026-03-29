@@ -33,11 +33,11 @@ import-dbeaver path="$HOME/Library/DBeaverData/workspace6/General/.dbeaver" only
     if [ -n "{{output}}" ]; then
         args+=(--output "{{output}}")
     fi
-    uv run mcp-read-only-sql-import-dbeaver "{{path}}" "${args[@]}"
+    uv run mcp-read-only-sql import-dbeaver "{{path}}" "${args[@]}"
 
 # Validate configuration file
 validate:
-    uv run mcp-read-only-sql-validate-config
+    uv run mcp-read-only-sql validate-config
 
 # Show resolved paths
 print-paths:
@@ -51,18 +51,18 @@ write-sample-config:
 test-connection connection="":
     #!/usr/bin/env bash
     if [ -z "{{connection}}" ]; then
-        uv run mcp-read-only-sql-test-connection
+        uv run mcp-read-only-sql test-connection
     else
-        uv run mcp-read-only-sql-test-connection {{connection}}
+        uv run mcp-read-only-sql test-connection {{connection}}
     fi
 
 # Test SSH tunnel(s) connectivity only
 test-ssh-tunnel connection="":
     #!/usr/bin/env bash
     if [ -z "{{connection}}" ]; then
-        uv run mcp-read-only-sql-test-ssh-tunnel
+        uv run mcp-read-only-sql test-ssh-tunnel
     else
-        uv run mcp-read-only-sql-test-ssh-tunnel {{connection}}
+        uv run mcp-read-only-sql test-ssh-tunnel {{connection}}
     fi
 
 # Run tests with Docker isolation

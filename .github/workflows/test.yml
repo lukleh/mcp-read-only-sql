@@ -116,22 +116,22 @@ jobs:
           --state-dir "$tmp_dir/state" \
           --cache-dir "$tmp_dir/cache" \
           --print-paths
-        uvx --from dist/*.whl mcp-read-only-sql-import-dbeaver \
+        uvx --from dist/*.whl mcp-read-only-sql import-dbeaver \
           --config-dir "$tmp_dir/config" \
           --state-dir "$tmp_dir/state" \
           --cache-dir "$tmp_dir/cache" \
           --print-paths
-        uvx --from dist/*.whl mcp-read-only-sql-validate-config \
+        uvx --from dist/*.whl mcp-read-only-sql validate-config \
           --config-dir "$tmp_dir/config" \
           --state-dir "$tmp_dir/state" \
           --cache-dir "$tmp_dir/cache" \
           --print-paths
-        uvx --from dist/*.whl mcp-read-only-sql-test-connection \
+        uvx --from dist/*.whl mcp-read-only-sql test-connection \
           --config-dir "$tmp_dir/config" \
           --state-dir "$tmp_dir/state" \
           --cache-dir "$tmp_dir/cache" \
           --print-paths
-        uvx --from dist/*.whl mcp-read-only-sql-test-ssh-tunnel \
+        uvx --from dist/*.whl mcp-read-only-sql test-ssh-tunnel \
           --config-dir "$tmp_dir/config" \
           --state-dir "$tmp_dir/state" \
           --cache-dir "$tmp_dir/cache" \
@@ -152,22 +152,22 @@ jobs:
           --state-dir "$tmp_dir/state" \
           --cache-dir "$tmp_dir/cache" \
           --print-paths
-        uvx --from dist/*.tar.gz mcp-read-only-sql-import-dbeaver \
+        uvx --from dist/*.tar.gz mcp-read-only-sql import-dbeaver \
           --config-dir "$tmp_dir/config" \
           --state-dir "$tmp_dir/state" \
           --cache-dir "$tmp_dir/cache" \
           --print-paths
-        uvx --from dist/*.tar.gz mcp-read-only-sql-validate-config \
+        uvx --from dist/*.tar.gz mcp-read-only-sql validate-config \
           --config-dir "$tmp_dir/config" \
           --state-dir "$tmp_dir/state" \
           --cache-dir "$tmp_dir/cache" \
           --print-paths
-        uvx --from dist/*.tar.gz mcp-read-only-sql-test-connection \
+        uvx --from dist/*.tar.gz mcp-read-only-sql test-connection \
           --config-dir "$tmp_dir/config" \
           --state-dir "$tmp_dir/state" \
           --cache-dir "$tmp_dir/cache" \
           --print-paths
-        uvx --from dist/*.tar.gz mcp-read-only-sql-test-ssh-tunnel \
+        uvx --from dist/*.tar.gz mcp-read-only-sql test-ssh-tunnel \
           --config-dir "$tmp_dir/config" \
           --state-dir "$tmp_dir/state" \
           --cache-dir "$tmp_dir/cache" \

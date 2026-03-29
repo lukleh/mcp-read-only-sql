@@ -158,3 +158,68 @@ def test_main_rejects_overwrite_without_write_sample_config(monkeypatch):
 
     with pytest.raises(SystemExit):
         server.main()
+
+
+def test_main_dispatches_validate_config_subcommand_with_runtime_flags(
+    monkeypatch, tmp_path, capsys
+):
+    """Subcommands should run through the root CLI and honor shared runtime paths."""
+    import sys
+
+    from mcp_read_only_sql import server
+
+    config_dir = tmp_path / "config"
+    state_dir = tmp_path / "state"
+    cache_dir = tmp_path / "cache"
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "mcp-read-only-sql",
+            "--config-dir",
+            str(config_dir),
+            "--state-dir",
+            str(state_dir),
+            "--cache-dir",
+            str(cache_dir),
+            "validate-config",
+            "--print-paths",
+        ],
+    )
+    monkeypatch.setattr(
+        server.ReadOnlySQLServer,
+        "__init__",
+        lambda *args, **kwargs: pytest.fail(
+            "ReadOnlySQLServer should not be constructed for management subcommands"
+        ),
+    )
+
+    server.main()
+
+    output = capsys.readouterr().out
+
+    assert f"config_dir={config_dir}" in output
+    assert f"state_dir={state_dir}" in output
+    assert f"cache_dir={cache_dir}" in output
+    assert f"connections_file={config_dir / 'connections.yaml'}" in output
+
+
+def test_main_rejects_bootstrap_flags_with_subcommands(monkeypatch):
+    """Root bootstrap flags should not be combined with management subcommands."""
+    import sys
+
+    from mcp_read_only_sql import server
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "mcp-read-only-sql",
+            "--write-sample-config",
+            "validate-config",
+        ],
+    )
+
+    with pytest.raises(SystemExit):
+        server.main()

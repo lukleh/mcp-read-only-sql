@@ -7,7 +7,7 @@
 - `uv sync --extra dev` — install runtime and development dependencies.
 - `uv run mcp-read-only-sql` or `just run` — start the MCP server with the resolved runtime config directory.
 - `uv run mcp-read-only-sql --write-sample-config` or `just write-sample-config` — bootstrap `connections.yaml` without cloning-path assumptions.
-- `uv run mcp-read-only-sql-import-dbeaver ...` or `just import-dbeaver` — convert a DBeaver workspace into `connections.yaml`.
+- `uv run mcp-read-only-sql import-dbeaver ...` or `just import-dbeaver` — convert a DBeaver workspace into `connections.yaml`.
 - `just validate` — lint `connections.yaml` against the schema and safety checks.
 - `just test` — spin up Dockerized fixtures and execute the full pytest suite via `./run_tests.sh`.
 - `uv run python -m pytest tests/test_sql_guard.py` — run an individual module when iterating quickly.

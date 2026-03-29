@@ -47,10 +47,6 @@ build-backend = "hatchling.build"
 
 [project.scripts]
 mcp-read-only-sql = "mcp_read_only_sql.server:main"
-mcp-read-only-sql-import-dbeaver = "mcp_read_only_sql.config.dbeaver_import:main"
-mcp-read-only-sql-validate-config = "mcp_read_only_sql.tools.validate_config:main"
-mcp-read-only-sql-test-connection = "mcp_read_only_sql.tools.test_connection:main"
-mcp-read-only-sql-test-ssh-tunnel = "mcp_read_only_sql.tools.test_ssh_tunnel:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/mcp_read_only_sql"]

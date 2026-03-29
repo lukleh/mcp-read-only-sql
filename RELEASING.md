@@ -80,4 +80,4 @@ The same workflow and approval gate handle prereleases.
   - PostgreSQL CLI mode needs `psql`
   - ClickHouse CLI mode needs `clickhouse-client`
   - CLI SSH password auth needs `sshpass`
-- Package smoke tests should cover both the main server entry point and the DBeaver import helper entry point.
+- Package smoke tests should cover the main server entry point and the management subcommands.

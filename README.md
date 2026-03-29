@@ -119,7 +119,7 @@ Use CLI mode when you want the behavior of `psql` or `clickhouse-client`, or whe
 You can edit the generated sample directly, or import a DBeaver workspace:
 
 ```bash
-uvx --from . mcp-read-only-sql-import-dbeaver \
+uvx --from . mcp-read-only-sql import-dbeaver \
   ~/Library/DBeaverData/workspace6/General/.dbeaver
 ```
 
@@ -146,12 +146,13 @@ If you only set `db`, that single database is implicitly the allowlist.
 
 ### 4. Validate and Test Connections
 
-The package includes helper commands for connection validation and dry-run testing:
+The package includes management subcommands for connection validation and dry-run testing:
 
 ```bash
-uvx --from . mcp-read-only-sql-validate-config
-uvx --from . mcp-read-only-sql-test-connection
-uvx --from . mcp-read-only-sql-test-connection my_postgres
+uvx --from . mcp-read-only-sql validate-config
+uvx --from . mcp-read-only-sql test-connection
+uvx --from . mcp-read-only-sql test-connection my_postgres
+uvx --from . mcp-read-only-sql test-ssh-tunnel
 uvx --from . mcp-read-only-sql --print-paths
 ```
 
