@@ -7,6 +7,15 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Root `CHANGELOG.md` using the Keep a Changelog format and seeded package history.
+
+### Changed
+
+- `project.urls.Changelog` now points to the in-repo changelog instead of the generic GitHub releases page.
+- The release flow now treats changelog maintenance as a required step and reuses changelog sections for GitHub release notes.
+
 ## [0.1.0] - 2026-03-29
 
 ### Added

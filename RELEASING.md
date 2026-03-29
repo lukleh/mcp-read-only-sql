@@ -21,6 +21,7 @@ This repo follows the same package and release model as the other published MCP 
 ## Current package status
 
 - PyPI package: published as `0.1.0`
+- Next planned release from current branch: `0.1.1`
 - Publish workflow: active on `main`
 - GitHub `pypi` environment: configured
 - Required reviewer: `lukleh`
