@@ -9,7 +9,6 @@ DEFAULT_IMPLEMENTATION = "cli"
 DEFAULT_SSH_PORT = 22
 DEFAULT_QUERY_TIMEOUT = 120
 DEFAULT_CONNECTION_TIMEOUT = 10
-DEFAULT_MAX_RESULT_BYTES = 10_000_000
 
 
 def _normalize_positive_timeout(value: Any, field_name: str) -> float:
@@ -18,15 +17,6 @@ def _normalize_positive_timeout(value: Any, field_name: str) -> float:
         raise ValueError(f"Field '{field_name}' must be a positive number")
     if value <= 0:
         raise ValueError(f"Field '{field_name}' must be a positive number")
-    return value
-
-
-def _normalize_positive_int(value: Any, field_name: str) -> int:
-    """Validate positive integer settings used at runtime."""
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise ValueError(f"Field '{field_name}' must be a positive integer")
-    if value <= 0:
-        raise ValueError(f"Field '{field_name}' must be a positive integer")
     return value
 
 
@@ -221,6 +211,10 @@ class Connection:
             raise ValueError(
                 "Field 'password_env' is no longer supported; put the database password in 'password'"
             )
+        if "max_result_bytes" in config:
+            raise ValueError(
+                "Field 'max_result_bytes' is no longer supported; successful query results are now written to managed files"
+            )
 
         password = config.get("password", "")
 
@@ -302,10 +296,6 @@ class Connection:
             config.get("connection_timeout", DEFAULT_CONNECTION_TIMEOUT),
             "connection_timeout",
         )
-        self._max_result_bytes = _normalize_positive_int(
-            config.get("max_result_bytes", DEFAULT_MAX_RESULT_BYTES),
-            "max_result_bytes",
-        )
         self._description = config.get("description", "")
 
     @property
@@ -377,11 +367,6 @@ class Connection:
     def connection_timeout(self) -> float:
         """Connection timeout in seconds"""
         return self._connection_timeout
-
-    @property
-    def max_result_bytes(self) -> Optional[int]:
-        """Maximum result size in bytes (None for unlimited)"""
-        return self._max_result_bytes
 
     @property
     def description(self) -> str:

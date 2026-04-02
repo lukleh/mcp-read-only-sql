@@ -4,10 +4,17 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-
 ORG_NAMESPACE = "lukleh"
 APP_NAME = "mcp-read-only-sql"
 ENV_PREFIX = "MCP_READ_ONLY_SQL"
+PRIVATE_DIR_MODE = 0o700
+PRIVATE_FILE_MODE = 0o600
+
+
+def _ensure_directory(path: Path, mode: int = PRIVATE_DIR_MODE) -> None:
+    """Create a runtime directory and enforce restrictive permissions."""
+    path.mkdir(parents=True, exist_ok=True)
+    path.chmod(mode)
 
 
 @dataclass(frozen=True)
@@ -20,10 +27,15 @@ class RuntimePaths:
     def connections_file(self) -> Path:
         return self.config_dir / "connections.yaml"
 
+    @property
+    def results_dir(self) -> Path:
+        return self.state_dir / "results"
+
     def ensure_directories(self) -> None:
-        self.config_dir.mkdir(parents=True, exist_ok=True)
-        self.state_dir.mkdir(parents=True, exist_ok=True)
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        _ensure_directory(self.config_dir)
+        _ensure_directory(self.state_dir)
+        _ensure_directory(self.cache_dir)
+        _ensure_directory(self.results_dir)
 
     def render(self) -> str:
         return "\n".join(
@@ -31,6 +43,7 @@ class RuntimePaths:
                 f"config_dir={self.config_dir}",
                 f"state_dir={self.state_dir}",
                 f"cache_dir={self.cache_dir}",
+                f"results_dir={self.results_dir}",
                 f"connections_file={self.connections_file}",
             ]
         )

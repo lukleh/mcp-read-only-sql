@@ -1,8 +1,7 @@
 from abc import ABC, abstractmethod
-from typing import Any, List, Optional
-import sys
-import contextvars
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import List, Optional
 
 from ..config import Connection, Server
 from ..utils.ssh_tunnel import SSHTunnel
@@ -11,11 +10,7 @@ from ..utils.timeout_wrapper import with_hard_timeout
 
 class ConnectionTimeoutError(Exception):
     """Raised when a connection or query times out"""
-    pass
 
-
-class DataSizeLimitError(Exception):
-    """Raised when returned data exceeds size limit"""
     pass
 
 
@@ -50,10 +45,9 @@ class BaseConnector(ABC):
         else:
             self.ssh_timeout = self.DEFAULT_SSH_TIMEOUT
         # Hard timeout is the sum of all component timeouts
-        self.hard_timeout = self.ssh_timeout + self.connection_timeout + self.query_timeout
-        self.max_result_bytes = connection.max_result_bytes
-        # Context-local flag to optionally disable result-size enforcement
-        self._enforce_limit_var = contextvars.ContextVar("enforce_limit", default=True)
+        self.hard_timeout = (
+            self.ssh_timeout + self.connection_timeout + self.query_timeout
+        )
 
     @asynccontextmanager
     async def _get_ssh_tunnel(self, server: Optional[str] = None):
@@ -68,7 +62,9 @@ class BaseConnector(ABC):
             selected_server = self._select_server(server)
 
             # Pass SSHTunnelConfig and remote server info to tunnel
-            tunnel = SSHTunnel(self.ssh_config, selected_server.host, selected_server.port)
+            tunnel = SSHTunnel(
+                self.ssh_config, selected_server.host, selected_server.port
+            )
             local_port = await tunnel.start()
             try:
                 yield local_port
@@ -110,7 +106,7 @@ class BaseConnector(ABC):
             if srv.host == requested_host:
                 return srv
 
-        if ':' in server_str:
+        if ":" in server_str:
             raise ValueError(
                 f"Server specification '{server_str}' must be a hostname without port"
             )
@@ -147,48 +143,9 @@ class BaseConnector(ABC):
         """Resolve and validate database selection for this connection."""
         return self.connection.resolve_database(database)
 
-
-    def _check_result_size(self, data: Any) -> int:
-        """Check if result data size is within limits"""
-        # Estimate size of the result
-        size = sys.getsizeof(data)
-
-        if isinstance(data, dict):
-            for key, value in data.items():
-                size += sys.getsizeof(key)
-                if isinstance(value, (list, dict)):
-                    size += self._check_result_size(value)
-                else:
-                    size += sys.getsizeof(value)
-        elif isinstance(data, list):
-            for item in data:
-                if isinstance(item, (list, dict)):
-                    size += self._check_result_size(item)
-                else:
-                    size += sys.getsizeof(item)
-
-        if size > self.max_result_bytes:
-            raise DataSizeLimitError(
-                f"Result size ({size:,} bytes) exceeds maximum allowed "
-                f"({self.max_result_bytes:,} bytes)"
-            )
-
-        return size
-
-    def _effective_max_result_bytes(self) -> int:
-        """Return the per-call effective max_result_bytes (0 when disabled)."""
-        return self.max_result_bytes if self._enforce_limit_var.get() else 0
-
-    @contextmanager
-    def disable_result_limit(self):
-        """Temporarily disable result-size enforcement for this task."""
-        token = self._enforce_limit_var.set(False)
-        try:
-            yield
-        finally:
-            self._enforce_limit_var.reset(token)
-
-    async def execute_query_with_timeout(self, query: str, database: Optional[str] = None, server: Optional[str] = None) -> str:
+    async def execute_query_with_timeout(
+        self, query: str, database: Optional[str] = None, server: Optional[str] = None
+    ) -> str:
         """
         Execute a query with hard timeout protection.
 
@@ -206,12 +163,36 @@ class BaseConnector(ABC):
         result = await with_hard_timeout(
             self.execute_query(query, database, server),
             self.hard_timeout,
-            f"execute_query({query[:50]}...)"
+            f"execute_query({query[:50]}...)",
         )
         return result
 
+    async def execute_query_to_file_with_timeout(
+        self,
+        query: str,
+        output_path: Path,
+        database: Optional[str] = None,
+        server: Optional[str] = None,
+    ) -> None:
+        """
+        Execute a query and stream TSV output to an existing managed file.
+
+        Args:
+            query: SQL query to execute
+            output_path: Existing output path prepared by the server
+            database: Optional database to use (overrides configured database)
+            server: Optional server hostname
+        """
+        await with_hard_timeout(
+            self.execute_query_to_file(query, output_path, database, server),
+            self.hard_timeout,
+            f"execute_query_to_file({query[:50]}...)",
+        )
+
     @abstractmethod
-    async def execute_query(self, query: str, database: Optional[str] = None, server: Optional[str] = None) -> str:
+    async def execute_query(
+        self, query: str, database: Optional[str] = None, server: Optional[str] = None
+    ) -> str:
         """
         Execute a read-only query and return TSV results (implementation-specific)
 
@@ -221,6 +202,21 @@ class BaseConnector(ABC):
             server: Optional server hostname
         """
         pass
+
+    async def execute_query_to_file(
+        self,
+        query: str,
+        output_path: Path,
+        database: Optional[str] = None,
+        server: Optional[str] = None,
+    ) -> None:
+        """
+        Execute a read-only query and write TSV results to an existing file.
+
+        Subclasses should override this to stream results directly when possible.
+        """
+        result = await self.execute_query(query, database, server)
+        output_path.write_text(result, encoding="utf-8")
 
     async def test_connection(self) -> bool:
         """Test if connection is working"""

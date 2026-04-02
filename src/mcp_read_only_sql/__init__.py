@@ -2,7 +2,6 @@
 
 from importlib.metadata import PackageNotFoundError, version
 
-
 try:
     __version__ = version("mcp-read-only-sql")
 except PackageNotFoundError:

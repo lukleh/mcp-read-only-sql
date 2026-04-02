@@ -29,9 +29,7 @@ class TestMCPProtocol:
     async def test_invalid_connection(self, integration_client):
         """Test handling of invalid connection names"""
         result = await execute_query(
-            integration_client,
-            "non_existent_connection",
-            "SELECT 1"
+            integration_client, "non_existent_connection", "SELECT 1"
         )
 
         assert not result.get("success", False)
@@ -41,9 +39,7 @@ class TestMCPProtocol:
     async def test_invalid_sql(self, integration_client):
         """Test handling of malformed SQL queries"""
         result = await execute_query(
-            integration_client,
-            "test_postgres_python",
-            "INVALID SQL QUERY"
+            integration_client, "test_postgres_python", "INVALID SQL QUERY"
         )
 
         assert not result.get("success", False)
@@ -52,10 +48,7 @@ class TestMCPProtocol:
 
     async def test_list_tools(self, integration_client):
         """Test that MCP tools are properly exposed"""
-        tools_response = await integration_client.call_tool(
-            "list-tools",
-            {}
-        )
+        tools_response = await integration_client.call_tool("list-tools", {})
 
         # Should have at least list_connections and execute_query tools
         assert tools_response is not None

@@ -23,12 +23,11 @@ This test suite is organized by functionality to clearly test the core security 
   - Blocks INSERT, UPDATE, DELETE, DROP, CREATE, ALTER, TRUNCATE
   - Tests both CLI and Python implementations
 
-### Layer 3: Resource Limits
-- **test_security_timeout.py** - Tests query timeout enforcement
+### Layer 3: Timeout and Managed Result Files
+- **test_limits.py** - Tests timeout enforcement and hard timeout behavior
   - Ensures long-running queries are terminated
-
-- **test_security_size_limits.py** - Tests result size limit enforcement
-  - Ensures large results are truncated or blocked
+- **test_run_query_file_output.py** - Tests managed result-file creation
+  - Ensures query results are written under the managed state directory with `0600` permissions
 
 ### Integration
 - **test_security_layers.py** - Tests all three security layers working together

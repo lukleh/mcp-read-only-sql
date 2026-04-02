@@ -63,7 +63,9 @@ async def test_postgres_cli_retries_without_pgoptions(monkeypatch):
     async def fake_create_subprocess_exec(*cmd, stdout=None, stderr=None, env=None):
         call_log.append(env.copy())
         if len(call_log) == 1:
-            raise RuntimeError("psql: unsupported startup parameter in options: default_transaction_read_only")
+            raise RuntimeError(
+                "psql: unsupported startup parameter in options: default_transaction_read_only"
+            )
         return DummyProcess(["column", "value"], returncode=0)
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
@@ -74,4 +76,3 @@ async def test_postgres_cli_retries_without_pgoptions(monkeypatch):
     assert len(call_log) == 2
     assert call_log[0]["PGOPTIONS"].startswith("-c default_transaction_read_only")
     assert "PGOPTIONS" not in call_log[1]
-

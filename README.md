@@ -8,6 +8,7 @@ A secure MCP (Model Context Protocol) server that provides **read-only** SQL acc
 > - Config: `~/.config/lukleh/mcp-read-only-sql/connections.yaml`
 > - Credentials: stored in `connections.yaml`
 > - State: `~/.local/state/lukleh/mcp-read-only-sql/`
+> - Query results: `~/.local/state/lukleh/mcp-read-only-sql/results/`
 > - Cache: `~/.cache/lukleh/mcp-read-only-sql/`
 
 ## Security
@@ -15,8 +16,8 @@ A secure MCP (Model Context Protocol) server that provides **read-only** SQL acc
 The server implements a **three-layer security model**:
 
 1. **Database-level read-only** - Sessions forced to read-only mode
-2. **Timeout protection** - Connection timeout (5s), query timeout (10s) - configurable per connection
-3. **Result size limits** - Default 5KB, prevents memory exhaustion
+2. **Timeout protection** - Connection and query timeouts are configurable per connection
+3. **Managed result files** - Successful query results are written to `state_dir/results` with `0600` permissions
 
 All write operations (INSERT, UPDATE, DELETE, etc.) are blocked at the database level.
 
@@ -27,7 +28,7 @@ All write operations (INSERT, UPDATE, DELETE, etc.) are blocked at the database 
 - **ClickHouse (Python)** – The driver sets `readonly=1` plus connection/query timeouts, forcing the server to reject any write or DDL attempt.
 - **ClickHouse (CLI)** – `clickhouse-client` is invoked with `--readonly=1`, `--max_execution_time`, and connection timeouts, turning the session into a read-only context.
 
-The shared connector base also applies hard timeouts and result-size ceilings, giving the MCP server deterministic behaviour even if the database misbehaves.
+The shared connector base also applies hard timeouts, giving the MCP server deterministic behaviour even if the database misbehaves.
 
 See [READ_ONLY_ENFORCEMENT_MATRIX.md](READ_ONLY_ENFORCEMENT_MATRIX.md) for a statement-by-statement view of every write-capable command and the tests that enforce it.
 
@@ -37,7 +38,7 @@ See [READ_ONLY_ENFORCEMENT_MATRIX.md](READ_ONLY_ENFORCEMENT_MATRIX.md) for a sta
 - **Multi-database support** - PostgreSQL and ClickHouse
 - **Dual implementations** - Choose between Python (pure Python, no dependencies) or CLI (uses `psql`/`clickhouse-client`)
 - **SSH tunnel support** - Both implementations support key authentication; Python uses Paramiko for passwords and CLI uses `sshpass` for password-based tunnels
-- **Security built-in** - Timeouts, size limits, session controls
+- **Security built-in** - Timeouts, managed result files, session controls
 - **DBeaver import** - Import existing connections easily
 
 ## Prerequisites
@@ -65,7 +66,25 @@ sshpass -V
 
 ## Quick Start
 
-### 1. Install or Run from This Checkout
+### 1. Install or Run the Server
+
+For the published package, prefer `@latest` with `uvx`:
+
+```bash
+uvx mcp-read-only-sql@latest --write-sample-config
+```
+
+Or install it once and reuse the command directly:
+
+```bash
+uv tool install mcp-read-only-sql
+mcp-read-only-sql --write-sample-config
+```
+
+When using `uvx` with the published package, prefer
+`mcp-read-only-sql@latest` in user-facing docs and MCP client configs. This
+avoids reusing a stale cached tool environment after a new release is
+published.
 
 For one-off runs from this checkout, use `uvx --from .`:
 
@@ -80,12 +99,14 @@ uv tool install .
 mcp-read-only-sql --write-sample-config
 ```
 
-After the package is published to PyPI, you can replace `.` with `mcp-read-only-sql`.
+For checkout-based commands below, you can replace `uvx --from . mcp-read-only-sql`
+with `uvx mcp-read-only-sql@latest` once you want to use the published package instead.
 
 That creates:
 
 - `~/.config/lukleh/mcp-read-only-sql/connections.yaml`
 - `~/.local/state/lukleh/mcp-read-only-sql/`
+- `~/.local/state/lukleh/mcp-read-only-sql/results/`
 - `~/.cache/lukleh/mcp-read-only-sql/`
 
 ### 2. Choose an Implementation Per Connection
@@ -170,19 +191,19 @@ just print-paths
 For Claude Code:
 
 ```bash
-claude mcp add mcp-read-only-sql -- uvx --from . mcp-read-only-sql
+claude mcp add mcp-read-only-sql -- uvx mcp-read-only-sql@latest
 ```
 
 For Codex:
 
 ```bash
-codex mcp add mcp-read-only-sql -- uvx --from . mcp-read-only-sql
+codex mcp add mcp-read-only-sql -- uvx mcp-read-only-sql@latest
 ```
 
 For manual testing with a different config root:
 
 ```bash
-uvx --from . mcp-read-only-sql --config-dir /path/to/config-dir --print-paths
+uvx mcp-read-only-sql@latest --config-dir /path/to/config-dir --print-paths
 ```
 
 ## MCP Tools
@@ -195,8 +216,7 @@ Execute read-only SQL queries on configured databases.
   "connection_name": "my_postgres",
   "query": "SELECT * FROM users LIMIT 10",
   "database": "analytics",
-  "server": "db2.example.com",
-  "file_path": "~/Downloads/query.tsv"
+  "server": "db2.example.com"
 }
 ```
 
@@ -205,12 +225,15 @@ Execute read-only SQL queries on configured databases.
 - `query` (required): SQL text that must remain read-only
 - `database` (optional): Database to use (must be listed in the connection's allowlist).
 - `server` (optional): Hostname to target a specific server. If not provided, uses the first server in the connection's list.
-- `file_path` (optional): When provided, results are written to this path (parents created if needed) and the tool returns the absolute path string instead of TSV content. The file must not already exist; if it does, the tool returns an error instead of overwriting. The result-size limit is skipped when saving to a file so the full output is streamed to disk.
 
-**Returns:** Tab-separated text (TSV) with a header row followed by data rows.
-The structured MCP payload mirrors the same TSV string. If results exceed
-`max_result_bytes`, a trailing notice indicates truncation. When `file_path`
-is supplied, the returned value is the absolute path of the written file, the tool refuses to overwrite existing files, and result-size truncation is not applied (full result is written).
+**Returns:** Absolute path to a TSV file created under the server's managed
+state directory, typically `~/.local/state/lukleh/mcp-read-only-sql/results/`.
+Successful query results are persisted with `0600` permissions and are no
+longer returned inline on success.
+
+Result files accumulate under `state_dir/results/` until you remove them.
+If you do not want to retain old query output, periodically clean
+`~/.local/state/lukleh/mcp-read-only-sql/results/`.
 
 ### `list_connections`
 List all available database connections.

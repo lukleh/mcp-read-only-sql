@@ -84,10 +84,10 @@ class TestServerBasics:
         )
 
         run_query_desc = run_query_tool.description.lower()
-        assert "tab-separated" in run_query_desc
+        assert "path" in run_query_desc
         assert "database" in run_query_desc
         assert "server" in run_query_desc
-        assert "file_path" in run_query_desc
+        assert "state" in run_query_desc or "file" in run_query_desc
 
         list_connections_desc = list_connections_tool.description.lower()
         assert "tab-separated" in list_connections_desc
@@ -262,7 +262,6 @@ class TestSecurityLimits:
   password: pass
   query_timeout: 10
   connection_timeout: 5
-  max_result_bytes: 5242880
 """
         config_file = tmp_path / "connections.yaml"
         config_file.write_text(config_content)

@@ -226,7 +226,7 @@ POSTGRESQL_ALLOWED_LITERAL_QUERIES = [
 CLICKHOUSE_DML_STATEMENTS = [
     "INSERT INTO events VALUES (now(), 'test', 1)",
     "INSERT INTO events SELECT * FROM staging_events",
-    "INSERT INTO events FORMAT JSONEachRow {\"id\":1}",
+    'INSERT INTO events FORMAT JSONEachRow {"id":1}',
     "OPTIMIZE TABLE events FINAL",
     "ALTER TABLE events UPDATE name = 'x' WHERE id = 1",
     "ALTER TABLE events DELETE WHERE id = 1",

@@ -1,13 +1,14 @@
 import asyncio
 import logging
-from typing import Optional, Tuple
+from pathlib import Path
+from typing import Optional
 
 import psycopg2
 from psycopg2 import errors as psycopg_errors
 from psycopg2.extras import RealDictCursor
 
 from ..base import BaseConnector
-from ...utils.tsv_formatter import format_tsv_line
+from ...utils.tsv_formatter import format_tsv_line, write_tsv_text_line
 from ...utils.sql_guard import sanitize_read_only_sql
 
 logger = logging.getLogger(__name__)
@@ -19,8 +20,40 @@ class PostgreSQLPythonConnector(BaseConnector):
     def _get_default_port(self) -> int:
         return 5432
 
-    async def execute_query(self, query: str, database: Optional[str] = None, server: Optional[str] = None) -> str:
+    async def execute_query(
+        self, query: str, database: Optional[str] = None, server: Optional[str] = None
+    ) -> str:
         """Execute a read-only query using psycopg2"""
+        return await self._run_executor_query(
+            self._execute_sync_query, query, database=database, server=server
+        )
+
+    async def execute_query_to_file(
+        self,
+        query: str,
+        output_path: Path,
+        database: Optional[str] = None,
+        server: Optional[str] = None,
+    ) -> None:
+        """Execute a read-only query using psycopg2 and stream TSV to a file."""
+        await self._run_executor_query(
+            self._execute_sync_query_to_file,
+            query,
+            database=database,
+            server=server,
+            output_path=str(output_path),
+        )
+
+    async def _run_executor_query(
+        self,
+        worker,
+        query: str,
+        database: Optional[str] = None,
+        server: Optional[str] = None,
+        *,
+        output_path: Optional[str] = None,
+    ):
+        """Resolve connection settings and run a synchronous worker in the executor."""
         sanitized_query = sanitize_read_only_sql(query)
         selected_server = self._select_server(server)
 
@@ -40,26 +73,18 @@ class PostgreSQLPythonConnector(BaseConnector):
 
                 # Run synchronous psycopg2 in executor with timeout
                 loop = asyncio.get_event_loop()
-                total_timeout = self.connection_timeout + self.query_timeout
-                max_bytes = self._effective_max_result_bytes()
-                tsv_output, truncated = await asyncio.wait_for(
+                return await asyncio.wait_for(
                     loop.run_in_executor(
                         None,
-                        self._execute_sync_query,
+                        worker,
                         host,
                         port,
                         db_name,
                         sanitized_query,
-                        max_bytes
+                        output_path,
                     ),
-                    timeout=total_timeout
+                    timeout=total_timeout,
                 )
-
-                if truncated:
-                    notice = f"[RESULT TRUNCATED: exceeded max_result_bytes={self.max_result_bytes} bytes]"
-                    tsv_output = (tsv_output + "\n" if tsv_output else "") + notice
-
-                return tsv_output
 
         except TimeoutError as e:
             # Re-raise SSH timeout as-is
@@ -84,9 +109,13 @@ class PostgreSQLPythonConnector(BaseConnector):
         port: int,
         database: str,
         query: str,
-        max_result_bytes: int,
-    ) -> Tuple[str, bool]:
-        """Execute query synchronously and stream results as TSV within size limits."""
+        output_path: Optional[str] = None,
+    ) -> str:
+        """Execute query synchronously and return TSV output."""
+        if output_path is not None:
+            self._execute_sync_query_to_file(host, port, database, query, output_path)
+            return ""
+
         conn = None
         cursor = None
         try:
@@ -97,7 +126,7 @@ class PostgreSQLPythonConnector(BaseConnector):
                 user=self.username,
                 password=self.password,
                 connect_timeout=self.connection_timeout,
-                options='-c default_transaction_read_only=on'  # Force read-only mode
+                options="-c default_transaction_read_only=on",  # Force read-only mode
             )
 
             # Set session to read-only
@@ -105,38 +134,20 @@ class PostgreSQLPythonConnector(BaseConnector):
 
             # Set statement timeout
             cursor = conn.cursor(cursor_factory=RealDictCursor)
-            cursor.execute(f"SET statement_timeout = {self.query_timeout * 1000}")  # Convert to milliseconds
+            cursor.execute(
+                f"SET statement_timeout = {self.query_timeout * 1000}"
+            )  # Convert to milliseconds
 
             # Execute the actual query
             cursor.execute(query)
 
-            columns = [desc[0] for desc in cursor.description] if cursor.description else []
+            columns = (
+                [desc[0] for desc in cursor.description] if cursor.description else []
+            )
             lines = []
-            truncated = False
-            newline_bytes = len("\n".encode())
-            total_bytes = 0
-            max_bytes = max_result_bytes or 0
-            enforce_limit = max_bytes > 0
-
-            def append_line(line: str) -> bool:
-                nonlocal total_bytes, truncated
-                if line is None:
-                    return True
-                encoded = line.encode()
-                additional = len(encoded) if not lines else newline_bytes + len(encoded)
-                if enforce_limit and lines and (total_bytes + additional) > max_bytes:
-                    truncated = True
-                    return False
-                lines.append(line)
-                total_bytes += additional
-                if enforce_limit and total_bytes > max_bytes:
-                    truncated = True
-                    return False
-                return True
 
             if columns:
-                header_line = format_tsv_line(columns)
-                append_line(header_line)
+                lines.append(format_tsv_line(columns))
 
             fetch_size = 100
             while True:
@@ -145,17 +156,78 @@ class PostgreSQLPythonConnector(BaseConnector):
                     break
                 for row in batch:
                     if isinstance(row, dict):
-                        values = [row.get(col) for col in columns] if columns else list(row.values())
+                        values = (
+                            [row.get(col) for col in columns]
+                            if columns
+                            else list(row.values())
+                        )
                     else:
                         values = list(row)
-                    line = format_tsv_line(values)
-                    if not append_line(line):
-                        break
-                if truncated:
-                    break
+                    lines.append(format_tsv_line(values))
 
-            tsv_output = "\n".join(lines)
-            return tsv_output, truncated
+            return "\n".join(lines)
+        finally:
+            if cursor:
+                cursor.close()
+            if conn:
+                conn.close()
+
+    def _execute_sync_query_to_file(
+        self,
+        host: str,
+        port: int,
+        database: str,
+        query: str,
+        output_path: str,
+    ) -> None:
+        """Execute query synchronously and stream TSV output to a file."""
+        conn = None
+        cursor = None
+        try:
+            conn = psycopg2.connect(
+                host=host,
+                port=port,
+                database=database,
+                user=self.username,
+                password=self.password,
+                connect_timeout=self.connection_timeout,
+                options="-c default_transaction_read_only=on",
+            )
+
+            conn.set_session(readonly=True, autocommit=True)
+
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            cursor.execute(f"SET statement_timeout = {self.query_timeout * 1000}")
+            cursor.execute(query)
+
+            columns = (
+                [desc[0] for desc in cursor.description] if cursor.description else []
+            )
+            wrote_content = False
+
+            with Path(output_path).open("w", encoding="utf-8", newline="") as handle:
+                if columns:
+                    wrote_content = write_tsv_text_line(
+                        handle, format_tsv_line(columns), wrote_content
+                    )
+
+                fetch_size = 100
+                while True:
+                    batch = cursor.fetchmany(fetch_size)
+                    if not batch:
+                        break
+                    for row in batch:
+                        if isinstance(row, dict):
+                            values = (
+                                [row.get(col) for col in columns]
+                                if columns
+                                else list(row.values())
+                            )
+                        else:
+                            values = list(row)
+                        wrote_content = write_tsv_text_line(
+                            handle, format_tsv_line(values), wrote_content
+                        )
         finally:
             if cursor:
                 cursor.close()

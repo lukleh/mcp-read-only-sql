@@ -1,12 +1,14 @@
 import asyncio
 import logging
 import os
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager, nullcontext, suppress
+from pathlib import Path
 from typing import Optional
 
 from ..base_cli import BaseCLIConnector
 from ...utils.ssh_tunnel_cli import CLISSHTunnel
 from ...utils.sql_guard import ReadOnlyQueryError, sanitize_read_only_sql
+from ...utils.tsv_formatter import write_tsv_text_line
 
 logger = logging.getLogger(__name__)
 
@@ -30,10 +32,14 @@ class ClickHouseCLIConnector(BaseCLIConnector):
             remote_port = selected_server.port
             remote_host = selected_server.host
             if remote_port == 8123:
-                logger.debug("Changing SSH tunnel remote port from 8123 to 9000 for clickhouse-client")
+                logger.debug(
+                    "Changing SSH tunnel remote port from 8123 to 9000 for clickhouse-client"
+                )
                 remote_port = 9000
             elif remote_port == 8443:
-                logger.debug("Changing SSH tunnel remote port from 8443 to 9440 for clickhouse-client")
+                logger.debug(
+                    "Changing SSH tunnel remote port from 8443 to 9440 for clickhouse-client"
+                )
                 remote_port = 9440
 
             tunnel = CLISSHTunnel(self.ssh_config, remote_host, remote_port)
@@ -45,8 +51,37 @@ class ClickHouseCLIConnector(BaseCLIConnector):
         else:
             yield None
 
-    async def execute_query(self, query: str, database: Optional[str] = None, server: Optional[str] = None) -> str:
+    async def execute_query(
+        self, query: str, database: Optional[str] = None, server: Optional[str] = None
+    ) -> str:
         """Execute a read-only query using clickhouse-client and return raw TSV output"""
+        return await self._run_query(
+            query, database=database, server=server, output_path=None
+        )
+
+    async def execute_query_to_file(
+        self,
+        query: str,
+        output_path: Path,
+        database: Optional[str] = None,
+        server: Optional[str] = None,
+    ) -> None:
+        """Execute a read-only query using clickhouse-client and stream TSV to a file."""
+        await self._run_query(
+            query,
+            database=database,
+            server=server,
+            output_path=output_path,
+        )
+
+    async def _run_query(
+        self,
+        query: str,
+        database: Optional[str] = None,
+        server: Optional[str] = None,
+        output_path: Optional[Path] = None,
+    ) -> Optional[str]:
+        """Run clickhouse-client and optionally stream output to a managed file."""
         sanitized_query = sanitize_read_only_sql(query)
         selected_server = self._select_server(server)
 
@@ -61,10 +96,14 @@ class ClickHouseCLIConnector(BaseCLIConnector):
 
                 # For direct connections, if port is HTTP (8123/8443), convert to native
                 if port == 8123:
-                    logger.debug("Changing port from 8123 to 9000 for clickhouse-client direct connection")
+                    logger.debug(
+                        "Changing port from 8123 to 9000 for clickhouse-client direct connection"
+                    )
                     port = 9000
                 elif port == 8443:
-                    logger.debug("Changing port from 8443 to 9440 for clickhouse-client direct connection")
+                    logger.debug(
+                        "Changing port from 8443 to 9440 for clickhouse-client direct connection"
+                    )
                     port = 9440
 
             # Use specified database or configured database (validated)
@@ -73,15 +112,24 @@ class ClickHouseCLIConnector(BaseCLIConnector):
             # Build clickhouse-client command with read-only enforcement
             cmd = [
                 "clickhouse-client",
-                "--host", host,
-                "--port", str(port),
-                "--user", self.username,
-                "--database", db_name,
-                "--readonly", "1",  # Enforce read-only mode at database level
-                "--max_execution_time", str(self.query_timeout),  # Query timeout in seconds
-                "--connect_timeout", str(self.connection_timeout),  # Connection timeout
-                "--format", "TabSeparatedWithNames",  # Use TSV format with headers
-                "--query", sanitized_query
+                "--host",
+                host,
+                "--port",
+                str(port),
+                "--user",
+                self.username,
+                "--database",
+                db_name,
+                "--readonly",
+                "1",  # Enforce read-only mode at database level
+                "--max_execution_time",
+                str(self.query_timeout),  # Query timeout in seconds
+                "--connect_timeout",
+                str(self.connection_timeout),  # Connection timeout
+                "--format",
+                "TabSeparatedWithNames",  # Use TSV format with headers
+                "--query",
+                sanitized_query,
             ]
 
             # Add --secure flag for TLS ports (9440)
@@ -102,7 +150,7 @@ class ClickHouseCLIConnector(BaseCLIConnector):
                     stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
-                    env=env
+                    env=env,
                 )
 
                 stdin = getattr(process, "stdin", None)
@@ -118,12 +166,16 @@ class ClickHouseCLIConnector(BaseCLIConnector):
                 stdout = process.stdout
                 stderr_task = asyncio.create_task(process.stderr.read())
 
-                lines = []
-                total_bytes = 0
-                newline_bytes = len('\n'.encode())
-                max_bytes = self._effective_max_result_bytes() or 0
-                enforce_limit = max_bytes > 0
-                truncated = False
+                lines = [] if output_path is None else None
+                pending_line = None
+                wrote_content = False
+
+                def emit_line(line: str) -> None:
+                    nonlocal wrote_content
+                    if output_path is None:
+                        lines.append(line)
+                    else:
+                        wrote_content = write_tsv_text_line(handle, line, wrote_content)
 
                 loop = asyncio.get_event_loop()
                 deadline = loop.time() + self.query_timeout
@@ -134,41 +186,37 @@ class ClickHouseCLIConnector(BaseCLIConnector):
                         raise asyncio.TimeoutError
                     return await asyncio.wait_for(stdout.readline(), timeout=remaining)
 
-                try:
-                    while True:
-                        line_bytes = await read_line_with_timeout()
-                        if not line_bytes:
-                            break
+                with (
+                    Path(output_path).open("w", encoding="utf-8", newline="")
+                    if output_path is not None
+                    else nullcontext()
+                ) as handle:
+                    try:
+                        while True:
+                            line_bytes = await read_line_with_timeout()
+                            if not line_bytes:
+                                break
 
-                        line = line_bytes.decode(errors="replace").rstrip('\r\n')
+                            line = line_bytes.decode(errors="replace").rstrip("\r\n")
 
-                        encoded_len = len(line.encode())
-                        additional = encoded_len if not lines else newline_bytes + encoded_len
+                            if pending_line is not None:
+                                emit_line(pending_line)
+                            pending_line = line
 
-                        if enforce_limit and lines and (total_bytes + additional) > max_bytes:
-                            truncated = True
-                            break
-
-                        lines.append(line)
-                        total_bytes += additional
-
-                        if enforce_limit and total_bytes > max_bytes:
-                            truncated = True
-                            break
-
-                except asyncio.TimeoutError:
-                    logger.warning("Query timeout - terminating clickhouse-client process")
-                    process.kill()
-                    with suppress(asyncio.CancelledError):
-                        stderr_task.cancel()
-                        await stderr_task
-                    # Wait for process to clean up subprocess transport
-                    with suppress(asyncio.TimeoutError):
-                        await asyncio.wait_for(process.wait(), timeout=1.0)
-                    raise TimeoutError(f"clickhouse-client: Query timeout after {self.query_timeout}s")
-
-                if truncated and process.returncode is None:
-                    process.kill()
+                    except asyncio.TimeoutError:
+                        logger.warning(
+                            "Query timeout - terminating clickhouse-client process"
+                        )
+                        process.kill()
+                        with suppress(asyncio.CancelledError):
+                            stderr_task.cancel()
+                            await stderr_task
+                        # Wait for process to clean up subprocess transport
+                        with suppress(asyncio.TimeoutError):
+                            await asyncio.wait_for(process.wait(), timeout=1.0)
+                        raise TimeoutError(
+                            f"clickhouse-client: Query timeout after {self.query_timeout}s"
+                        )
 
                 try:
                     await asyncio.wait_for(process.wait(), timeout=1.0)
@@ -184,27 +232,25 @@ class ClickHouseCLIConnector(BaseCLIConnector):
 
                 returncode = process.returncode
                 if returncode is None:
-                    logger.debug("clickhouse-client process still running after wait(); treating as successful termination")
-                if returncode not in (0, None) and not truncated:
+                    logger.debug(
+                        "clickhouse-client process still running after wait(); treating as successful termination"
+                    )
+                if returncode not in (0, None):
                     error_msg = stderr.decode() if stderr else "Unknown error"
                     logger.error(f"clickhouse-client error: {error_msg}")
                     raise RuntimeError(f"clickhouse-client: {error_msg}")
 
-                if truncated and process.returncode not in (0, None):
-                    logger.info("clickhouse-client process terminated after reaching result size limit")
+                if pending_line not in (None, ""):
+                    emit_line(pending_line)
 
-                if lines and lines[-1] == '':
-                    lines = lines[:-1]
-
-                output = '\n'.join(lines)
-                if truncated:
-                    notice = f"[RESULT TRUNCATED: exceeded max_result_bytes={self.max_result_bytes} bytes]"
-                    output = (output + '\n' if output else '') + notice
-
-                return output
+                if output_path is None:
+                    return "\n".join(lines)
+                return None
 
             except FileNotFoundError:
-                raise FileNotFoundError("clickhouse-client: command not found. Please install ClickHouse client tools.")
+                raise FileNotFoundError(
+                    "clickhouse-client: command not found. Please install ClickHouse client tools."
+                )
             except ReadOnlyQueryError:
                 raise
             except asyncio.TimeoutError as exc:

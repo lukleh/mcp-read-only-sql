@@ -18,7 +18,6 @@ from tests.sql_statement_lists import (
     POSTGRESQL_INTEGRATION_BLOCKED_STATEMENTS,
 )
 
-
 POSTGRES_BASE_CONFIG = {
     "connection_name": "integration_postgres",
     "type": "postgresql",
@@ -61,6 +60,7 @@ async def _verify_connection(connector, vendor: str):
 
 def _build_postgres_connector(implementation: str):
     from conftest import make_connection
+
     config = make_connection(POSTGRES_BASE_CONFIG.copy())
     if implementation == "cli":
         if shutil.which("psql") is None:
@@ -71,6 +71,7 @@ def _build_postgres_connector(implementation: str):
 
 def _build_clickhouse_connector(implementation: str):
     from conftest import make_connection
+
     config = make_connection(CLICKHOUSE_BASE_CONFIG.copy())
     if implementation == "cli":
         if shutil.which("clickhouse-client") is None:
@@ -91,7 +92,9 @@ async def test_postgres_real_blocks_mutations(implementation, statement):
     with pytest.raises(RuntimeError) as exc_info:
         await connector.execute_query(statement)
 
-    assert _is_readonly_error(str(exc_info.value)), f"Expected read-only error for {statement}"
+    assert _is_readonly_error(
+        str(exc_info.value)
+    ), f"Expected read-only error for {statement}"
 
 
 @pytest.mark.anyio
@@ -132,7 +135,9 @@ async def test_clickhouse_real_blocks_mutations(implementation, statement):
     with pytest.raises(RuntimeError) as exc_info:
         await connector.execute_query(statement)
 
-    assert _is_readonly_error(str(exc_info.value)), f"Expected read-only error for {statement}"
+    assert _is_readonly_error(
+        str(exc_info.value)
+    ), f"Expected read-only error for {statement}"
 
 
 @pytest.mark.anyio

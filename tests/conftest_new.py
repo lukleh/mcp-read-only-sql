@@ -32,7 +32,7 @@ async def integration_client_fixed(integration_config_file, docker_check):
             "--config-dir",
             str(Path(integration_config_file).parent),
         ],
-        env=dict(os.environ)
+        env=dict(os.environ),
     )
 
     # Store references to clean up later
@@ -86,7 +86,7 @@ async def mcp_client_fixed(test_config_file):
             "--config-dir",
             str(Path(test_config_file).parent),
         ],
-        env=dict(os.environ)
+        env=dict(os.environ),
     )
 
     client_ctx = None

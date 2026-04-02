@@ -15,6 +15,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 
 - `project.urls.Changelog` now points to the in-repo changelog instead of the generic GitHub releases page.
 - The release flow now treats changelog maintenance as a required step and reuses changelog sections for GitHub release notes.
+- Breaking: `run_query_read_only` now always writes successful query results under the managed state directory and returns the TSV file path instead of inline query output.
+- Breaking: removed the `file_path` tool parameter and `max_result_bytes` configuration/result-size limit behavior.
 
 ## [0.1.0] - 2026-03-29
 

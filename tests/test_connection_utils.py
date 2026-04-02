@@ -9,7 +9,7 @@ class TestGetConnectionTarget:
         config = {
             "type": "postgresql",
             "db": "mydb",
-            "servers": [{"host": "db.example.com", "port": 5432}]
+            "servers": [{"host": "db.example.com", "port": 5432}],
         }
 
         result = get_connection_target(config)
@@ -24,7 +24,7 @@ class TestGetConnectionTarget:
         config = {
             "type": "clickhouse",
             "db": "default",
-            "servers": [{"host": "ch.example.com", "port": 8123}]
+            "servers": [{"host": "ch.example.com", "port": 8123}],
         }
 
         result = get_connection_target(config)
@@ -40,7 +40,7 @@ class TestGetConnectionTarget:
             "type": "postgresql",
             "db": "mydb",
             "servers": [{"host": "localhost", "port": 5432}],
-            "ssh_tunnel": {"host": "ssh.example.com"}
+            "ssh_tunnel": {"host": "ssh.example.com"},
         }
 
         result = get_connection_target(config)
@@ -57,7 +57,7 @@ class TestGetConnectionTarget:
             "type": "clickhouse",
             "db": "default",
             "servers": [{"host": "127.0.0.1", "port": 8123}],
-            "ssh_tunnel": {"host": "ssh.example.com"}
+            "ssh_tunnel": {"host": "ssh.example.com"},
         }
 
         result = get_connection_target(config)
@@ -74,7 +74,7 @@ class TestGetConnectionTarget:
             "type": "postgresql",
             "db": "mydb",
             "servers": [{"host": "internal-db.local", "port": 5432}],
-            "ssh_tunnel": {"host": "jump.example.com"}
+            "ssh_tunnel": {"host": "jump.example.com"},
         }
 
         result = get_connection_target(config)
@@ -91,7 +91,7 @@ class TestGetConnectionTarget:
         config = {
             "type": "postgresql",
             "db": "mydb",
-            "servers": ["db.example.com:5433"]
+            "servers": ["db.example.com:5433"],
         }
 
         result = get_connection_target(config)
@@ -103,11 +103,7 @@ class TestGetConnectionTarget:
 
     def test_server_as_string_without_port(self):
         """Test server specified as string without port (uses default)"""
-        config = {
-            "type": "postgresql",
-            "db": "mydb",
-            "servers": ["db.example.com"]
-        }
+        config = {"type": "postgresql", "db": "mydb", "servers": ["db.example.com"]}
 
         result = get_connection_target(config)
 
@@ -118,11 +114,7 @@ class TestGetConnectionTarget:
 
     def test_clickhouse_default_port(self):
         """Test ClickHouse uses correct default port"""
-        config = {
-            "type": "clickhouse",
-            "db": "default",
-            "servers": ["ch.example.com"]
-        }
+        config = {"type": "clickhouse", "db": "default", "servers": ["ch.example.com"]}
 
         result = get_connection_target(config)
 
@@ -133,10 +125,7 @@ class TestGetConnectionTarget:
 
     def test_no_servers_postgresql(self):
         """Test PostgreSQL with no servers specified (uses localhost)"""
-        config = {
-            "type": "postgresql",
-            "db": "mydb"
-        }
+        config = {"type": "postgresql", "db": "mydb"}
 
         result = get_connection_target(config)
 
@@ -147,10 +136,7 @@ class TestGetConnectionTarget:
 
     def test_no_servers_clickhouse(self):
         """Test ClickHouse with no servers specified (uses localhost)"""
-        config = {
-            "type": "clickhouse",
-            "db": "default"
-        }
+        config = {"type": "clickhouse", "db": "default"}
 
         result = get_connection_target(config)
 
@@ -163,7 +149,7 @@ class TestGetConnectionTarget:
         """Test with empty database name"""
         config = {
             "type": "postgresql",
-            "servers": [{"host": "db.example.com", "port": 5432}]
+            "servers": [{"host": "db.example.com", "port": 5432}],
         }
 
         result = get_connection_target(config)
@@ -179,7 +165,7 @@ class TestGetConnectionTarget:
             "type": "postgresql",
             "db": "mydb",
             "servers": ["localhost:5432"],
-            "ssh_tunnel": {"host": "ssh.example.com"}
+            "ssh_tunnel": {"host": "ssh.example.com"},
         }
 
         result = get_connection_target(config)
@@ -196,7 +182,7 @@ class TestGetConnectionTarget:
             "type": "clickhouse",
             "db": "default",
             "servers": ["internal.local:8124"],
-            "ssh_tunnel": {"host": "jump.example.com"}
+            "ssh_tunnel": {"host": "jump.example.com"},
         }
 
         result = get_connection_target(config)
@@ -220,9 +206,9 @@ class TestGetConnectionTarget:
                 "host": "staging-worker-7.example.com",
                 "user": "lukas",
                 "port": 22,
-                "private_key": "/Users/lukas/.ssh/vault/id_rsa_ab-data-team"
+                "private_key": "/Users/lukas/.ssh/vault/id_rsa_ab-data-team",
             },
-            "implementation": "cli"
+            "implementation": "cli",
         }
 
         result = get_connection_target(config)
@@ -243,9 +229,9 @@ class TestGetConnectionTarget:
             "ssh_tunnel": {
                 "host": "jump-1.example.com",
                 "user": "lukas",
-                "private_key": "/Users/lukas/.ssh/vault/id_rsa_ab-data-team"
+                "private_key": "/Users/lukas/.ssh/vault/id_rsa_ab-data-team",
             },
-            "implementation": "cli"
+            "implementation": "cli",
         }
 
         result = get_connection_target(config)

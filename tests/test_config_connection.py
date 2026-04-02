@@ -6,7 +6,12 @@ Tests for Connection configuration classes
 import pytest
 import tempfile
 import os
-from mcp_read_only_sql.config import Connection, Server, SSHTunnelConfig, load_connections
+from mcp_read_only_sql.config import (
+    Connection,
+    Server,
+    SSHTunnelConfig,
+    load_connections,
+)
 
 
 class TestServer:
@@ -210,21 +215,6 @@ class TestConnection:
                 }
             )
 
-    def test_connection_rejects_invalid_max_result_bytes_type(self):
-        """Runtime loading should reject non-integer max_result_bytes values."""
-        with pytest.raises(ValueError, match="max_result_bytes"):
-            Connection(
-                {
-                    "connection_name": "test",
-                    "type": "postgresql",
-                    "servers": [{"host": "localhost", "port": 5432}],
-                    "db": "testdb",
-                    "username": "testuser",
-                    "password": "testpass",
-                    "max_result_bytes": 1.5,
-                }
-            )
-
     def test_connection_allowed_databases_default_first(self):
         """Default database should fall back to first allowed entry"""
         conn = Connection(
@@ -418,6 +408,23 @@ class TestConnection:
                 }
             )
 
+    def test_connection_rejects_legacy_max_result_bytes(self):
+        """Legacy result-size limits should fail loudly on upgrade."""
+        with pytest.raises(
+            ValueError, match="Field 'max_result_bytes' is no longer supported"
+        ):
+            Connection(
+                {
+                    "connection_name": "test",
+                    "type": "postgresql",
+                    "servers": [{"host": "localhost", "port": 5432}],
+                    "db": "testdb",
+                    "username": "testuser",
+                    "password": "testpass",
+                    "max_result_bytes": 1024,
+                }
+            )
+
     def test_connection_empty_password_allowed(self):
         """Test connection allows empty password for compatibility"""
         conn = Connection(
@@ -539,6 +546,29 @@ class TestLoadConnections:
             with pytest.raises(
                 ValueError, match="Duplicate connection name: 'duplicate'"
             ):
+                load_connections(temp_path)
+        finally:
+            os.unlink(temp_path)
+
+    def test_load_connections_rejects_legacy_max_result_bytes(self):
+        """Loading a legacy config should surface removed size-limit fields."""
+        yaml_content = """
+- connection_name: limited
+  type: postgresql
+  servers:
+    - localhost:5432
+  db: testdb
+  username: testuser
+  password: testpass
+  max_result_bytes: 1024
+"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write(yaml_content)
+            f.flush()
+            temp_path = f.name
+
+        try:
+            with pytest.raises(ValueError, match="max_result_bytes"):
                 load_connections(temp_path)
         finally:
             os.unlink(temp_path)

@@ -2,7 +2,7 @@
 """
 Docker environment tests for MCP SQL Server
 Verifies that Docker databases are accessible and basic queries work.
-The main security testing (read-only, timeouts, size limits) is in test_security.py
+The main security testing (read-only, timeouts, managed result files) is in the dedicated security suites.
 """
 
 import pytest
@@ -23,7 +23,10 @@ def test_connections():
 def postgres_conn(test_connections):
     """Get PostgreSQL test connection"""
     from conftest import make_connection
-    config = next((c for c in test_connections if c["connection_name"] == "test_postgres"), None)
+
+    config = next(
+        (c for c in test_connections if c["connection_name"] == "test_postgres"), None
+    )
     if not config:
         pytest.skip("test_postgres connection not configured")
     # Ensure password is set for tests
@@ -36,7 +39,10 @@ def postgres_conn(test_connections):
 def clickhouse_conn(test_connections):
     """Get ClickHouse test connection"""
     from conftest import make_connection
-    config = next((c for c in test_connections if c["connection_name"] == "test_clickhouse"), None)
+
+    config = next(
+        (c for c in test_connections if c["connection_name"] == "test_clickhouse"), None
+    )
     if not config:
         pytest.skip("test_clickhouse connection not configured")
     # Ensure password is set for tests
@@ -52,11 +58,13 @@ class TestPostgreSQLData:
 
     async def test_database_has_data(self, postgres_conn):
         """Test that database has some data to query"""
-        result = await postgres_conn.execute_query("SELECT COUNT(*) as count FROM users")
+        result = await postgres_conn.execute_query(
+            "SELECT COUNT(*) as count FROM users"
+        )
         assert isinstance(result, str)
-        lines = result.strip().split('\n')
+        lines = result.strip().split("\n")
         assert len(lines) >= 2  # Header + data
-        row_values = lines[1].split('\t')
+        row_values = lines[1].split("\t")
         assert int(row_values[0]) > 0  # Just verify there's data
 
     async def test_select_queries_work(self, postgres_conn):
@@ -64,16 +72,16 @@ class TestPostgreSQLData:
         # Simple select
         result = await postgres_conn.execute_query("SELECT 1 as test")
         assert isinstance(result, str)
-        lines = result.strip().split('\n')
-        row_values = lines[1].split('\t')
-        assert row_values[0] == '1'
+        lines = result.strip().split("\n")
+        row_values = lines[1].split("\t")
+        assert row_values[0] == "1"
 
         # Query with WHERE clause
         result = await postgres_conn.execute_query(
             "SELECT * FROM users WHERE id > 0 LIMIT 5"
         )
         assert isinstance(result, str)
-        lines = result.strip().split('\n')
+        lines = result.strip().split("\n")
         assert len(lines) > 1  # Has rows
 
 
@@ -88,9 +96,9 @@ class TestClickHouseData:
             "SELECT COUNT(*) as count FROM testdb.events"
         )
         assert isinstance(result, str)
-        lines = result.strip().split('\n')
+        lines = result.strip().split("\n")
         assert len(lines) >= 2  # Header + data
-        row_values = lines[1].split('\t')
+        row_values = lines[1].split("\t")
         assert int(row_values[0]) > 0  # Just verify there's data
 
     async def test_select_queries_work(self, clickhouse_conn):
@@ -98,9 +106,9 @@ class TestClickHouseData:
         # Simple select
         result = await clickhouse_conn.execute_query("SELECT 1 as test")
         assert isinstance(result, str)
-        lines = result.strip().split('\n')
-        row_values = lines[1].split('\t')
-        assert row_values[0] == '1'
+        lines = result.strip().split("\n")
+        row_values = lines[1].split("\t")
+        assert row_values[0] == "1"
 
         # Query with WHERE and GROUP BY
         result = await clickhouse_conn.execute_query("""
@@ -110,7 +118,7 @@ class TestClickHouseData:
             LIMIT 5
         """)
         assert isinstance(result, str)
-        lines = result.strip().split('\n')
+        lines = result.strip().split("\n")
         assert len(lines) > 1  # Has rows
 
 
@@ -124,22 +132,24 @@ class TestCrossDatabase:
         # PostgreSQL
         pg_result = await postgres_conn.execute_query("SELECT 1 as test")
         assert isinstance(pg_result, str)
-        lines = pg_result.strip().split('\n')
-        assert lines[1].split('\t')[0] == '1'
+        lines = pg_result.strip().split("\n")
+        assert lines[1].split("\t")[0] == "1"
 
         # ClickHouse
         ch_result = await clickhouse_conn.execute_query("SELECT 1 as test")
         assert isinstance(ch_result, str)
-        lines = ch_result.strip().split('\n')
-        assert lines[1].split('\t')[0] == '1'
+        lines = ch_result.strip().split("\n")
+        assert lines[1].split("\t")[0] == "1"
 
         # Both have data
         pg_data = await postgres_conn.execute_query("SELECT COUNT(*) as c FROM users")
         assert isinstance(pg_data, str)
-        lines = pg_data.strip().split('\n')
-        assert int(lines[1].split('\t')[0]) > 0
+        lines = pg_data.strip().split("\n")
+        assert int(lines[1].split("\t")[0]) > 0
 
-        ch_data = await clickhouse_conn.execute_query("SELECT COUNT(*) as c FROM testdb.events")
+        ch_data = await clickhouse_conn.execute_query(
+            "SELECT COUNT(*) as c FROM testdb.events"
+        )
         assert isinstance(ch_data, str)
-        lines = ch_data.strip().split('\n')
-        assert int(lines[1].split('\t')[0]) > 0
+        lines = ch_data.strip().split("\n")
+        assert int(lines[1].split("\t")[0]) > 0

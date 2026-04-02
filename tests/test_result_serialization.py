@@ -15,15 +15,15 @@ from tests.docker_test_config import docker_test_server
 def parse_tsv(tsv_str):
     """Parse TSV string into columns and rows"""
     # Only strip trailing newlines, not tabs!
-    lines = tsv_str.rstrip('\n').split('\n')
+    lines = tsv_str.rstrip("\n").split("\n")
     if not lines:
         return [], []
 
-    columns = lines[0].split('\t')
+    columns = lines[0].split("\t")
     rows = []
     for line in lines[1:]:
         if line:  # Skip empty lines
-            rows.append(line.split('\t'))
+            rows.append(line.split("\t"))
     return columns, rows
 
 
@@ -31,14 +31,17 @@ def parse_tsv(tsv_str):
 def postgres_python_conn():
     """PostgreSQL Python connector"""
     from conftest import make_connection
-    config = make_connection({
-        "connection_name": "test_pg",
-        "type": "postgresql",
-        "servers": [docker_test_server("postgresql")],
-        "db": "testdb",
-        "username": "testuser",
-        "password": "testpass"
-    })
+
+    config = make_connection(
+        {
+            "connection_name": "test_pg",
+            "type": "postgresql",
+            "servers": [docker_test_server("postgresql")],
+            "db": "testdb",
+            "username": "testuser",
+            "password": "testpass",
+        }
+    )
     return PostgreSQLPythonConnector(config)
 
 
@@ -46,14 +49,17 @@ def postgres_python_conn():
 def postgres_cli_conn():
     """PostgreSQL CLI connector"""
     from conftest import make_connection
-    config = make_connection({
-        "connection_name": "test_pg",
-        "type": "postgresql",
-        "servers": [docker_test_server("postgresql")],
-        "db": "testdb",
-        "username": "testuser",
-        "password": "testpass"
-    })
+
+    config = make_connection(
+        {
+            "connection_name": "test_pg",
+            "type": "postgresql",
+            "servers": [docker_test_server("postgresql")],
+            "db": "testdb",
+            "username": "testuser",
+            "password": "testpass",
+        }
+    )
     return PostgreSQLCLIConnector(config)
 
 
@@ -61,14 +67,17 @@ def postgres_cli_conn():
 def clickhouse_python_conn():
     """ClickHouse Python connector"""
     from conftest import make_connection
-    config = make_connection({
-        "connection_name": "test_ch",
-        "type": "clickhouse",
-        "servers": [docker_test_server("clickhouse")],
-        "db": "testdb",
-        "username": "testuser",
-        "password": "testpass"
-    })
+
+    config = make_connection(
+        {
+            "connection_name": "test_ch",
+            "type": "clickhouse",
+            "servers": [docker_test_server("clickhouse")],
+            "db": "testdb",
+            "username": "testuser",
+            "password": "testpass",
+        }
+    )
     return ClickHousePythonConnector(config)
 
 
@@ -76,14 +85,17 @@ def clickhouse_python_conn():
 def clickhouse_cli_conn():
     """ClickHouse CLI connector"""
     from conftest import make_connection
-    config = make_connection({
-        "connection_name": "test_ch",
-        "type": "clickhouse",
-        "servers": [docker_test_server("clickhouse")],
-        "db": "testdb",
-        "username": "testuser",
-        "password": "testpass"
-    })
+
+    config = make_connection(
+        {
+            "connection_name": "test_ch",
+            "type": "clickhouse",
+            "servers": [docker_test_server("clickhouse")],
+            "db": "testdb",
+            "username": "testuser",
+            "password": "testpass",
+        }
+    )
     return ClickHouseCLIConnector(config)
 
 
@@ -108,17 +120,17 @@ class TestPostgreSQLSerialization:
         columns, rows = parse_tsv(result)
 
         assert len(columns) == 5
-        assert columns == ['int_val', 'float_val', 'string_val', 'bool_val', 'null_val']
+        assert columns == ["int_val", "float_val", "string_val", "bool_val", "null_val"]
 
         assert len(rows) == 1
         row = rows[0]
 
         # Check values (all as strings in TSV)
-        assert row[0] == '1'
-        assert row[1] == '1.5'
-        assert row[2] == 'test'
-        assert row[3] in ['t', 'true', 'True']  # PostgreSQL boolean representations
-        assert row[4] in ['', '\\N', 'NULL']  # NULL representations
+        assert row[0] == "1"
+        assert row[1] == "1.5"
+        assert row[2] == "test"
+        assert row[3] in ["t", "true", "True"]  # PostgreSQL boolean representations
+        assert row[4] in ["", "\\N", "NULL"]  # NULL representations
 
     async def test_datetime_serialization(self, postgres_python_conn):
         """Test that datetime values are returned in TSV"""
@@ -133,9 +145,9 @@ class TestPostgreSQLSerialization:
         columns, rows = parse_tsv(result)
 
         assert len(columns) == 3
-        assert 'date_val' in columns
-        assert 'timestamp_val' in columns
-        assert 'time_val' in columns
+        assert "date_val" in columns
+        assert "timestamp_val" in columns
+        assert "time_val" in columns
 
         assert len(rows) == 1
         # Values should be date/time strings
@@ -164,11 +176,11 @@ class TestPostgreSQLSerialization:
         row = rows[0]
 
         # All numeric values should be present
-        assert row[0] == '123'
-        assert row[1] == '123456'
-        assert row[2] == '123456789'
-        assert '123.456' in row[3]  # decimal_val
-        assert '123.456' in row[4]  # numeric_val
+        assert row[0] == "123"
+        assert row[1] == "123456"
+        assert row[2] == "123456789"
+        assert "123.456" in row[3]  # decimal_val
+        assert "123.456" in row[4]  # numeric_val
         # real and double may have slight precision differences
 
     async def test_array_types(self, postgres_python_conn):
@@ -188,9 +200,15 @@ class TestPostgreSQLSerialization:
         row = rows[0]
 
         # Arrays can be represented as PostgreSQL array literals {1,2,3} or Python lists [1, 2, 3]
-        assert ('{' in row[0] and '}' in row[0]) or ('[' in row[0] and ']' in row[0])  # int_array
-        assert ('{' in row[1] and '}' in row[1]) or ('[' in row[1] and ']' in row[1])  # string_array
-        assert ('{' in row[2] and '}' in row[2]) or ('[' in row[2] and ']' in row[2])  # bool_array
+        assert ("{" in row[0] and "}" in row[0]) or (
+            "[" in row[0] and "]" in row[0]
+        )  # int_array
+        assert ("{" in row[1] and "}" in row[1]) or (
+            "[" in row[1] and "]" in row[1]
+        )  # string_array
+        assert ("{" in row[2] and "}" in row[2]) or (
+            "[" in row[2] and "]" in row[2]
+        )  # bool_array
 
     async def test_json_types(self, postgres_python_conn):
         """Test JSON/JSONB types in TSV"""
@@ -209,9 +227,9 @@ class TestPostgreSQLSerialization:
         row = rows[0]
 
         # JSON values should be present as strings
-        assert 'key' in row[0] and 'value' in row[0]  # json_val
-        assert 'nested' in row[1]  # jsonb_val
-        assert '[1' in row[2] or '1' in row[2]  # json_array
+        assert "key" in row[0] and "value" in row[0]  # json_val
+        assert "nested" in row[1]  # jsonb_val
+        assert "[1" in row[2] or "1" in row[2]  # json_array
 
     async def test_special_values(self, postgres_python_conn):
         """Test special PostgreSQL values in TSV"""
@@ -230,9 +248,9 @@ class TestPostgreSQLSerialization:
         row = rows[0]
 
         # Special float values should be represented as strings
-        assert 'infinity' in row[0].lower() or 'inf' in row[0].lower()
-        assert '-infinity' in row[1].lower() or '-inf' in row[1].lower()
-        assert 'nan' in row[2].lower()
+        assert "infinity" in row[0].lower() or "inf" in row[0].lower()
+        assert "-infinity" in row[1].lower() or "-inf" in row[1].lower()
+        assert "nan" in row[2].lower()
 
     async def test_cli_connector_serialization(self, postgres_cli_conn):
         """Test that CLI connector returns TSV results"""
@@ -274,11 +292,11 @@ class TestClickHouseSerialization:
         assert len(rows) == 1
         row = rows[0]
 
-        assert row[0] == '1'  # uint_val
-        assert row[1] == '-1'  # int_val
-        assert row[2] == '1.5'  # float_val
-        assert row[3] == 'test'  # string_val
-        assert row[4] in ['1', 'true', 'True']  # bool_val
+        assert row[0] == "1"  # uint_val
+        assert row[1] == "-1"  # int_val
+        assert row[2] == "1.5"  # float_val
+        assert row[3] == "test"  # string_val
+        assert row[4] in ["1", "true", "True"]  # bool_val
 
     async def test_datetime_types(self, clickhouse_python_conn):
         """Test ClickHouse datetime types in TSV"""
@@ -318,9 +336,9 @@ class TestClickHouseSerialization:
         row = rows[0]
 
         # Arrays are represented as ClickHouse array literals in TSV
-        assert '[' in row[0] and ']' in row[0]  # int_array
-        assert '[' in row[1] and ']' in row[1]  # string_array
-        assert '[' in row[2] and ']' in row[2]  # date_array
+        assert "[" in row[0] and "]" in row[0]  # int_array
+        assert "[" in row[1] and "]" in row[1]  # string_array
+        assert "[" in row[2] and "]" in row[2]  # date_array
 
     async def test_clickhouse_tuples(self, clickhouse_python_conn):
         """Test ClickHouse tuples in TSV"""
@@ -338,8 +356,8 @@ class TestClickHouseSerialization:
         row = rows[0]
 
         # Tuples are represented as ClickHouse tuple literals in TSV
-        assert '(' in row[0] and ')' in row[0]  # mixed_tuple
-        assert '(' in row[1] and ')' in row[1]  # int_tuple
+        assert "(" in row[0] and ")" in row[0]  # mixed_tuple
+        assert "(" in row[1] and ")" in row[1]  # int_tuple
 
     async def test_clickhouse_special_types(self, clickhouse_python_conn):
         """Test ClickHouse special types in TSV"""
@@ -359,8 +377,8 @@ class TestClickHouseSerialization:
 
         # Special types should be present as strings
         assert row[0]  # uuid_val should be a UUID string
-        assert '192.168.1.1' in row[1]  # ipv4_val
-        assert '::1' in row[2] or '0000:0000' in row[2]  # ipv6_val
+        assert "192.168.1.1" in row[1]  # ipv4_val
+        assert "::1" in row[2] or "0000:0000" in row[2]  # ipv6_val
 
     async def test_cli_connector_serialization(self, clickhouse_cli_conn):
         """Test that ClickHouse CLI connector returns TSV"""
@@ -414,9 +432,9 @@ class TestEdgeCaseSerialization:
         row = rows[0]
 
         # Large numbers should be present as strings
-        assert '9223372036854775807' in row[0]  # max_bigint
-        assert '-9223372036854775808' in row[1]  # min_bigint
-        assert '999999' in row[2]  # large_decimal
+        assert "9223372036854775807" in row[0]  # max_bigint
+        assert "-9223372036854775808" in row[1]  # min_bigint
+        assert "999999" in row[2]  # large_decimal
 
     async def test_unicode_strings(self, postgres_python_conn):
         """Test Unicode strings in TSV"""
@@ -436,8 +454,8 @@ class TestEdgeCaseSerialization:
         row = rows[0]
 
         # Unicode should be properly handled in TSV
-        assert '你好世界' in row[0] or row[0] == '你好世界'  # chinese
-        assert '🚀' in row[1] or '😊' in row[1]  # emojis
+        assert "你好世界" in row[0] or row[0] == "你好世界"  # chinese
+        assert "🚀" in row[1] or "😊" in row[1]  # emojis
 
         # Values should be present in TSV
         # Note: TSV itself is a string format, no need for JSON serialization
@@ -460,10 +478,10 @@ class TestEdgeCaseSerialization:
         row = rows[0]
 
         # NULLs in TSV are represented as empty strings or \N
-        assert row[0] in ['', '\\N', 'NULL']  # col1
-        assert row[1] in ['', '\\N', 'NULL']  # col2
-        assert row[2] == 'value'  # col3
-        assert row[3] in ['', '\\N', 'NULL']  # col4
+        assert row[0] in ["", "\\N", "NULL"]  # col1
+        assert row[1] in ["", "\\N", "NULL"]  # col2
+        assert row[2] == "value"  # col3
+        assert row[3] in ["", "\\N", "NULL"]  # col4
 
 
 @pytest.mark.integration
@@ -480,7 +498,7 @@ class TestMCPSerialization:
         result = await execute_query(
             integration_client,
             "test_postgres_python",
-            "SELECT id, username, created_at FROM users LIMIT 2"
+            "SELECT id, username, created_at FROM users LIMIT 2",
         )
 
         assert result["success"]
@@ -505,7 +523,7 @@ class TestMCPSerialization:
                 MAX(id) as max_id,
                 MIN(created_at) as earliest_date
             FROM users
-            """
+            """,
         )
 
         assert result["success"]

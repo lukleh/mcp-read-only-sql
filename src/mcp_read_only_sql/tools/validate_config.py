@@ -242,17 +242,6 @@ def validate_config(
                         f"connection_timeout must be positive, got: {timeout}"
                     )
 
-            if "max_result_bytes" in conn:
-                max_bytes = conn["max_result_bytes"]
-                if not isinstance(max_bytes, int):
-                    errors.append(
-                        f"max_result_bytes must be an integer, got: {type(max_bytes).__name__}"
-                    )
-                elif max_bytes <= 0:
-                    errors.append(
-                        f"max_result_bytes must be positive, got: {max_bytes}"
-                    )
-
             # Check SSH config if present
             if conn.get("ssh_tunnel"):
                 ssh = conn["ssh_tunnel"]

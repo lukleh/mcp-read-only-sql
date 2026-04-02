@@ -1,4 +1,5 @@
 """Hard timeout wrapper for all database operations"""
+
 import asyncio
 import logging
 from typing import Any, Dict, Callable
@@ -9,13 +10,12 @@ logger = logging.getLogger(__name__)
 
 class HardTimeoutError(Exception):
     """Raised when a hard timeout is reached"""
+
     pass
 
 
 async def with_hard_timeout(
-    coro,
-    timeout_seconds: float,
-    operation_name: str = "operation"
+    coro, timeout_seconds: float, operation_name: str = "operation"
 ) -> Any:
     """
     Execute a coroutine with a hard timeout.
@@ -40,11 +40,22 @@ async def with_hard_timeout(
     except TimeoutError as e:
         # Check if this is a database timeout (has specific prefixes) vs asyncio timeout
         error_msg = str(e)
-        if any(prefix in error_msg for prefix in ["PostgreSQL:", "ClickHouse:", "psql:", "clickhouse-client:", "SSH:"]):
+        if any(
+            prefix in error_msg
+            for prefix in [
+                "PostgreSQL:",
+                "ClickHouse:",
+                "psql:",
+                "clickhouse-client:",
+                "SSH:",
+            ]
+        ):
             # This is a database/connector timeout, not the hard timeout
             raise
         # This is the hard timeout from asyncio.wait_for
-        logger.error(f"Hard timeout exceeded for {operation_name} after {timeout_seconds} seconds")
+        logger.error(
+            f"Hard timeout exceeded for {operation_name} after {timeout_seconds} seconds"
+        )
         raise HardTimeoutError(
             f"Operation '{operation_name}' exceeded hard timeout of {timeout_seconds} seconds"
         )
@@ -62,6 +73,7 @@ def hard_timeout(timeout_seconds: float = 30.0):
         async def execute_query(self, query):
             ...
     """
+
     def decorator(func: Callable) -> Callable:
         @wraps(func)
         async def wrapper(*args, **kwargs):
@@ -81,10 +93,11 @@ def hard_timeout(timeout_seconds: float = 30.0):
                     "error": str(e),
                     "rows": [],
                     "columns": [],
-                    "row_count": 0
+                    "row_count": 0,
                 }
 
         return wrapper
+
     return decorator
 
 
@@ -102,12 +115,16 @@ class HardTimeoutMixin:
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         # Get hard timeout from config or use default
-        if hasattr(self, 'config'):
-            self.hard_timeout = self.config.get('hard_timeout', self.DEFAULT_HARD_TIMEOUT)
+        if hasattr(self, "config"):
+            self.hard_timeout = self.config.get(
+                "hard_timeout", self.DEFAULT_HARD_TIMEOUT
+            )
         else:
             self.hard_timeout = self.DEFAULT_HARD_TIMEOUT
 
-    async def execute_with_timeout(self, coro, operation_name: str = "query") -> Dict[str, Any]:
+    async def execute_with_timeout(
+        self, coro, operation_name: str = "query"
+    ) -> Dict[str, Any]:
         """
         Execute a coroutine with hard timeout protection.
 
@@ -123,5 +140,5 @@ class HardTimeoutMixin:
                 "error": str(e),
                 "rows": [],
                 "columns": [],
-                "row_count": 0
+                "row_count": 0,
             }
