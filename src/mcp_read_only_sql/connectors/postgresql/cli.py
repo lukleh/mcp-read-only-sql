@@ -163,34 +163,34 @@ class PostgreSQLCLIConnector(BaseCLIConnector):
                             f"psql: Query timeout after {self.query_timeout}s"
                         )
 
-                try:
-                    await asyncio.wait_for(process.wait(), timeout=1.0)
-                except asyncio.TimeoutError:
-                    logger.error("psql process did not terminate cleanly")
-                    process.kill()
-                    await process.wait()
+                    try:
+                        await asyncio.wait_for(process.wait(), timeout=1.0)
+                    except asyncio.TimeoutError:
+                        logger.error("psql process did not terminate cleanly")
+                        process.kill()
+                        await process.wait()
 
-                if not stderr_task.done():
-                    stderr = await stderr_task
-                else:
-                    stderr = stderr_task.result()
+                    if not stderr_task.done():
+                        stderr = await stderr_task
+                    else:
+                        stderr = stderr_task.result()
 
-                returncode = process.returncode
-                if returncode is None:
-                    logger.debug(
-                        "psql process still running after wait(); treating as successful termination"
-                    )
-                if returncode not in (0, None):
-                    error_msg = stderr.decode() if stderr else "Unknown error"
-                    logger.error(f"psql error: {error_msg}")
-                    raise RuntimeError(f"psql: {error_msg}")
+                    returncode = process.returncode
+                    if returncode is None:
+                        logger.debug(
+                            "psql process still running after wait(); treating as successful termination"
+                        )
+                    if returncode not in (0, None):
+                        error_msg = stderr.decode() if stderr else "Unknown error"
+                        logger.error(f"psql error: {error_msg}")
+                        raise RuntimeError(f"psql: {error_msg}")
 
-                if pending_line not in (None, ""):
-                    emit_line(pending_line)
+                    if pending_line not in (None, ""):
+                        emit_line(pending_line)
 
-                if output_path is None:
-                    return "\n".join(lines)
-                return None
+                    if output_path is None:
+                        return "\n".join(lines)
+                    return None
 
             use_pgoptions = getattr(self.connection, "cli_requires_pgoptions", True)
             attempts = [True] if not use_pgoptions else [True, False]

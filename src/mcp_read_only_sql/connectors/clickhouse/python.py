@@ -136,17 +136,21 @@ class ClickHousePythonConnector(BaseConnector):
                 db_name = self._resolve_database(database)
                 # Run synchronous clickhouse-connect in executor with timeout
                 loop = asyncio.get_event_loop()
+                worker_args = [
+                    host,
+                    port,
+                    db_name,
+                    sanitized_query,
+                    original_port,  # Pass original port for protocol detection
+                    is_ssh_tunnel,
+                ]
+                if output_path is not None:
+                    worker_args.append(output_path)
                 return await asyncio.wait_for(
                     loop.run_in_executor(
                         None,
                         worker,
-                        host,
-                        port,
-                        db_name,
-                        sanitized_query,
-                        original_port,  # Pass original port for protocol detection
-                        is_ssh_tunnel,
-                        output_path,
+                        *worker_args,
                     ),
                     timeout=total_timeout,
                 )

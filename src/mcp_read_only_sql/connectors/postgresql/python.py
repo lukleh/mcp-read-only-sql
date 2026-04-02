@@ -73,16 +73,12 @@ class PostgreSQLPythonConnector(BaseConnector):
 
                 # Run synchronous psycopg2 in executor with timeout
                 loop = asyncio.get_event_loop()
+                worker_args = [host, port, db_name, sanitized_query]
+                if output_path is not None:
+                    worker_args.append(output_path)
+
                 return await asyncio.wait_for(
-                    loop.run_in_executor(
-                        None,
-                        worker,
-                        host,
-                        port,
-                        db_name,
-                        sanitized_query,
-                        output_path,
-                    ),
+                    loop.run_in_executor(None, worker, *worker_args),
                     timeout=total_timeout,
                 )
 
