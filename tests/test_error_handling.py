@@ -16,15 +16,18 @@ from tests.docker_test_config import docker_test_host, docker_test_server
 def postgres_python_conn():
     """PostgreSQL Python connector with valid config"""
     from conftest import make_connection
-    config = make_connection({
-        "connection_name": "test_pg",
-        "type": "postgresql",
-        "servers": [docker_test_server("postgresql")],
-        "db": "testdb",
-        "allowed_databases": ["testdb", "nonexistent_db"],
-        "username": "testuser",
-        "password": "testpass"
-    })
+
+    config = make_connection(
+        {
+            "connection_name": "test_pg",
+            "type": "postgresql",
+            "servers": [docker_test_server("postgresql")],
+            "db": "testdb",
+            "allowed_databases": ["testdb", "nonexistent_db"],
+            "username": "testuser",
+            "password": "testpass",
+        }
+    )
     return PostgreSQLPythonConnector(config)
 
 
@@ -32,15 +35,18 @@ def postgres_python_conn():
 def postgres_cli_conn():
     """PostgreSQL CLI connector with valid config"""
     from conftest import make_connection
-    config = make_connection({
-        "connection_name": "test_pg_cli",
-        "type": "postgresql",
-        "servers": [docker_test_server("postgresql")],
-        "db": "testdb",
-        "allowed_databases": ["testdb", "nonexistent_db"],
-        "username": "testuser",
-        "password": "testpass"
-    })
+
+    config = make_connection(
+        {
+            "connection_name": "test_pg_cli",
+            "type": "postgresql",
+            "servers": [docker_test_server("postgresql")],
+            "db": "testdb",
+            "allowed_databases": ["testdb", "nonexistent_db"],
+            "username": "testuser",
+            "password": "testpass",
+        }
+    )
     return PostgreSQLCLIConnector(config)
 
 
@@ -48,14 +54,17 @@ def postgres_cli_conn():
 def clickhouse_python_conn():
     """ClickHouse Python connector with valid config"""
     from conftest import make_connection
-    config = make_connection({
-        "connection_name": "test_ch",
-        "type": "clickhouse",
-        "servers": [docker_test_server("clickhouse")],
-        "db": "testdb",
-        "username": "testuser",
-        "password": "testpass"
-    })
+
+    config = make_connection(
+        {
+            "connection_name": "test_ch",
+            "type": "clickhouse",
+            "servers": [docker_test_server("clickhouse")],
+            "db": "testdb",
+            "username": "testuser",
+            "password": "testpass",
+        }
+    )
     return ClickHousePythonConnector(config)
 
 
@@ -63,14 +72,17 @@ def clickhouse_python_conn():
 def clickhouse_cli_conn():
     """ClickHouse CLI connector with valid config"""
     from conftest import make_connection
-    config = make_connection({
-        "connection_name": "test_ch_cli",
-        "type": "clickhouse",
-        "servers": [docker_test_server("clickhouse")],
-        "db": "testdb",
-        "username": "testuser",
-        "password": "testpass"
-    })
+
+    config = make_connection(
+        {
+            "connection_name": "test_ch_cli",
+            "type": "clickhouse",
+            "servers": [docker_test_server("clickhouse")],
+            "db": "testdb",
+            "username": "testuser",
+            "password": "testpass",
+        }
+    )
     return ClickHouseCLIConnector(config)
 
 
@@ -83,15 +95,17 @@ class TestConnectionErrors:
         """Test connection to non-existent host"""
         from conftest import make_connection
 
-        config = make_connection({
-            "connection_name": "bad_host",
-            "type": "postgresql",
-            "servers": [{"host": "non.existent.host", "port": 5432}],
-            "db": "testdb",
-            "username": "testuser",
-            "password": "testpass",
-            "connection_timeout": 2
-        })
+        config = make_connection(
+            {
+                "connection_name": "bad_host",
+                "type": "postgresql",
+                "servers": [{"host": "non.existent.host", "port": 5432}],
+                "db": "testdb",
+                "username": "testuser",
+                "password": "testpass",
+                "connection_timeout": 2,
+            }
+        )
         connector = PostgreSQLPythonConnector(config)
 
         with pytest.raises(RuntimeError) as exc_info:
@@ -99,21 +113,25 @@ class TestConnectionErrors:
 
         error_msg = str(exc_info.value).lower()
         # Error message should indicate connection issue
-        assert any(word in error_msg for word in ["connection", "connect", "host", "resolve"])
+        assert any(
+            word in error_msg for word in ["connection", "connect", "host", "resolve"]
+        )
 
     async def test_wrong_port(self):
         """Test connection to wrong port"""
         from conftest import make_connection
 
-        config = make_connection({
-            "connection_name": "bad_port",
-            "type": "postgresql",
-            "servers": [{"host": docker_test_host(), "port": 9999}],  # Wrong port
-            "db": "testdb",
-            "username": "testuser",
-            "password": "testpass",
-            "connection_timeout": 2
-        })
+        config = make_connection(
+            {
+                "connection_name": "bad_port",
+                "type": "postgresql",
+                "servers": [{"host": docker_test_host(), "port": 9999}],  # Wrong port
+                "db": "testdb",
+                "username": "testuser",
+                "password": "testpass",
+                "connection_timeout": 2,
+            }
+        )
         connector = PostgreSQLPythonConnector(config)
 
         with pytest.raises(RuntimeError) as exc_info:
@@ -126,14 +144,16 @@ class TestConnectionErrors:
         """Test connection with wrong credentials"""
         from conftest import make_connection
 
-        config = make_connection({
-            "connection_name": "bad_creds",
-            "type": "postgresql",
-            "servers": [docker_test_server("postgresql")],
-            "db": "testdb",
-            "username": "wronguser",
-            "password": "wrongpass"
-        })
+        config = make_connection(
+            {
+                "connection_name": "bad_creds",
+                "type": "postgresql",
+                "servers": [docker_test_server("postgresql")],
+                "db": "testdb",
+                "username": "wronguser",
+                "password": "wrongpass",
+            }
+        )
         connector = PostgreSQLPythonConnector(config)
 
         with pytest.raises(RuntimeError) as exc_info:
@@ -141,12 +161,16 @@ class TestConnectionErrors:
 
         error_msg = str(exc_info.value).lower()
         # PostgreSQL typically returns "authentication failed" or "connection refused" for local tests
-        assert any(word in error_msg for word in ["authentication", "password", "user", "connection", "refused"])
+        assert any(
+            word in error_msg
+            for word in ["authentication", "password", "user", "connection", "refused"]
+        )
 
     async def test_cli_connection_error(self, postgres_cli_conn):
         """Test CLI connector handles connection errors"""
         # Temporarily break the connection by using wrong port
         from mcp_read_only_sql.config.connection import Server
+
         postgres_cli_conn.servers = [Server(host=docker_test_host(), port=9999)]
 
         with pytest.raises(RuntimeError) as exc_info:
@@ -165,12 +189,13 @@ class TestDatabaseErrors:
         """Test querying non-existent database in PostgreSQL"""
         with pytest.raises(RuntimeError) as exc_info:
             await postgres_python_conn.execute_query(
-                "SELECT 1",
-                database="nonexistent_db"
+                "SELECT 1", database="nonexistent_db"
             )
 
         error_msg = str(exc_info.value).lower()
-        assert any(word in error_msg for word in ["database", "does not exist", "not found"])
+        assert any(
+            word in error_msg for word in ["database", "does not exist", "not found"]
+        )
 
     async def test_database_not_found_clickhouse(self, clickhouse_python_conn):
         """Test querying non-existent database in ClickHouse"""
@@ -180,15 +205,15 @@ class TestDatabaseErrors:
             )
 
         error_msg = str(exc_info.value).lower()
-        assert any(word in error_msg for word in ["database", "doesn't exist", "not exist", "unknown"])
+        assert any(
+            word in error_msg
+            for word in ["database", "doesn't exist", "not exist", "unknown"]
+        )
 
     async def test_cli_database_not_found(self, postgres_cli_conn):
         """Test CLI connector with non-existent database"""
         with pytest.raises(RuntimeError) as exc_info:
-            await postgres_cli_conn.execute_query(
-                "SELECT 1",
-                database="nonexistent_db"
-            )
+            await postgres_cli_conn.execute_query("SELECT 1", database="nonexistent_db")
 
         error_msg = str(exc_info.value).lower()
         assert "database" in error_msg or "does not exist" in error_msg
@@ -202,12 +227,12 @@ class TestTableErrors:
     async def test_table_not_found_postgres(self, postgres_python_conn):
         """Test querying non-existent table in PostgreSQL"""
         with pytest.raises(RuntimeError) as exc_info:
-            await postgres_python_conn.execute_query(
-                "SELECT * FROM nonexistent_table"
-            )
+            await postgres_python_conn.execute_query("SELECT * FROM nonexistent_table")
 
         error_msg = str(exc_info.value).lower()
-        assert any(word in error_msg for word in ["relation", "does not exist", "table"])
+        assert any(
+            word in error_msg for word in ["relation", "does not exist", "table"]
+        )
 
     async def test_table_not_found_clickhouse(self, clickhouse_python_conn):
         """Test querying non-existent table in ClickHouse"""
@@ -217,17 +242,20 @@ class TestTableErrors:
             )
 
         error_msg = str(exc_info.value).lower()
-        assert any(word in error_msg for word in ["table", "doesn't exist", "not exist", "unknown"])
+        assert any(
+            word in error_msg
+            for word in ["table", "doesn't exist", "not exist", "unknown"]
+        )
 
     async def test_cli_table_not_found(self, postgres_cli_conn):
         """Test CLI connector with non-existent table"""
         with pytest.raises(RuntimeError) as exc_info:
-            await postgres_cli_conn.execute_query(
-                "SELECT * FROM nonexistent_table"
-            )
+            await postgres_cli_conn.execute_query("SELECT * FROM nonexistent_table")
 
         error_msg = str(exc_info.value).lower()
-        assert any(word in error_msg for word in ["relation", "does not exist", "table"])
+        assert any(
+            word in error_msg for word in ["relation", "does not exist", "table"]
+        )
 
     async def test_column_not_found_postgres(self, postgres_python_conn):
         """Test querying non-existent column in PostgreSQL"""
@@ -237,7 +265,11 @@ class TestTableErrors:
             )
 
         error_msg = str(exc_info.value).lower()
-        assert "column" in error_msg or "does not exist" in error_msg or "nonexistent_column" in error_msg
+        assert (
+            "column" in error_msg
+            or "does not exist" in error_msg
+            or "nonexistent_column" in error_msg
+        )
 
 
 @pytest.mark.docker
@@ -263,14 +295,14 @@ class TestSyntaxErrors:
             )
 
         error_msg = str(exc_info.value).lower()
-        assert any(word in error_msg for word in ["syntax", "error", "unknown", "selct"])
+        assert any(
+            word in error_msg for word in ["syntax", "error", "unknown", "selct"]
+        )
 
     async def test_cli_syntax_error(self, postgres_cli_conn):
         """Test CLI connector with syntax error"""
         with pytest.raises(RuntimeError) as exc_info:
-            await postgres_cli_conn.execute_query(
-                "INVALID SQL QUERY"
-            )
+            await postgres_cli_conn.execute_query("INVALID SQL QUERY")
 
         error_msg = str(exc_info.value).lower()
         assert "syntax" in error_msg or "error" in error_msg
@@ -289,14 +321,15 @@ class TestErrorMessageQuality:
 
         error_msg = str(exc_info.value)
         # Error should mention the table name or relation
-        assert "this_table_definitely_does_not_exist" in error_msg or "relation" in error_msg.lower()
+        assert (
+            "this_table_definitely_does_not_exist" in error_msg
+            or "relation" in error_msg.lower()
+        )
 
     async def test_error_format_consistency(self, postgres_python_conn):
         """Test that errors are raised consistently"""
         with pytest.raises(RuntimeError) as exc_info:
-            await postgres_python_conn.execute_query(
-                "SELECT * FROM nonexistent"
-            )
+            await postgres_python_conn.execute_query("SELECT * FROM nonexistent")
 
         # Error should be a RuntimeError with a message
         assert exc_info.type is RuntimeError

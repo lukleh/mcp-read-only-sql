@@ -24,5 +24,5 @@ def pytest_runtest_teardown(item, nextitem):
                 warnings.warn(
                     "Suppressed anyio cancel scope error in teardown. "
                     "This is a known compatibility issue that doesn't affect test results.",
-                    RuntimeWarning
+                    RuntimeWarning,
                 )

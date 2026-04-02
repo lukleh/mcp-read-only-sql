@@ -1,6 +1,7 @@
 """
 Utilities for handling database connections
 """
+
 from typing import Dict, Any
 
 
@@ -67,7 +68,7 @@ def get_connection_target(config: Dict[str, Any]) -> Dict[str, Any]:
                 "host": ssh_host,
                 "port": db_port,
                 "database": database,
-                "connection_type": "ssh_local"
+                "connection_type": "ssh_local",
             }
         else:
             # SSH tunnel as jump server to reach remote DB
@@ -76,7 +77,7 @@ def get_connection_target(config: Dict[str, Any]) -> Dict[str, Any]:
                 "port": db_port,
                 "database": database,
                 "connection_type": "ssh_jump",
-                "ssh_host": ssh_host  # Include SSH host for jump connections
+                "ssh_host": ssh_host,  # Include SSH host for jump connections
             }
     else:
         # Direct DB connection (no SSH)
@@ -84,5 +85,5 @@ def get_connection_target(config: Dict[str, Any]) -> Dict[str, Any]:
             "host": db_host,
             "port": db_port,
             "database": database,
-            "connection_type": "direct"
+            "connection_type": "direct",
         }

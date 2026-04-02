@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
-"""Tests for saving query results to disk via file_path parameter."""
+"""Tests for managed query-result files."""
 
+import os
 from pathlib import Path
+from stat import S_IMODE
 
 import pytest
 from mcp.server.fastmcp import FastMCP
 
 from mcp_read_only_sql.config import Connection
-from mcp_read_only_sql.connectors.base import BaseConnector, DataSizeLimitError
+from mcp_read_only_sql.connectors.base import BaseConnector
+from mcp_read_only_sql.runtime_paths import RuntimePaths
 from mcp_read_only_sql.server import ReadOnlySQLServer
 
 
@@ -19,19 +22,34 @@ class StubConnector(BaseConnector):
         return "id\tvalue\n1\ttest"
 
 
-def build_stub_server(connector: BaseConnector) -> ReadOnlySQLServer:
+def build_stub_server(
+    connector: BaseConnector, runtime_paths: RuntimePaths
+) -> ReadOnlySQLServer:
     """Create a ReadOnlySQLServer instance wired with a stub connector."""
 
     server = ReadOnlySQLServer.__new__(ReadOnlySQLServer)
-    server.config_path = "stub"
+    server.runtime_paths = runtime_paths
     server.connections = {connector.name: connector}
     server.mcp = FastMCP("mcp-read-only-sql-test")
     server._setup_tools()
     return server
 
 
-@pytest.mark.anyio
-async def test_run_query_writes_to_file(tmp_path):
+def make_runtime_paths(tmp_path: Path) -> RuntimePaths:
+    """Create managed runtime paths for query-result tests."""
+
+    runtime_paths = RuntimePaths(
+        config_dir=tmp_path / "config",
+        state_dir=tmp_path / "state",
+        cache_dir=tmp_path / "cache",
+    )
+    runtime_paths.ensure_directories()
+    return runtime_paths
+
+
+def make_stub_connector() -> StubConnector:
+    """Create a basic PostgreSQL connector for isolated server tests."""
+
     connection = Connection(
         {
             "connection_name": "stub_conn",
@@ -42,133 +60,100 @@ async def test_run_query_writes_to_file(tmp_path):
             "password": "secret",
         }
     )
+    return StubConnector(connection)
 
-    connector = StubConnector(connection)
-    server = build_stub_server(connector)
 
-    output_file = tmp_path / "results" / "out.tsv"
+@pytest.mark.anyio
+async def test_run_query_writes_to_managed_results_dir(tmp_path):
+    runtime_paths = make_runtime_paths(tmp_path)
+    connector = make_stub_connector()
+    server = build_stub_server(connector, runtime_paths)
 
     result = await server.mcp._tool_manager.call_tool(
         "run_query_read_only",
         {
             "connection_name": "stub_conn",
             "query": "SELECT 1 AS id, 'test' AS value",
-            "file_path": str(output_file),
         },
         convert_result=False,
     )
 
-    assert Path(result) == output_file.resolve()
+    output_file = Path(result)
     assert output_file.exists()
-    assert output_file.read_text() == "id\tvalue\n1\ttest"
+    assert output_file.parent.parent == runtime_paths.results_dir
+    assert output_file.parent.name.startswith("stub_conn-")
+    assert output_file.read_text(encoding="utf-8") == "id\tvalue\n1\ttest"
+    assert S_IMODE(output_file.stat().st_mode) == 0o600
+    assert S_IMODE(runtime_paths.results_dir.stat().st_mode) == 0o700
+    assert S_IMODE(output_file.parent.stat().st_mode) == 0o700
 
 
 @pytest.mark.anyio
-async def test_run_query_file_path_already_exists(tmp_path):
-    connection = Connection(
-        {
-            "connection_name": "stub_conn",
-            "type": "postgresql",
-            "servers": [{"host": "localhost", "port": 5432}],
-            "db": "testdb",
-            "username": "tester",
-            "password": "secret",
-        }
-    )
+async def test_run_query_creates_unique_result_files(tmp_path):
+    runtime_paths = make_runtime_paths(tmp_path)
+    connector = make_stub_connector()
+    server = build_stub_server(connector, runtime_paths)
 
-    connector = StubConnector(connection)
-    server = build_stub_server(connector)
-
-    output_file = tmp_path / "results" / "out.tsv"
-    output_file.parent.mkdir(parents=True, exist_ok=True)
-    output_file.write_text("existing")
-
-    with pytest.raises(Exception) as excinfo:
-        await server.mcp._tool_manager.call_tool(
-            "run_query_read_only",
-            {
-                "connection_name": "stub_conn",
-                "query": "SELECT 1 AS id, 'test' AS value",
-                "file_path": str(output_file),
-            },
-            convert_result=False,
-        )
-
-    # The tool wraps ValueError in a ToolError, so just assert message text
-    assert "already exists" in str(excinfo.value)
-
-
-class LimitedConnector(BaseConnector):
-    """Connector that enforces max_result_bytes using effective guard."""
-
-    def __init__(self, connection, payload: str):
-        super().__init__(connection)
-        self.payload = payload
-
-    async def execute_query(self, query: str, database=None, server=None) -> str:  # type: ignore[override]
-        max_bytes = self._effective_max_result_bytes()
-        if max_bytes and len(self.payload.encode()) > max_bytes:
-            raise DataSizeLimitError(f"Result size exceeds max_result_bytes={max_bytes}")
-        return self.payload
-
-
-@pytest.mark.anyio
-async def test_file_path_bypasses_max_result_limit(tmp_path):
-    payload = "col1\n" + ("x" * 50)
-    connection = Connection(
-        {
-            "connection_name": "limited_conn",
-            "type": "postgresql",
-            "servers": [{"host": "localhost", "port": 5432}],
-            "db": "testdb",
-            "username": "tester",
-            "password": "secret",
-            "max_result_bytes": 10,
-        }
-    )
-    connector = LimitedConnector(connection, payload)
-    server = build_stub_server(connector)
-
-    output_file = tmp_path / "results" / "big.tsv"
-    result = await server.mcp._tool_manager.call_tool(
+    first = await server.mcp._tool_manager.call_tool(
         "run_query_read_only",
         {
-            "connection_name": "limited_conn",
+            "connection_name": "stub_conn",
             "query": "SELECT 1",
-            "file_path": str(output_file),
+        },
+        convert_result=False,
+    )
+    second = await server.mcp._tool_manager.call_tool(
+        "run_query_read_only",
+        {
+            "connection_name": "stub_conn",
+            "query": "SELECT 2",
         },
         convert_result=False,
     )
 
-    assert Path(result) == output_file.resolve()
-    assert output_file.read_text() == payload
+    first_path = Path(first)
+    second_path = Path(second)
+
+    assert first_path != second_path
+    assert first_path.exists()
+    assert second_path.exists()
 
 
-@pytest.mark.anyio
-async def test_max_result_limit_enforced_without_file_path():
-    payload = "col1\n" + ("x" * 50)
-    connection = Connection(
-        {
-            "connection_name": "limited_conn",
-            "type": "postgresql",
-            "servers": [{"host": "localhost", "port": 5432}],
-            "db": "testdb",
-            "username": "tester",
-            "password": "secret",
-            "max_result_bytes": 10,
-        }
+def test_build_result_path_sanitizes_special_connection_names(tmp_path):
+    runtime_paths = make_runtime_paths(tmp_path)
+    connector = make_stub_connector()
+    server = build_stub_server(connector, runtime_paths)
+
+    sanitized_path = server._build_result_path("prod/db@1")
+    fallback_path = server._build_result_path("!!!")
+    collision_candidate = server._build_result_path("prod:db@1")
+
+    assert sanitized_path.parent.parent == runtime_paths.results_dir
+    assert sanitized_path.parent.name.startswith("prod-db-1-")
+    assert fallback_path.parent.parent == runtime_paths.results_dir
+    assert fallback_path.parent.name.startswith("query-")
+    assert sanitized_path.parent != collision_candidate.parent
+    assert sanitized_path.suffix == ".tsv"
+    assert fallback_path.suffix == ".tsv"
+
+
+def test_create_result_file_fails_when_output_path_is_unwritable(tmp_path, monkeypatch):
+    runtime_paths = make_runtime_paths(tmp_path)
+    connector = make_stub_connector()
+    server = build_stub_server(connector, runtime_paths)
+    output_path = runtime_paths.results_dir / "stub_conn-denied" / "denied.tsv"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    original_os_open = os.open
+
+    def raising_open(path, flags, mode=0o777):
+        if os.fspath(path) == os.fspath(output_path):
+            raise PermissionError("permission denied")
+        return original_os_open(path, flags, mode)
+
+    monkeypatch.setattr(
+        server, "_build_result_path", lambda connection_name: output_path
     )
-    connector = LimitedConnector(connection, payload)
-    server = build_stub_server(connector)
+    monkeypatch.setattr(os, "open", raising_open)
 
-    with pytest.raises(Exception) as excinfo:
-        await server.mcp._tool_manager.call_tool(
-            "run_query_read_only",
-            {
-                "connection_name": "limited_conn",
-                "query": "SELECT 1",
-            },
-            convert_result=False,
-        )
-
-    assert "max_result_bytes" in str(excinfo.value)
+    with pytest.raises(PermissionError, match="permission denied"):
+        server._create_result_file("stub_conn")

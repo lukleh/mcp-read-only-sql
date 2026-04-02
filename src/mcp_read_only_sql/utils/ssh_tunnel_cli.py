@@ -43,7 +43,7 @@ class CLISSHTunnel:
     def _find_free_port(self) -> int:
         """Find a free local port"""
         with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
-            s.bind(('', 0))
+            s.bind(("", 0))
             s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             return s.getsockname()[1]
 
@@ -54,8 +54,7 @@ class CLISSHTunnel:
 
         try:
             return await asyncio.wait_for(
-                self._start_tunnel(),
-                timeout=self.ssh_timeout
+                self._start_tunnel(), timeout=self.ssh_timeout
             )
         except asyncio.TimeoutError:
             # Clean up if timeout occurs
@@ -71,14 +70,22 @@ class CLISSHTunnel:
         # Build SSH options common to all auth modes
         ssh_options = [
             "-N",  # No command execution
-            "-L", f"{self.local_port}:{self.remote_host}:{self.remote_port}",
-            "-o", "StrictHostKeyChecking=no",  # Avoid interactive prompts
-            "-o", "UserKnownHostsFile=/dev/null",  # Don't update known_hosts
-            "-o", "LogLevel=ERROR",  # Reduce noise
-            "-o", "ConnectTimeout=10",  # Connection timeout
-            "-o", "ServerAliveInterval=60",  # Keep connection alive
-            "-o", "ExitOnForwardFailure=yes",  # Exit if port forwarding fails
-            "-p", str(self.ssh_port),
+            "-L",
+            f"{self.local_port}:{self.remote_host}:{self.remote_port}",
+            "-o",
+            "StrictHostKeyChecking=no",  # Avoid interactive prompts
+            "-o",
+            "UserKnownHostsFile=/dev/null",  # Don't update known_hosts
+            "-o",
+            "LogLevel=ERROR",  # Reduce noise
+            "-o",
+            "ConnectTimeout=10",  # Connection timeout
+            "-o",
+            "ServerAliveInterval=60",  # Keep connection alive
+            "-o",
+            "ExitOnForwardFailure=yes",  # Exit if port forwarding fails
+            "-p",
+            str(self.ssh_port),
         ]
 
         env = os.environ.copy()
@@ -93,15 +100,21 @@ class CLISSHTunnel:
             env["SSHPASS"] = self.ssh_password
             ssh_base_cmd = ["sshpass", "-e", "ssh"]
             # Force password auth so OpenSSH doesn't prompt for keys
-            ssh_options.extend([
-                "-o", "PreferredAuthentications=password",
-                "-o", "PubkeyAuthentication=no",
-            ])
+            ssh_options.extend(
+                [
+                    "-o",
+                    "PreferredAuthentications=password",
+                    "-o",
+                    "PubkeyAuthentication=no",
+                ]
+            )
         elif self.ssh_key:
             ssh_options.extend(["-i", self.ssh_key])
 
         # Determine destination (user@host)
-        destination = f"{self.ssh_user}@{self.ssh_host}" if self.ssh_user else self.ssh_host
+        destination = (
+            f"{self.ssh_user}@{self.ssh_host}" if self.ssh_user else self.ssh_host
+        )
 
         ssh_cmd = ssh_base_cmd + ssh_options + [destination]
 
@@ -114,7 +127,7 @@ class CLISSHTunnel:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
-                preexec_fn=os.setsid  # Create new process group for cleanup
+                preexec_fn=os.setsid,  # Create new process group for cleanup
             )
 
             # Give SSH time to establish the tunnel
@@ -130,8 +143,7 @@ class CLISSHTunnel:
             # Verify tunnel is working by trying to connect
             try:
                 reader, writer = await asyncio.wait_for(
-                    asyncio.open_connection('127.0.0.1', self.local_port),
-                    timeout=2.0
+                    asyncio.open_connection("127.0.0.1", self.local_port), timeout=2.0
                 )
                 writer.close()
                 await writer.wait_closed()

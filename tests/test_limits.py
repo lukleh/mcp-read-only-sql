@@ -1,4 +1,4 @@
-"""Unified timeout and size-limit regression tests."""
+"""Unified timeout regression tests."""
 
 import warnings
 
@@ -27,6 +27,7 @@ CONNECTOR_CLASSES: Dict[Tuple[str, str], type] = {
     ("clickhouse", "cli"): ClickHouseCLIConnector,
 }
 
+
 def ensure_cli_available(db_type: str, implementation: str) -> None:
     """Skip tests gracefully when CLI tools are missing."""
     if implementation != "cli":
@@ -41,15 +42,17 @@ def build_connector(db_type: str, implementation: str, **overrides):
     servers = overrides.pop(
         "servers",
         [
-            docker_test_server(
-                db_type,
-                port=overrides.pop("port", None),
+            (
+                docker_test_server(
+                    db_type,
+                    port=overrides.pop("port", None),
+                )
+                if "host" not in overrides
+                else {
+                    "host": overrides.pop("host"),
+                    "port": overrides.pop("port", docker_test_server(db_type)["port"]),
+                }
             )
-            if "host" not in overrides
-            else {
-                "host": overrides.pop("host"),
-                "port": overrides.pop("port", docker_test_server(db_type)["port"]),
-            }
         ],
     )
     connection_name = overrides.pop(
@@ -89,7 +92,9 @@ QUERY_TIMEOUT_IDS = [f"{db}-{impl}" for db, impl, _ in QUERY_TIMEOUT_CASES]
 @pytest.mark.security
 @pytest.mark.docker
 @pytest.mark.anyio
-@pytest.mark.parametrize("db_type, implementation, query", QUERY_TIMEOUT_CASES, ids=QUERY_TIMEOUT_IDS)
+@pytest.mark.parametrize(
+    "db_type, implementation, query", QUERY_TIMEOUT_CASES, ids=QUERY_TIMEOUT_IDS
+)
 async def test_query_timeouts_are_enforced(db_type, implementation, query):
     ensure_cli_available(db_type, implementation)
     connector = build_connector(
@@ -121,7 +126,9 @@ NORMAL_QUERY_IDS = [f"{db}-{impl}" for db, impl, _ in NORMAL_QUERY_CASES]
 
 @pytest.mark.docker
 @pytest.mark.anyio
-@pytest.mark.parametrize("db_type, implementation, query", NORMAL_QUERY_CASES, ids=NORMAL_QUERY_IDS)
+@pytest.mark.parametrize(
+    "db_type, implementation, query", NORMAL_QUERY_CASES, ids=NORMAL_QUERY_IDS
+)
 async def test_normal_queries_succeed(db_type, implementation, query):
     ensure_cli_available(db_type, implementation)
     connector = build_connector(
@@ -134,89 +141,7 @@ async def test_normal_queries_succeed(db_type, implementation, query):
 
     result = await connector.execute_query_with_timeout(query)
     assert isinstance(result, str)
-    assert len(result.strip().split('\n')) >= 2
-
-
-SIZE_LIMIT_CASES = [
-    {
-        "ids": "postgresql-python",
-        "db_type": "postgresql",
-        "implementation": "python",
-        "limit": 10_000,
-        "small_query": "SELECT id, username FROM users LIMIT 5",
-        "large_query": "SELECT * FROM users, products",
-    },
-    {
-        "ids": "postgresql-cli",
-        "db_type": "postgresql",
-        "implementation": "cli",
-        "limit": 1_000,
-        "small_query": "SELECT id FROM users LIMIT 1",
-        "large_query": "SELECT * FROM users, products",
-    },
-    {
-        "ids": "clickhouse-python",
-        "db_type": "clickhouse",
-        "implementation": "python",
-        "limit": 10_000,
-        "small_query": "SELECT 1 as num",
-        "large_query": "SELECT * FROM testdb.events LIMIT 1000",
-    },
-    {
-        "ids": "clickhouse-cli",
-        "db_type": "clickhouse",
-        "implementation": "cli",
-        "limit": 1_000,
-        "small_query": "SELECT 1 as num",
-        "large_query": "SELECT * FROM testdb.events LIMIT 100",
-    },
-]
-
-
-@pytest.mark.security
-@pytest.mark.docker
-@pytest.mark.anyio
-@pytest.mark.parametrize("case", SIZE_LIMIT_CASES, ids=lambda c: c["ids"])
-async def test_size_limits_allow_small_results(case):
-    ensure_cli_available(case["db_type"], case["implementation"])
-    connector = build_connector(
-        case["db_type"],
-        case["implementation"],
-        connection_name=f"{case['ids']}_size_small",
-        max_result_bytes=case["limit"],
-        query_timeout=10,
-        connection_timeout=5,
-    )
-
-    result = await connector.execute_query(case["small_query"])
-    assert isinstance(result, str)
-    lines = result.strip().split('\n')
-    # Always expect header + at least one row
-    assert len(lines) >= 2
-
-
-@pytest.mark.security
-@pytest.mark.docker
-@pytest.mark.anyio
-@pytest.mark.parametrize("case", SIZE_LIMIT_CASES, ids=lambda c: c["ids"])
-async def test_size_limits_block_or_truncate_large_results(case):
-    ensure_cli_available(case["db_type"], case["implementation"])
-    connector = build_connector(
-        case["db_type"],
-        case["implementation"],
-        connection_name=f"{case['ids']}_size_large",
-        max_result_bytes=case["limit"],
-        query_timeout=10,
-        connection_timeout=5,
-    )
-
-    try:
-        result = await connector.execute_query(case["large_query"])
-        assert isinstance(result, str)
-        assert len(result.encode()) <= int(case["limit"] * 1.5)
-    except RuntimeError as exc:
-        error_msg = str(exc).lower()
-        assert any(keyword in error_msg for keyword in ("size", "exceed"))
+    assert len(result.strip().split("\n")) >= 2
 
 
 @pytest.mark.docker
@@ -244,22 +169,38 @@ UNREACHABLE_HOST_CASES = [
     (
         "postgresql",
         "python",
-        {"servers": [{"host": "192.0.2.10", "port": 5432}], "connection_timeout": 1, "query_timeout": 2},
+        {
+            "servers": [{"host": "192.0.2.10", "port": 5432}],
+            "connection_timeout": 1,
+            "query_timeout": 2,
+        },
     ),
     (
         "postgresql",
         "cli",
-        {"servers": [{"host": "192.0.2.10", "port": 5432}], "connection_timeout": 1, "hard_timeout": 3},
+        {
+            "servers": [{"host": "192.0.2.10", "port": 5432}],
+            "connection_timeout": 1,
+            "hard_timeout": 3,
+        },
     ),
     (
         "clickhouse",
         "python",
-        {"servers": [{"host": "198.51.100.10", "port": 9000}], "connection_timeout": 1, "query_timeout": 2},
+        {
+            "servers": [{"host": "198.51.100.10", "port": 9000}],
+            "connection_timeout": 1,
+            "query_timeout": 2,
+        },
     ),
     (
         "clickhouse",
         "cli",
-        {"servers": [{"host": "198.51.100.10", "port": 9000}], "connection_timeout": 1, "hard_timeout": 3},
+        {
+            "servers": [{"host": "198.51.100.10", "port": 9000}],
+            "connection_timeout": 1,
+            "hard_timeout": 3,
+        },
     ),
 ]
 
@@ -269,7 +210,9 @@ UNREACHABLE_IDS = [f"{db}-{impl}" for db, impl, _ in UNREACHABLE_HOST_CASES]
 
 @pytest.mark.docker
 @pytest.mark.anyio
-@pytest.mark.parametrize("db_type, implementation, overrides", UNREACHABLE_HOST_CASES, ids=UNREACHABLE_IDS)
+@pytest.mark.parametrize(
+    "db_type, implementation, overrides", UNREACHABLE_HOST_CASES, ids=UNREACHABLE_IDS
+)
 async def test_unreachable_hosts_timeout(db_type, implementation, overrides):
     ensure_cli_available(db_type, implementation)
     connector = build_connector(
@@ -285,5 +228,7 @@ async def test_unreachable_hosts_timeout(db_type, implementation, overrides):
     elapsed = time.time() - start
 
     message = str(exc_info.value).lower()
-    assert any(keyword in message for keyword in ("connect", "timeout", "refused", "unreach"))
+    assert any(
+        keyword in message for keyword in ("connect", "timeout", "refused", "unreach")
+    )
     assert elapsed < 5

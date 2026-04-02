@@ -45,16 +45,22 @@ def _ensure_single_statement(query: str) -> None:
     if not semicolons:
         return
     if len(semicolons) > 1:
-        raise ReadOnlyQueryError("Multiple SQL statements are not allowed in read-only mode")
+        raise ReadOnlyQueryError(
+            "Multiple SQL statements are not allowed in read-only mode"
+        )
     last = semicolons[0]
     if not _only_trailing_semicolon(query, last):
-        raise ReadOnlyQueryError("Multiple SQL statements are not allowed in read-only mode")
+        raise ReadOnlyQueryError(
+            "Multiple SQL statements are not allowed in read-only mode"
+        )
 
 
 def _reject_transaction_control(query: str) -> None:
     stripped = query.lstrip()
     if _TRANSACTION_PREFIX.match(stripped):
-        raise ReadOnlyQueryError("Transaction control statements are not allowed in read-only mode")
+        raise ReadOnlyQueryError(
+            "Transaction control statements are not allowed in read-only mode"
+        )
 
 
 def _only_trailing_semicolon(query: str, index: int) -> bool:
@@ -174,7 +180,9 @@ def _find_semicolons_outside_literals(query: str) -> list[int]:
 
         if ch == "$":
             tag_end = i + 1
-            while tag_end < length and (query[tag_end].isalnum() or query[tag_end] == "_"):
+            while tag_end < length and (
+                query[tag_end].isalnum() or query[tag_end] == "_"
+            ):
                 tag_end += 1
             if tag_end < length and query[tag_end] == "$":
                 dollar_tag = query[i : tag_end + 1]

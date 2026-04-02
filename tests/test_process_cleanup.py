@@ -12,15 +12,17 @@ async def test_postgresql_cli_process_cleanup_on_timeout():
     """Test that psql process is killed when timeout occurs"""
     from conftest import make_connection
 
-    config = make_connection({
-        "connection_name": "test_postgres",
-        "type": "postgresql",
-        "servers": [{"host": "localhost", "port": 5432}],
-        "db": "testdb",
-        "username": "testuser",
-        "password": "testpass",
-        "query_timeout": 0.1  # Very short timeout to trigger cancellation
-    })
+    config = make_connection(
+        {
+            "connection_name": "test_postgres",
+            "type": "postgresql",
+            "servers": [{"host": "localhost", "port": 5432}],
+            "db": "testdb",
+            "username": "testuser",
+            "password": "testpass",
+            "query_timeout": 0.1,  # Very short timeout to trigger cancellation
+        }
+    )
 
     connector = PostgreSQLCLIConnector(config)
 
@@ -53,7 +55,7 @@ async def test_postgresql_cli_process_cleanup_on_timeout():
 
     mock_process.communicate = long_running_communicate
 
-    with patch('asyncio.create_subprocess_exec', return_value=mock_process):
+    with patch("asyncio.create_subprocess_exec", return_value=mock_process):
         try:
             # The connector has a 0.1 second timeout
             await connector.execute_query("SELECT pg_sleep(10)")
@@ -72,15 +74,17 @@ async def test_clickhouse_cli_process_cleanup_on_timeout():
     """Test that clickhouse-client process is killed when timeout occurs"""
     from conftest import make_connection
 
-    config = make_connection({
-        "connection_name": "test_clickhouse",
-        "type": "clickhouse",
-        "servers": [{"host": "localhost", "port": 9000}],
-        "db": "testdb",
-        "username": "testuser",
-        "password": "testpass",
-        "query_timeout": 0.1  # Very short timeout
-    })
+    config = make_connection(
+        {
+            "connection_name": "test_clickhouse",
+            "type": "clickhouse",
+            "servers": [{"host": "localhost", "port": 9000}],
+            "db": "testdb",
+            "username": "testuser",
+            "password": "testpass",
+            "query_timeout": 0.1,  # Very short timeout
+        }
+    )
 
     connector = ClickHouseCLIConnector(config)
 
@@ -113,7 +117,7 @@ async def test_clickhouse_cli_process_cleanup_on_timeout():
 
     mock_process.communicate = long_running_communicate
 
-    with patch('asyncio.create_subprocess_exec', return_value=mock_process):
+    with patch("asyncio.create_subprocess_exec", return_value=mock_process):
         try:
             # The connector has a 0.1 second timeout
             await connector.execute_query("SELECT sleep(10)")
@@ -125,4 +129,3 @@ async def test_clickhouse_cli_process_cleanup_on_timeout():
 
     # Verify cleanup
     mock_process.kill.assert_called_once()
-

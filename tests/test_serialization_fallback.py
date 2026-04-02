@@ -5,11 +5,15 @@ Ensures the serializer never fails by converting unknown types to strings.
 """
 
 import json
-from mcp_read_only_sql.utils.json_serializer import serialize_result, DatabaseJSONEncoder
+from mcp_read_only_sql.utils.json_serializer import (
+    serialize_result,
+    DatabaseJSONEncoder,
+)
 
 
 class CustomClass:
     """A custom class for testing"""
+
     def __init__(self):
         self.data = "some data"
 
@@ -36,7 +40,7 @@ def test_basic_types_passthrough():
         "str": "hello",
         "bool": True,
         "list": [1, 2, 3],
-        "dict": {"key": "value"}
+        "dict": {"key": "value"},
     }
     json_str = serialize_result(data)
     parsed = json.loads(json_str)
@@ -66,7 +70,7 @@ def test_mixed_serializable_result():
             }
         ],
         "columns": ["id", "name", "created", "price", "custom_obj"],
-        "row_count": 1
+        "row_count": 1,
     }
 
     # This should not raise any exception
@@ -108,7 +112,7 @@ def test_encoder_with_special_types():
         # Should not raise exception
         serialized = encoder.default(value)
         # Decimal should become float, others become strings
-        if str(type(value).__name__) == 'Decimal':
+        if str(type(value).__name__) == "Decimal":
             assert isinstance(serialized, float)
         else:
             assert isinstance(serialized, str)
@@ -136,5 +140,3 @@ def test_result_never_fails():
         # Should produce valid JSON
         parsed = json.loads(json_str)
         assert parsed is not None
-
-

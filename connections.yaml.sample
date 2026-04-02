@@ -1,6 +1,6 @@
 # MCP Read-Only SQL Server - Connection Configuration Sample
 # This file demonstrates all connection variations and options.
-# `uvx --from . mcp-read-only-sql --write-sample-config` writes it to
+# `uvx mcp-read-only-sql@latest --write-sample-config` writes it to
 # ~/.config/lukleh/mcp-read-only-sql/connections.yaml
 
 # ============================================================================
@@ -115,7 +115,7 @@
 # SECURITY-LIMITED CONNECTIONS
 # ============================================================================
 
-# Strict security limits for sensitive data
+# Strict security defaults for sensitive data
 - connection_name: restricted_postgres
   description: Highly restricted connection for sensitive data
   type: postgresql
@@ -125,10 +125,9 @@
   db: sensitive_data  # Connect to specific database
   username: auditor
   password: change_me
-  # Strict security limits (stricter than defaults)
-  query_timeout: 2            # Max 2 seconds per query (default: 10)
-  connection_timeout: 2       # Max 2 seconds to connect (default: 5)
-  max_result_bytes: 1024      # Max 1KB results (default: 5KB)
+  # Strict timeouts for sensitive data
+  query_timeout: 2            # Max 2 seconds per query
+  connection_timeout: 2       # Max 2 seconds to connect
 
 # Moderate limits for general use
 - connection_name: limited_analytics
@@ -140,9 +139,8 @@
   db: analytics
   username: analyst
   password: change_me
-  query_timeout: 60           # 1 minute for complex queries (default: 10)
-  connection_timeout: 10      # 10 seconds to connect (default: 5)
-  max_result_bytes: 20971520  # 20MB for larger datasets (default: 5KB)
+  query_timeout: 60           # 1 minute for complex queries
+  connection_timeout: 10      # 10 seconds to connect
 
 # Very strict limits for public/untrusted queries
 - connection_name: public_readonly
@@ -153,9 +151,8 @@
   db: public_data
   username: public_reader
   password: change_me
-  query_timeout: 1            # 1 second max (default: 10)
-  connection_timeout: 1       # Quick connect only (default: 5)
-  max_result_bytes: 512       # 512 bytes max (default: 5KB)
+  query_timeout: 1            # 1 second max
+  connection_timeout: 1       # Quick connect only
 
 # ============================================================================
 # CLI IMPLEMENTATION CONNECTIONS
@@ -200,10 +197,9 @@
   db: production  # For multiple databases, use allowed_databases + default_database
   username: power_user
   password: change_me
-  # Security limits (reasonable for production)
-  query_timeout: 30           # 30 seconds (default: 10)
-  connection_timeout: 10      # 10 seconds to connect (default: 5)
-  max_result_bytes: 10485760  # 10MB (default: 5KB)
+  # Security timeouts (reasonable for production)
+  query_timeout: 30           # 30 seconds
+  connection_timeout: 10      # 10 seconds to connect
   # SSH tunnel
   ssh_tunnel:
     host: bastion.example.com
@@ -242,15 +238,13 @@
 # ============================================================================
 # 1. Default implementation is 'cli' if not specified
 # 2. Default ports: PostgreSQL=5432, ClickHouse=9000 (native protocol)
-# 3. Default security limits:
-#    - query_timeout: 10 seconds
-#    - connection_timeout: 5 seconds
-#    - max_result_bytes: 5120 bytes (5KB)
-# 4. Use 'db' for a single allowed database, or 'allowed_databases' + 'default_database' for multiple
-# 5. Multiple servers: Currently always uses first server (no load balancing/failover)
-# 6. Passwords live directly in this YAML file
-# 7. All queries are forced to be read-only at multiple levels
-# 8. CLI implementations require the respective tools installed:
+# 3. Query and connection timeouts are configurable per connection
+# 4. Successful query results are written to ~/.local/state/lukleh/mcp-read-only-sql/results/
+# 5. Use 'db' for a single allowed database, or 'allowed_databases' + 'default_database' for multiple
+# 6. Multiple servers: Currently always uses first server (no load balancing/failover)
+# 7. Passwords live directly in this YAML file
+# 8. All queries are forced to be read-only at multiple levels
+# 9. CLI implementations require the respective tools installed:
 #    - PostgreSQL: psql
 #    - ClickHouse: clickhouse-client
-# 9. Never commit actual passwords from this file; keep permissions restricted
+# 10. Never commit actual passwords from this file; keep permissions restricted

@@ -33,5 +33,3 @@ def serialize_result(result: dict) -> str:
         JSON string representation
     """
     return json.dumps(result, cls=DatabaseJSONEncoder, ensure_ascii=False)
-
-

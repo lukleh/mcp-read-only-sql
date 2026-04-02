@@ -31,7 +31,6 @@ from tests.sql_statement_lists import (
     POSTGRESQL_TRANSACTION_STATEMENTS,
 )
 
-
 POSTGRESQL_PYTHON_BLOCKED_STATEMENTS = (
     POSTGRESQL_DML_STATEMENTS
     + POSTGRESQL_DDL_CREATE_STATEMENTS
@@ -113,7 +112,7 @@ async def test_postgresql_python_readonly(postgres_config):
         "UPDATE users SET email = 'changed@example.com' WHERE id = 1",
         "DELETE FROM users WHERE id = 1",
         "DROP TABLE users",
-        "CREATE TABLE new_table (id INT)"
+        "CREATE TABLE new_table (id INT)",
     ]
 
     for query in write_queries:
@@ -141,7 +140,7 @@ async def test_postgresql_cli_readonly(postgres_config):
     write_queries = [
         "INSERT INTO users (username, email) VALUES ('testuser2', 'test2@example.com')",
         "UPDATE users SET email = 'changed@example.com' WHERE id = 1",
-        "DELETE FROM users WHERE id = 1"
+        "DELETE FROM users WHERE id = 1",
     ]
 
     for query in write_queries:
@@ -245,7 +244,9 @@ async def test_postgresql_cli_includes_readonly_flags(postgres_config, monkeypat
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("statement", POSTGRESQL_DML_STATEMENTS)
-async def test_postgresql_cli_blocks_write_statements(statement, postgres_config, monkeypatch):
+async def test_postgresql_cli_blocks_write_statements(
+    statement, postgres_config, monkeypatch
+):
     """Write-oriented SQL should surface as runtime errors in the CLI connector."""
 
     connector = PostgreSQLCLIConnector(postgres_config)
@@ -253,7 +254,9 @@ async def test_postgresql_cli_blocks_write_statements(statement, postgres_config
 
     async def fake_create_subprocess_exec(*cmd, **kwargs):
         called["value"] = True
-        return _FakeProcess(f"ERROR: cannot execute {statement} in a read-only transaction")
+        return _FakeProcess(
+            f"ERROR: cannot execute {statement} in a read-only transaction"
+        )
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
 
@@ -266,7 +269,9 @@ async def test_postgresql_cli_blocks_write_statements(statement, postgres_config
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("statement", POSTGRESQL_DDL_CREATE_STATEMENTS)
-async def test_postgresql_cli_blocks_create_statements(statement, postgres_config, monkeypatch):
+async def test_postgresql_cli_blocks_create_statements(
+    statement, postgres_config, monkeypatch
+):
     """All CREATE statements must be blocked in read-only mode."""
 
     connector = PostgreSQLCLIConnector(postgres_config)
@@ -282,7 +287,9 @@ async def test_postgresql_cli_blocks_create_statements(statement, postgres_confi
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("statement", POSTGRESQL_DDL_ALTER_STATEMENTS)
-async def test_postgresql_cli_blocks_alter_statements(statement, postgres_config, monkeypatch):
+async def test_postgresql_cli_blocks_alter_statements(
+    statement, postgres_config, monkeypatch
+):
     """ALTER statements should be rejected by the CLI connector."""
 
     connector = PostgreSQLCLIConnector(postgres_config)
@@ -298,7 +305,9 @@ async def test_postgresql_cli_blocks_alter_statements(statement, postgres_config
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("statement", POSTGRESQL_DDL_DROP_STATEMENTS)
-async def test_postgresql_cli_blocks_drop_statements(statement, postgres_config, monkeypatch):
+async def test_postgresql_cli_blocks_drop_statements(
+    statement, postgres_config, monkeypatch
+):
     """DROP statements must fail in read-only mode."""
 
     connector = PostgreSQLCLIConnector(postgres_config)
@@ -314,7 +323,9 @@ async def test_postgresql_cli_blocks_drop_statements(statement, postgres_config,
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("statement", POSTGRESQL_MAINTENANCE_STATEMENTS)
-async def test_postgresql_cli_blocks_maintenance_statements(statement, postgres_config, monkeypatch):
+async def test_postgresql_cli_blocks_maintenance_statements(
+    statement, postgres_config, monkeypatch
+):
     """Maintenance commands that mutate state should be rejected."""
 
     connector = PostgreSQLCLIConnector(postgres_config)
@@ -330,7 +341,9 @@ async def test_postgresql_cli_blocks_maintenance_statements(statement, postgres_
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("statement", POSTGRESQL_PROCEDURAL_STATEMENTS)
-async def test_postgresql_cli_blocks_procedural_statements(statement, postgres_config, monkeypatch):
+async def test_postgresql_cli_blocks_procedural_statements(
+    statement, postgres_config, monkeypatch
+):
     """Procedural constructs should not bypass read-only enforcement."""
 
     connector = PostgreSQLCLIConnector(postgres_config)
@@ -346,7 +359,9 @@ async def test_postgresql_cli_blocks_procedural_statements(statement, postgres_c
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("statement", POSTGRESQL_LOCK_STATEMENTS)
-async def test_postgresql_cli_blocks_lock_statements(statement, postgres_config, monkeypatch):
+async def test_postgresql_cli_blocks_lock_statements(
+    statement, postgres_config, monkeypatch
+):
     """Locking operations that require write access should fail."""
 
     connector = PostgreSQLCLIConnector(postgres_config)
@@ -436,7 +451,9 @@ async def test_clickhouse_cli_includes_readonly_flag(clickhouse_config, monkeypa
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("statement", CLICKHOUSE_DML_STATEMENTS)
-async def test_clickhouse_cli_blocks_mutations(statement, clickhouse_config, monkeypatch):
+async def test_clickhouse_cli_blocks_mutations(
+    statement, clickhouse_config, monkeypatch
+):
     """Mutating ClickHouse statements must fail under --readonly=1."""
 
     connector = ClickHouseCLIConnector(clickhouse_config)
@@ -470,7 +487,9 @@ async def test_clickhouse_cli_blocks_ddl(statement, clickhouse_config, monkeypat
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("statement", CLICKHOUSE_SYSTEM_STATEMENTS)
-async def test_clickhouse_cli_blocks_system_commands(statement, clickhouse_config, monkeypatch):
+async def test_clickhouse_cli_blocks_system_commands(
+    statement, clickhouse_config, monkeypatch
+):
     """SYSTEM commands that mutate state must be refused."""
 
     connector = ClickHouseCLIConnector(clickhouse_config)
@@ -486,7 +505,9 @@ async def test_clickhouse_cli_blocks_system_commands(statement, clickhouse_confi
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("statement", CLICKHOUSE_KILL_STATEMENTS)
-async def test_clickhouse_cli_blocks_kill_statements(statement, clickhouse_config, monkeypatch):
+async def test_clickhouse_cli_blocks_kill_statements(
+    statement, clickhouse_config, monkeypatch
+):
     """KILL statements also require write permissions and must fail."""
 
     connector = ClickHouseCLIConnector(clickhouse_config)
@@ -548,31 +569,35 @@ def test_postgresql_python_sets_readonly_options(monkeypatch, postgres_config):
     monkeypatch.setattr(psycopg2, "connect", fake_connect)
 
     connector = PostgreSQLPythonConnector(postgres_config)
-    output, truncated = connector._execute_sync_query(
+    output = connector._execute_sync_query(
         host="localhost",
         port=5432,
         database="testdb",
         query="SELECT 1",
-        max_result_bytes=0,
     )
 
     assert output == "col\n1"
-    assert truncated is False
-    assert captured["connect_kwargs"]["options"] == "-c default_transaction_read_only=on"
+    assert (
+        captured["connect_kwargs"]["options"] == "-c default_transaction_read_only=on"
+    )
     assert captured["session_args"] == (True, True)
     assert any("SET statement_timeout" in sql for sql in captured["executed"])
 
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("statement", POSTGRESQL_PYTHON_BLOCKED_STATEMENTS)
-async def test_postgresql_python_blocks_write_statements(statement, postgres_config, monkeypatch):
+async def test_postgresql_python_blocks_write_statements(
+    statement, postgres_config, monkeypatch
+):
     """The Python connector should surface read-only errors for every mutation."""
 
-    def fake_sync_query(self, host, port, database, query, max_result_bytes):
+    def fake_sync_query(self, host, port, database, query):
         assert query == statement
         raise psycopg2.Error("read-only violation")
 
-    monkeypatch.setattr(PostgreSQLPythonConnector, "_execute_sync_query", fake_sync_query)
+    monkeypatch.setattr(
+        PostgreSQLPythonConnector, "_execute_sync_query", fake_sync_query
+    )
 
     connector = PostgreSQLPythonConnector(postgres_config)
 
@@ -612,25 +637,25 @@ def test_clickhouse_python_sets_readonly_setting(monkeypatch, clickhouse_config)
     monkeypatch.setattr(clickhouse_connect, "get_client", fake_get_client)
 
     connector = ClickHousePythonConnector(clickhouse_config)
-    output, truncated = connector._execute_sync_query(
+    output = connector._execute_sync_query(
         host="localhost",
         port=9000,
         database="testdb",
         query="SELECT 1",
-        max_result_bytes=0,
         original_port=9000,
         is_ssh_tunnel=False,
     )
 
     assert output == "col\n1"
-    assert truncated is False
     assert captured["kwargs"]["settings"]["readonly"] == 1
     assert captured["query"] == "SELECT 1"
 
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("statement", CLICKHOUSE_PYTHON_BLOCKED_STATEMENTS)
-async def test_clickhouse_python_blocks_mutations(statement, clickhouse_config, monkeypatch):
+async def test_clickhouse_python_blocks_mutations(
+    statement, clickhouse_config, monkeypatch
+):
     """Ensure the Python ClickHouse connector returns RuntimeError for writes."""
 
     def fake_sync_query(
@@ -639,14 +664,15 @@ async def test_clickhouse_python_blocks_mutations(statement, clickhouse_config, 
         port,
         database,
         query,
-        max_result_bytes,
         original_port=None,
         is_ssh_tunnel=False,
     ):
         assert query == statement
         raise ClickHouseError("Read-only violation")
 
-    monkeypatch.setattr(ClickHousePythonConnector, "_execute_sync_query", fake_sync_query)
+    monkeypatch.setattr(
+        ClickHousePythonConnector, "_execute_sync_query", fake_sync_query
+    )
 
     connector = ClickHousePythonConnector(clickhouse_config)
 
@@ -657,13 +683,17 @@ async def test_clickhouse_python_blocks_mutations(statement, clickhouse_config, 
 
 
 @pytest.mark.anyio
-async def test_postgresql_python_write_attempt_raises_runtime(monkeypatch, postgres_config):
+async def test_postgresql_python_write_attempt_raises_runtime(
+    monkeypatch, postgres_config
+):
     """Write attempts should surface as RuntimeError to the caller."""
 
     def fake_sync_query(self, *args, **kwargs):
         raise psycopg2.Error("read-only violation")
 
-    monkeypatch.setattr(PostgreSQLPythonConnector, "_execute_sync_query", fake_sync_query)
+    monkeypatch.setattr(
+        PostgreSQLPythonConnector, "_execute_sync_query", fake_sync_query
+    )
 
     connector = PostgreSQLPythonConnector(postgres_config)
 
@@ -674,13 +704,17 @@ async def test_postgresql_python_write_attempt_raises_runtime(monkeypatch, postg
 
 
 @pytest.mark.anyio
-async def test_clickhouse_python_write_attempt_raises_runtime(monkeypatch, clickhouse_config):
+async def test_clickhouse_python_write_attempt_raises_runtime(
+    monkeypatch, clickhouse_config
+):
     """Write attempts should surface as RuntimeError when ClickHouse rejects them."""
 
     def fake_sync_query(self, *args, **kwargs):
         raise ClickHouseError("Read-only violation")
 
-    monkeypatch.setattr(ClickHousePythonConnector, "_execute_sync_query", fake_sync_query)
+    monkeypatch.setattr(
+        ClickHousePythonConnector, "_execute_sync_query", fake_sync_query
+    )
 
     connector = ClickHousePythonConnector(clickhouse_config)
 
@@ -702,7 +736,7 @@ async def test_clickhouse_python_readonly(clickhouse_config):
         "INSERT INTO events VALUES (now(), 'test', 'test_type', '{}')",
         "ALTER TABLE events ADD COLUMN test String",
         "DROP TABLE events",
-        "CREATE TABLE test_table (id Int32) ENGINE = Memory"
+        "CREATE TABLE test_table (id Int32) ENGINE = Memory",
     ]
 
     for query in write_queries:
@@ -730,7 +764,7 @@ async def test_clickhouse_cli_readonly(clickhouse_config):
     write_queries = [
         "INSERT INTO events VALUES (now(), 'test', 'test_type', '{}')",
         "CREATE TABLE test_table (id Int32) ENGINE = Memory",
-        "DROP TABLE events"
+        "DROP TABLE events",
     ]
 
     for query in write_queries:
@@ -745,13 +779,15 @@ async def test_clickhouse_cli_readonly(clickhouse_config):
 class TestReadOnlyEnforcement:
     """Test suite for read-only enforcement across all implementations"""
 
-    async def test_all_connectors_block_writes(self, postgres_config, clickhouse_config):
+    async def test_all_connectors_block_writes(
+        self, postgres_config, clickhouse_config
+    ):
         """Verify all connectors block write operations"""
         connectors = [
             ("PostgreSQL Python", PostgreSQLPythonConnector(postgres_config)),
             ("PostgreSQL CLI", PostgreSQLCLIConnector(postgres_config)),
             ("ClickHouse Python", ClickHousePythonConnector(clickhouse_config)),
-            ("ClickHouse CLI", ClickHouseCLIConnector(clickhouse_config))
+            ("ClickHouse CLI", ClickHouseCLIConnector(clickhouse_config)),
         ]
 
         for name, connector in connectors:

@@ -38,8 +38,7 @@ class SSHTunnel:
         loop = asyncio.get_event_loop()
         try:
             return await asyncio.wait_for(
-                loop.run_in_executor(None, self._start_sync),
-                timeout=self.ssh_timeout
+                loop.run_in_executor(None, self._start_sync), timeout=self.ssh_timeout
             )
         except asyncio.TimeoutError:
             # Clean up if timeout occurs
@@ -85,9 +84,13 @@ class SSHTunnel:
                     key_load_errors = []
 
                     # List of key types to try
-                    key_types = [paramiko.Ed25519Key, paramiko.ECDSAKey, paramiko.RSAKey]
+                    key_types = [
+                        paramiko.Ed25519Key,
+                        paramiko.ECDSAKey,
+                        paramiko.RSAKey,
+                    ]
                     # Add DSSKey if it exists (removed in newer Paramiko versions)
-                    if hasattr(paramiko, 'DSSKey'):
+                    if hasattr(paramiko, "DSSKey"):
                         key_types.append(paramiko.DSSKey)
 
                     for key_class in key_types:
@@ -105,13 +108,17 @@ class SSHTunnel:
 
                     if private_key is None:
                         error_details = "; ".join(key_load_errors)
-                        raise ValueError(f"Could not load SSH private key from {key_file}. Tried: {error_details}")
+                        raise ValueError(
+                            f"Could not load SSH private key from {key_file}. Tried: {error_details}"
+                        )
 
                     connect_kwargs["pkey"] = private_key
                 elif self.ssh_config.password:
                     connect_kwargs["password"] = self.ssh_config.password
                 else:
-                    raise ValueError("SSH tunnel requires either private_key or password")
+                    raise ValueError(
+                        "SSH tunnel requires either private_key or password"
+                    )
 
                 # Connect to SSH server
                 logger.info(f"Connecting to SSH server {ssh_host}:{ssh_port}")
@@ -120,7 +127,7 @@ class SSHTunnel:
 
                 # Get a free local port
                 sock = socket.socket()
-                sock.bind(('', 0))
+                sock.bind(("", 0))
                 self.local_port = sock.getsockname()[1]
                 sock.close()
 
@@ -128,16 +135,19 @@ class SSHTunnel:
                 self._stop_event.clear()
                 self.tunnel_thread = threading.Thread(
                     target=self._forward_tunnel,
-                    args=(self.local_port, remote_host, remote_port)
+                    args=(self.local_port, remote_host, remote_port),
                 )
                 self.tunnel_thread.daemon = True
                 self.tunnel_thread.start()
 
                 # Give the tunnel a moment to establish
                 import time
+
                 time.sleep(0.5)
 
-                logger.info(f"SSH tunnel established: localhost:{self.local_port} -> {remote_host}:{remote_port}")
+                logger.info(
+                    f"SSH tunnel established: localhost:{self.local_port} -> {remote_host}:{remote_port}"
+                )
                 tunnel_established = True
                 return self.local_port
 
@@ -170,7 +180,11 @@ class SSHTunnel:
                 raise RuntimeError(f"SSH: Unexpected error - {e}")
             finally:
                 # Clean up on any failure
-                if not tunnel_established and hasattr(self, 'ssh_client') and self.ssh_client:
+                if (
+                    not tunnel_established
+                    and hasattr(self, "ssh_client")
+                    and self.ssh_client
+                ):
                     try:
                         self._stop_sync()
                     except Exception:
@@ -179,8 +193,11 @@ class SSHTunnel:
 
     def _forward_tunnel(self, local_port: int, remote_host: str, remote_port: int):
         """Thread function to handle port forwarding"""
+
         class ForwardServer(threading.Thread):
-            def __init__(self, local_port, remote_host, remote_port, transport, stop_event):
+            def __init__(
+                self, local_port, remote_host, remote_port, transport, stop_event
+            ):
                 super().__init__()
                 self.local_port = local_port
                 self.remote_host = remote_host
@@ -194,7 +211,7 @@ class SSHTunnel:
                 try:
                     self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                     self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                    self.socket.bind(('127.0.0.1', self.local_port))
+                    self.socket.bind(("127.0.0.1", self.local_port))
                     self.socket.listen(5)
                     self.socket.settimeout(1.0)  # Allow periodic checks for stop event
 
@@ -202,8 +219,7 @@ class SSHTunnel:
                         try:
                             client, addr = self.socket.accept()
                             thread = threading.Thread(
-                                target=self.handle_client,
-                                args=(client,)
+                                target=self.handle_client, args=(client,)
                             )
                             thread.daemon = True
                             thread.start()
@@ -223,7 +239,7 @@ class SSHTunnel:
                     channel = self.transport.open_channel(
                         "direct-tcpip",
                         (self.remote_host, self.remote_port),
-                        client_socket.getpeername()
+                        client_socket.getpeername(),
                     )
 
                     while True:
@@ -252,7 +268,9 @@ class SSHTunnel:
                     except (OSError, AttributeError):
                         pass  # Socket might already be closed or None
 
-        server = ForwardServer(local_port, remote_host, remote_port, self.transport, self._stop_event)
+        server = ForwardServer(
+            local_port, remote_host, remote_port, self.transport, self._stop_event
+        )
         server.run()
 
     async def stop(self):

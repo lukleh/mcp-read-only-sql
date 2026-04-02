@@ -2,7 +2,7 @@
 
 import csv
 import io
-from typing import Any, List
+from typing import Any, List, TextIO
 
 
 def format_as_tsv(rows: List[Any], columns: List[str]) -> str:
@@ -20,7 +20,9 @@ def format_as_tsv(rows: List[Any], columns: List[str]) -> str:
         return ""
 
     buffer = io.StringIO()
-    writer = csv.writer(buffer, delimiter="\t", lineterminator="\n", quoting=csv.QUOTE_MINIMAL)
+    writer = csv.writer(
+        buffer, delimiter="\t", lineterminator="\n", quoting=csv.QUOTE_MINIMAL
+    )
 
     if columns:
         writer.writerow([str(col) for col in columns])
@@ -46,8 +48,17 @@ def format_tsv_line(values: List[Any]) -> str:
     """Render a single TSV line (without trailing newline)."""
 
     buffer = io.StringIO()
-    writer = csv.writer(buffer, delimiter="\t", lineterminator="", quoting=csv.QUOTE_MINIMAL)
+    writer = csv.writer(
+        buffer, delimiter="\t", lineterminator="", quoting=csv.QUOTE_MINIMAL
+    )
     normalized = ["" if value is None else str(value) for value in values]
     writer.writerow(normalized)
     return buffer.getvalue()
 
+
+def write_tsv_text_line(handle: TextIO, line: str, wrote_content: bool) -> bool:
+    """Write a preformatted TSV line without adding a trailing newline."""
+    if wrote_content:
+        handle.write("\n")
+    handle.write(line)
+    return True

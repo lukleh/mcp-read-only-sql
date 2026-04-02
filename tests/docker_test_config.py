@@ -6,7 +6,6 @@ from copy import deepcopy
 import os
 from typing import Any, Dict
 
-
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 _DEFAULT_PORTS = {
     "postgresql": 5432,
@@ -28,9 +27,13 @@ def docker_test_ssh_host() -> str:
 def docker_test_port(db_type: str) -> int:
     """Return the externally reachable port for the given Docker-backed database."""
     if db_type == "postgresql":
-        return int(os.environ.get("TEST_POSTGRES_PORT", str(_DEFAULT_PORTS["postgresql"])))
+        return int(
+            os.environ.get("TEST_POSTGRES_PORT", str(_DEFAULT_PORTS["postgresql"]))
+        )
     if db_type == "clickhouse":
-        return int(os.environ.get("TEST_CLICKHOUSE_PORT", str(_DEFAULT_PORTS["clickhouse"])))
+        return int(
+            os.environ.get("TEST_CLICKHOUSE_PORT", str(_DEFAULT_PORTS["clickhouse"]))
+        )
     raise ValueError(f"Unsupported docker test database type: {db_type}")
 
 
@@ -90,9 +93,13 @@ def apply_docker_test_overrides(config: Dict[str, Any]) -> Dict[str, Any]:
         rewritten_servers = []
         for server in servers:
             if isinstance(server, dict):
-                rewritten_servers.append(_rewrite_server_dict(server, db_type, default_port))
+                rewritten_servers.append(
+                    _rewrite_server_dict(server, db_type, default_port)
+                )
             elif isinstance(server, str):
-                rewritten_servers.append(_rewrite_server_string(server, db_type, default_port))
+                rewritten_servers.append(
+                    _rewrite_server_string(server, db_type, default_port)
+                )
             else:
                 rewritten_servers.append(server)
         updated["servers"] = rewritten_servers
@@ -104,17 +111,24 @@ def apply_docker_test_overrides(config: Dict[str, Any]) -> Dict[str, Any]:
     return updated
 
 
-def _rewrite_server_dict(server: Dict[str, Any], db_type: str | None, default_port: int | None) -> Dict[str, Any]:
+def _rewrite_server_dict(
+    server: Dict[str, Any], db_type: str | None, default_port: int | None
+) -> Dict[str, Any]:
     updated = dict(server)
     host = updated.get("host")
     if host in _LOCAL_HOSTS:
         updated["host"] = docker_test_host()
-        if default_port is not None and updated.get("port", default_port) == default_port:
+        if (
+            default_port is not None
+            and updated.get("port", default_port) == default_port
+        ):
             updated["port"] = docker_test_port(db_type)
     return updated
 
 
-def _rewrite_server_string(server: str, db_type: str | None, default_port: int | None) -> str:
+def _rewrite_server_string(
+    server: str, db_type: str | None, default_port: int | None
+) -> str:
     if ":" in server:
         host, raw_port = server.rsplit(":", 1)
         port = int(raw_port)

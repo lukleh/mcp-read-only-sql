@@ -12,14 +12,16 @@ from mcp_read_only_sql.runtime_paths import resolve_runtime_paths
 
 def test_parser_default_implementation():
     """Test that ConfigParser defaults to CLI implementation"""
-    test_config = [{
-        "connection_name": "test_conn",
-        "type": "postgresql",
-        "servers": ["localhost:5432"],
-        "username": "testuser"
-    }]
+    test_config = [
+        {
+            "connection_name": "test_conn",
+            "type": "postgresql",
+            "servers": ["localhost:5432"],
+            "username": "testuser",
+        }
+    ]
 
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
         yaml.dump(test_config, f)
         temp_file = f.name
 
@@ -27,22 +29,26 @@ def test_parser_default_implementation():
         parser = ConfigParser(temp_file)
         loaded = parser.load_config()
 
-        assert loaded[0].get('implementation') == 'cli', "Default implementation should be 'cli'"
+        assert (
+            loaded[0].get("implementation") == "cli"
+        ), "Default implementation should be 'cli'"
     finally:
         os.unlink(temp_file)
 
 
 def test_server_default_implementation(tmp_path):
     """Test that server defaults to CLI implementation when not specified in config"""
-    test_config = [{
-        "connection_name": "test_postgres",
-        "type": "postgresql",
-        "servers": ["localhost:5432"],
-        "username": "testuser",
-        "password": "testpass",
-        "db": "testdb"
-        # Note: implementation not specified - should default to CLI
-    }]
+    test_config = [
+        {
+            "connection_name": "test_postgres",
+            "type": "postgresql",
+            "servers": ["localhost:5432"],
+            "username": "testuser",
+            "password": "testpass",
+            "db": "testdb",
+            # Note: implementation not specified - should default to CLI
+        }
+    ]
 
     config_file = tmp_path / "connections.yaml"
     config_file.write_text(yaml.dump(test_config))
@@ -62,20 +68,24 @@ def test_server_default_implementation(tmp_path):
     # Check it's a CLI connector
     from mcp_read_only_sql.connectors.postgresql.cli import PostgreSQLCLIConnector
 
-    assert isinstance(conn, PostgreSQLCLIConnector), "Should use CLI connector by default"
+    assert isinstance(
+        conn, PostgreSQLCLIConnector
+    ), "Should use CLI connector by default"
 
 
 def test_explicit_python_implementation(tmp_path):
     """Test that explicitly specifying Python implementation still works"""
-    test_config = [{
-        "connection_name": "test_postgres_python",
-        "type": "postgresql",
-        "servers": ["localhost:5432"],
-        "username": "testuser",
-        "password": "testpass",
-        "db": "testdb",
-        "implementation": "python"  # Explicitly specify Python
-    }]
+    test_config = [
+        {
+            "connection_name": "test_postgres_python",
+            "type": "postgresql",
+            "servers": ["localhost:5432"],
+            "username": "testuser",
+            "password": "testpass",
+            "db": "testdb",
+            "implementation": "python",  # Explicitly specify Python
+        }
+    ]
 
     config_file = tmp_path / "connections.yaml"
     config_file.write_text(yaml.dump(test_config))
@@ -93,20 +103,24 @@ def test_explicit_python_implementation(tmp_path):
     # Check it's a Python connector
     from mcp_read_only_sql.connectors.postgresql.python import PostgreSQLPythonConnector
 
-    assert isinstance(conn, PostgreSQLPythonConnector), "Should use Python connector when explicitly specified"
+    assert isinstance(
+        conn, PostgreSQLPythonConnector
+    ), "Should use Python connector when explicitly specified"
 
 
 def test_explicit_cli_implementation(tmp_path):
     """Test that explicitly specifying CLI implementation works"""
-    test_config = [{
-        "connection_name": "test_clickhouse_cli",
-        "type": "clickhouse",
-        "servers": ["localhost:9000"],
-        "username": "testuser",
-        "password": "testpass",
-        "db": "testdb",
-        "implementation": "cli"  # Explicitly specify CLI
-    }]
+    test_config = [
+        {
+            "connection_name": "test_clickhouse_cli",
+            "type": "clickhouse",
+            "servers": ["localhost:9000"],
+            "username": "testuser",
+            "password": "testpass",
+            "db": "testdb",
+            "implementation": "cli",  # Explicitly specify CLI
+        }
+    ]
 
     config_file = tmp_path / "connections.yaml"
     config_file.write_text(yaml.dump(test_config))
@@ -124,4 +138,6 @@ def test_explicit_cli_implementation(tmp_path):
     # Check it's a CLI connector
     from mcp_read_only_sql.connectors.clickhouse.cli import ClickHouseCLIConnector
 
-    assert isinstance(conn, ClickHouseCLIConnector), "Should use CLI connector when explicitly specified"
+    assert isinstance(
+        conn, ClickHouseCLIConnector
+    ), "Should use CLI connector when explicitly specified"

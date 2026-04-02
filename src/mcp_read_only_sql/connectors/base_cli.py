@@ -38,7 +38,9 @@ class BaseCLIConnector(BaseConnector):
             selected_server = self._select_server(server)
 
             # Create tunnel with SSH config and remote server info
-            tunnel = CLISSHTunnel(self.ssh_config, selected_server.host, selected_server.port)
+            tunnel = CLISSHTunnel(
+                self.ssh_config, selected_server.host, selected_server.port
+            )
             local_port = await tunnel.start()
             try:
                 yield local_port

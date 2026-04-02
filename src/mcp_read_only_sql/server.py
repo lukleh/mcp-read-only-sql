@@ -5,11 +5,17 @@ A secure MCP server providing read-only SQL query capabilities for PostgreSQL an
 """
 
 import argparse
+from contextlib import suppress
+from hashlib import blake2b
 from importlib.resources import files
 import logging
+import os
+import re
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
+from uuid import uuid4
 
 from mcp.server.fastmcp import FastMCP
 
@@ -17,7 +23,6 @@ from . import __version__
 from .config import dbeaver_import, load_connections
 from .config.connection import (
     DEFAULT_CONNECTION_TIMEOUT,
-    DEFAULT_MAX_RESULT_BYTES,
     DEFAULT_QUERY_TIMEOUT,
 )
 from .connectors.base import BaseConnector
@@ -25,14 +30,23 @@ from .connectors.clickhouse.cli import ClickHouseCLIConnector
 from .connectors.clickhouse.python import ClickHousePythonConnector
 from .connectors.postgresql.cli import PostgreSQLCLIConnector
 from .connectors.postgresql.python import PostgreSQLPythonConnector
-from .runtime_paths import resolve_runtime_paths, RuntimePaths
+from .runtime_paths import (
+    PRIVATE_DIR_MODE,
+    PRIVATE_FILE_MODE,
+    resolve_runtime_paths,
+    RuntimePaths,
+)
 from .tools import test_connection, test_ssh_tunnel, validate_config
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-SAMPLE_CONNECTIONS_YAML = files("mcp_read_only_sql").joinpath(
-    "connections.yaml.sample"
-).read_text(encoding="utf-8")
+RESULT_FILE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
+RESULT_DIR_HASH_BYTES = 6
+SAMPLE_CONNECTIONS_YAML = (
+    files("mcp_read_only_sql")
+    .joinpath("connections.yaml.sample")
+    .read_text(encoding="utf-8")
+)
 SUBCOMMAND_HANDLERS: dict[str, Callable[[], None]] = {
     "import-dbeaver": dbeaver_import.main,
     "validate-config": validate_config.main,
@@ -68,10 +82,42 @@ class ReadOnlySQLServer:
         self.runtime_paths = runtime_paths
         self.connections: Dict[str, BaseConnector] = {}
 
+        self.runtime_paths.ensure_directories()
         self.mcp = FastMCP("mcp-read-only-sql")
 
         self._load_connections()
         self._setup_tools()
+
+    def _build_result_path(self, connection_name: str) -> Path:
+        """Create a collision-safe result path under the managed state directory."""
+        safe_name = (
+            RESULT_FILE_NAME_RE.sub("-", connection_name).strip("._-") or "query"
+        )
+        digest = blake2b(
+            connection_name.encode("utf-8"), digest_size=RESULT_DIR_HASH_BYTES
+        ).hexdigest()
+        output_dir = self.runtime_paths.results_dir / f"{safe_name}-{digest}"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_dir.chmod(PRIVATE_DIR_MODE)
+
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        return output_dir / f"{timestamp}-{uuid4().hex[:8]}.tsv"
+
+    def _create_result_file(self, connection_name: str) -> Path:
+        """Create an empty managed result file with private permissions."""
+        for _ in range(5):
+            output_path = self._build_result_path(connection_name)
+            try:
+                fd = os.open(
+                    output_path,
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                    PRIVATE_FILE_MODE,
+                )
+            except FileExistsError:
+                continue
+            os.close(fd)
+            return output_path
+        raise FileExistsError("Could not allocate a unique managed result file")
 
     def _load_connections(self) -> None:
         try:
@@ -130,9 +176,8 @@ class ReadOnlySQLServer:
             query: str,
             database: Optional[str] = None,
             server: Optional[str] = None,
-            file_path: Optional[str] = None,
         ) -> str:
-            """Run a read-only SQL query and return TSV output.
+            """Run a read-only SQL query and return a managed TSV result path.
 
             Args:
                 connection_name: Connection name returned by ``list_connections``.
@@ -141,14 +186,11 @@ class ReadOnlySQLServer:
                     allowed database list.
                 server: Optional hostname override targeting a specific configured
                     server. Defaults to the first server for the connection.
-                file_path: Optional file path for writing the full TSV result to
-                    disk. When provided, the tool returns the absolute path to the
-                    written file instead of the TSV payload and refuses to
-                    overwrite an existing file.
 
             Returns:
-                Tab-separated text with a header row followed by result rows, or
-                the absolute output path when ``file_path`` is provided.
+                Absolute path to a TSV file written under the managed state
+                directory for this server instance. Successful query results
+                are retained there until removed by the operator.
             """
             if connection_name not in self.connections:
                 raise ValueError(
@@ -156,21 +198,19 @@ class ReadOnlySQLServer:
                 )
 
             connector = self.connections[connection_name]
-            execute = connector.execute_query_with_timeout
-            if file_path:
-                with connector.disable_result_limit():
-                    result = await execute(query, database=database, server=server)
-
-                output_path = Path(file_path).expanduser().resolve()
-                output_path.parent.mkdir(parents=True, exist_ok=True)
-                try:
-                    with output_path.open("x", encoding="utf-8") as handle:
-                        handle.write(result)
-                except FileExistsError as exc:
-                    raise ValueError(f"File path already exists: {output_path}") from exc
-                return str(output_path)
-
-            return await execute(query, database=database, server=server)
+            output_path = self._create_result_file(connection_name)
+            try:
+                await connector.execute_query_to_file_with_timeout(
+                    query,
+                    output_path,
+                    database=database,
+                    server=server,
+                )
+            except Exception:
+                with suppress(FileNotFoundError):
+                    output_path.unlink()
+                raise
+            return str(output_path.resolve())
 
         @self.mcp.tool()
         async def list_connections() -> str:
@@ -203,8 +243,6 @@ class ReadOnlySQLServer:
                     conn_info["query_timeout"] = connector.query_timeout
                 if connector.connection_timeout != DEFAULT_CONNECTION_TIMEOUT:
                     conn_info["connection_timeout"] = connector.connection_timeout
-                if connector.max_result_bytes != DEFAULT_MAX_RESULT_BYTES:
-                    conn_info["max_result_bytes"] = connector.max_result_bytes
 
                 conn_list.append(conn_info)
 

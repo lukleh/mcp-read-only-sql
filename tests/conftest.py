@@ -223,7 +223,6 @@ def integration_config_file(tmp_path):
   username: testuser
   password: testpass
   query_timeout: 2
-  max_result_bytes: 10000
 """
 
     config_file = tmp_path / "connections.yaml"
@@ -261,7 +260,7 @@ async def call_tool(
 ) -> Dict[str, Any]:
     """
     Helper to call a tool and parse the response.
-    All responses are now in TSV format or plain text (no JSON).
+    Query tools return plain-text paths or TSV payloads (no JSON).
 
     Args:
         session: MCP client session
@@ -287,8 +286,29 @@ async def call_tool(
         if text_content.startswith("Error"):
             return {"success": False, "error": text_content}
 
-        if tool_name == "run_query_read_only" and arguments.get("file_path"):
-            return {"success": True, "file_path": text_content}
+        if tool_name == "run_query_read_only":
+            output_path = Path(text_content)
+            if output_path.exists():
+                file_content = output_path.read_text(encoding="utf-8")
+                lines = file_content.strip().split("\n") if file_content else []
+                if lines:
+                    columns = lines[0].split("\t")
+                    rows = []
+                    for line in lines[1:]:
+                        if line:
+                            rows.append(line.split("\t"))
+                    return {
+                        "success": True,
+                        "file_path": text_content,
+                        "columns": columns,
+                        "rows": rows,
+                        "rowCount": len(rows),
+                    }
+            return {
+                "success": False,
+                "file_path": text_content,
+                "error": f"Result file not found: {text_content}",
+            }
 
         # For list_connections, parse TSV format
         if tool_name == "list_connections":
@@ -343,7 +363,7 @@ async def execute_query(
         query: SQL query to execute
 
     Returns:
-        Query result as dict
+        Query result as dict, including the managed TSV file path on success.
     """
     payload = {"connection_name": connection_name, "query": query}
     if server is not None:
