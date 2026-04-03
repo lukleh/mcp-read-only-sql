@@ -7,6 +7,22 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-04-03
+
+### Added
+
+- Added `ty` as a supported development check for the full packaged `src/` tree.
+
+### Changed
+
+- Added repo-specific `AGENTS.md` guidance covering connector layout, shared timeout and SSH helpers, and the typed development workflow.
+- Reworked `RELEASING.md` into an evergreen release checklist with explicit validation, tagging, and publish steps.
+
+### Fixed
+
+- Flushed the final buffered TSV line when PostgreSQL and ClickHouse CLI queries stream results to an output file.
+- Hardened DBeaver credential import so missing or non-dictionary decrypted sections are ignored cleanly instead of being treated as valid connection data.
+
 ## [0.2.1] - 2026-04-02
 
 ### Added

@@ -31,10 +31,12 @@ class DBeaverImporter:
         self.last_requested_names: List[str] = []
         self.last_seen_names: List[str] = []
 
-    def _decrypt_credentials(self) -> Dict[str, Any]:
+    def _decrypt_credentials(
+        self,
+    ) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
         """Decrypt DBeaver credentials file using OpenSSL with default AES key"""
         if not self.credentials_path.exists():
-            return {}
+            return {}, {}
 
         # DBeaver's default AES key and IV
         key = "babb4a9f774ab853c96c2d653dfe544a"
@@ -60,21 +62,23 @@ class DBeaverImporter:
                 logger.warning(
                     f"Could not decrypt credentials: {result.stderr.decode()}"
                 )
-                return {}
+                return {}, {}
 
             # Skip the first 16 bytes (padding) and parse JSON
             decrypted = result.stdout[16:]
             credentials_data = json.loads(decrypted)
 
             # Extract both connection and SSH credentials
-            credentials = {}
-            ssh_credentials = {}
+            credentials: dict[str, dict[str, Any]] = {}
+            ssh_credentials: dict[str, dict[str, Any]] = {}
             for conn_id, conn_data in credentials_data.items():
                 if isinstance(conn_data, dict):
-                    if "#connection" in conn_data:
-                        credentials[conn_id] = conn_data["#connection"]
-                    if "network/ssh_tunnel" in conn_data:
-                        ssh_credentials[conn_id] = conn_data["network/ssh_tunnel"]
+                    db_connection = conn_data.get("#connection")
+                    if isinstance(db_connection, dict):
+                        credentials[conn_id] = db_connection
+                    ssh_connection = conn_data.get("network/ssh_tunnel")
+                    if isinstance(ssh_connection, dict):
+                        ssh_credentials[conn_id] = ssh_connection
 
             logger.info(
                 f"Successfully decrypted credentials for {len(credentials)} connections"
@@ -83,7 +87,7 @@ class DBeaverImporter:
 
         except (subprocess.SubprocessError, json.JSONDecodeError) as e:
             logger.warning(f"Could not decrypt credentials file: {e}")
-            return {}
+            return {}, {}
 
     def import_connections(
         self, merge_clusters: bool = True, only_names: Optional[List[str]] = None
@@ -98,21 +102,20 @@ class DBeaverImporter:
             data_sources = json.load(handle)
 
         # Try to decrypt credentials
-        decrypt_result = self._decrypt_credentials()
-        if isinstance(decrypt_result, tuple):
-            credentials, ssh_credentials = decrypt_result
-        else:
-            credentials = decrypt_result or {}
-            ssh_credentials = {}
+        credentials, ssh_credentials = self._decrypt_credentials()
 
         if not credentials and self.credentials_path.exists():
             # Fallback: try to read as plaintext JSON (some DBeaver versions don't encrypt)
             try:
                 with self.credentials_path.open("r", encoding="utf-8") as handle:
                     cred_data = json.load(handle)
-                    for conn_id, conn_creds in cred_data.items():
-                        if isinstance(conn_creds, dict) and "#connection" in conn_creds:
-                            credentials[conn_id] = conn_creds["#connection"]
+                    if isinstance(cred_data, dict):
+                        for conn_id, conn_creds in cred_data.items():
+                            if not isinstance(conn_creds, dict):
+                                continue
+                            db_connection = conn_creds.get("#connection")
+                            if isinstance(db_connection, dict):
+                                credentials[conn_id] = db_connection
                     logger.info("Credentials file was not encrypted")
             except (json.JSONDecodeError, UnicodeDecodeError):
                 logger.warning(
@@ -125,10 +128,16 @@ class DBeaverImporter:
             print(f"Filtering: only {len(only_set)} requested connection(s)")
         self.last_requested_names = requested
 
-        connections = []
+        connections: list[dict[str, Any]] = []
         imported_names: List[str] = []
         seen_names: List[str] = []
-        for conn_id, conn_data in data_sources.get("connections", {}).items():
+        connections_data = data_sources.get("connections", {})
+        if not isinstance(connections_data, dict):
+            connections_data = {}
+
+        for conn_id, conn_data in connections_data.items():
+            if not isinstance(conn_data, dict):
+                continue
             original_name = conn_data.get("name", conn_id)
             if only_set and original_name not in only_set:
                 continue
@@ -136,9 +145,7 @@ class DBeaverImporter:
                 seen_names.append(original_name)
             # Pass both DB and SSH credentials
             db_creds = credentials.get(conn_id)
-            ssh_creds = (
-                ssh_credentials.get(conn_id) if "ssh_credentials" in locals() else None
-            )
+            ssh_creds = ssh_credentials.get(conn_id)
             converted = self._convert_connection(
                 conn_id, conn_data, db_creds, ssh_creds
             )
@@ -157,12 +164,14 @@ class DBeaverImporter:
         self,
         conn_id: str,
         conn_data: Dict[str, Any],
-        creds: Dict[str, Any] = None,
-        ssh_creds: Dict[str, Any] = None,
-    ) -> Dict[str, Any]:
+        creds: Optional[Dict[str, Any]] = None,
+        ssh_creds: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
         """Convert a DBeaver connection to our format"""
         provider = conn_data.get("provider", "")
         config = conn_data.get("configuration", {})
+        if not isinstance(config, dict):
+            config = {}
         conn_name = conn_data.get("name", conn_id)
 
         print(f"  Processing: {conn_name}...")
@@ -213,8 +222,14 @@ class DBeaverImporter:
 
         # Check for SSH tunnel configuration
         handlers = config.get("handlers", {})  # handlers is inside configuration
+        if not isinstance(handlers, dict):
+            handlers = {}
         ssh_handler = handlers.get("ssh_tunnel", {})
+        if not isinstance(ssh_handler, dict):
+            ssh_handler = {}
         ssh_props = ssh_handler.get("properties", {}) if ssh_handler else {}
+        if not isinstance(ssh_props, dict):
+            ssh_props = {}
 
         if ssh_handler and ssh_handler.get("enabled"):
             # Get SSH username from credentials or properties
@@ -368,9 +383,13 @@ class DBeaverImporter:
                         )
 
             # Add servers from this connection to the group
+            group_servers = group.get("servers")
+            if not isinstance(group_servers, list):
+                group_servers = []
+                group["servers"] = group_servers
             for server in servers:
-                if server not in group["servers"]:
-                    group["servers"].append(server)
+                if server not in group_servers:
+                    group_servers.append(server)
 
             # Track original DBeaver name
             if (
@@ -381,8 +400,12 @@ class DBeaverImporter:
                 import_part = (
                     conn["description"].split("(imported from DBeaver:")[-1].rstrip(")")
                 )
-                if import_part not in group["original_names"]:
-                    group["original_names"].append(import_part)
+                group_original_names = group.get("original_names")
+                if not isinstance(group_original_names, list):
+                    group_original_names = []
+                    group["original_names"] = group_original_names
+                if import_part not in group_original_names:
+                    group_original_names.append(import_part)
 
         # Return merged groups in original order with updated descriptions
         merged = []

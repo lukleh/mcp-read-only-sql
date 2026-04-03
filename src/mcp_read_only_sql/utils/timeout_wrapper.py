@@ -2,8 +2,8 @@
 
 import asyncio
 import logging
-from typing import Any, Dict, Callable
 from functools import wraps
+from typing import Any, Awaitable, Callable, Dict
 
 logger = logging.getLogger(__name__)
 
@@ -74,11 +74,11 @@ def hard_timeout(timeout_seconds: float = 30.0):
             ...
     """
 
-    def decorator(func: Callable) -> Callable:
+    def decorator(func: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
         @wraps(func)
         async def wrapper(*args, **kwargs):
             # Try to get operation name from function
-            operation_name = func.__name__
+            operation_name = getattr(func, "__name__", "operation")
 
             # Create the coroutine
             coro = func(*args, **kwargs)
@@ -115,12 +115,13 @@ class HardTimeoutMixin:
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         # Get hard timeout from config or use default
-        if hasattr(self, "config"):
-            self.hard_timeout = self.config.get(
-                "hard_timeout", self.DEFAULT_HARD_TIMEOUT
+        config = getattr(self, "config", None)
+        if isinstance(config, dict):
+            self.hard_timeout = float(
+                config.get("hard_timeout", self.DEFAULT_HARD_TIMEOUT)
             )
-        else:
-            self.hard_timeout = self.DEFAULT_HARD_TIMEOUT
+            return
+        self.hard_timeout = self.DEFAULT_HARD_TIMEOUT
 
     async def execute_with_timeout(
         self, coro, operation_name: str = "query"

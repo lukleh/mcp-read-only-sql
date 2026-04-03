@@ -1,6 +1,6 @@
 [project]
 name = "mcp-read-only-sql"
-version = "0.2.1"
+version = "0.2.2"
 description = "MCP server for read-only SQL queries supporting PostgreSQL and ClickHouse"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -39,6 +39,7 @@ dev = [
     "pytest-timeout>=2.2.0",
     "black>=23.0.0",
     "ruff>=0.1.0",
+    "ty>=0.0.28",
 ]
 
 [build-system]
@@ -50,3 +51,6 @@ mcp-read-only-sql = "mcp_read_only_sql.server:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/mcp_read_only_sql"]
+
+[tool.ty.src]
+include = ["src"]
