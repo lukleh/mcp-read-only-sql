@@ -1,109 +1,76 @@
 # Releasing `mcp-read-only-sql`
 
-This repo follows the same package and release model as the other published MCP servers:
+This repository publishes to PyPI from Git tags through GitHub Actions.
 
-- package metadata in `pyproject.toml`
-- tag-driven GitHub Actions publish workflow
-- PyPI trusted publishing via the GitHub `pypi` environment
-- manual approval at the `pypi` environment before the final upload job
+Release automation lives in:
+- `.github/workflows/publish.yml`
+- `.github/workflows/test.yml`
+- the GitHub environment named `pypi`
+- the PyPI trusted publisher for `lukleh/mcp-read-only-sql`
 
-## CLI convention
+## What To Change For A Release
 
-- The public interface starts with the package command: `mcp-read-only-sql`.
-- Repository-facing docs should prefer the root command plus flags or subcommands, not extra top-level helper scripts.
-- This repo already uses subcommands for auxiliary operations:
-  - `mcp-read-only-sql import-dbeaver`
-  - `mcp-read-only-sql validate-config`
-  - `mcp-read-only-sql test-connection`
-  - `mcp-read-only-sql test-ssh-tunnel`
-- Future auxiliary operations should extend that subcommand surface instead of adding new public console entry points.
+Update these files in the release commit:
 
-## Current package status
+1. `CHANGELOG.md`
+   Move the user-visible items from `## [Unreleased]` into a new section:
+   `## [X.Y.Z] - YYYY-MM-DD`
+2. `pyproject.toml`
+   Update `[project].version` to `X.Y.Z`
 
-- PyPI package: published as `0.1.0`
-- Next planned release from current branch: `0.2.2`
-- Publish workflow: active on `main`
-- GitHub `pypi` environment: configured
-- Required reviewer: `lukleh`
-- Self-review: allowed
+Do not expect a tracked `uv.lock` change in this repository. `uv.lock` is
+gitignored here, so it is not part of the release diff.
 
-## Changelog policy
+`RELEASING.md` should stay evergreen. It should explain the process, not carry a
+release-specific version number.
 
-- Keep upcoming user-visible changes under `## [Unreleased]` in `CHANGELOG.md`.
-- On release, move those entries into a dated version section such as `## [0.2.2] - 2026-03-29`.
-- Prefer concise bullets grouped under `Added`, `Changed`, and `Fixed`.
-- When creating GitHub release notes, reuse the matching `CHANGELOG.md` section instead of writing a second summary from scratch.
+## How To Update The Version
 
-## One-time setup
+1. Edit `pyproject.toml`
+2. Refresh the local environment if needed:
 
-### PyPI
+```bash
+uv sync --extra dev
+```
 
-1. Log in to `https://pypi.org`.
-2. Add a trusted publisher for this repository.
-   If the project already exists, use the project's `Manage -> Publishing` page instead of the account-level `Publishing` page.
-   - Project name: `mcp-read-only-sql`
-   - Owner: `lukleh`
-   - Repository: `mcp-read-only-sql`
-   - Workflow filename: `publish.yml`
-   - Environment name: `pypi`
+3. Confirm the installed package metadata and CLI version output match:
 
-### GitHub
+```bash
+uv run --extra dev pytest tests/test_server.py tests/test_cli_versions.py -q -k 'package_version_matches_distribution_metadata or support_version'
+```
 
-1. Create an environment named `pypi`.
-2. Add at least one required reviewer.
-3. Decide whether self-review is allowed.
+## Pre-Release Validation
 
-Current repo configuration:
+Run the normal local checks before tagging:
 
-- Environment: `pypi`
-- Required reviewer: `lukleh`
-- Self-review: allowed
+```bash
+uv run --extra dev ruff check .
+uv run --extra dev ty check
+./run_tests.sh
+```
 
-## Release flow
+If you are iterating on release metadata only, the focused version tests above
+are the minimum sanity check.
 
-1. Update `CHANGELOG.md` for the release.
-2. Confirm `version` in `pyproject.toml` on `main`.
-3. Commit the release changes to `main`.
-4. Push a matching tag:
+## How To Publish
+
+1. Make the release commit on `main`
+2. Create and push the matching tag:
 
 ```bash
 git tag vX.Y.Z
+git push origin main
 git push origin vX.Y.Z
 ```
 
-5. GitHub Actions starts the `Publish` workflow automatically.
-6. The workflow runs the full release gate before approval:
-   - test matrix
-   - package build
-   - wheel smoke tests
-   - sdist smoke tests
-7. The final `publish` job pauses on the GitHub `pypi` environment.
-8. Approve the deployment.
-9. After approval, GitHub uploads the built package to PyPI.
+3. GitHub Actions starts `.github/workflows/publish.yml`
+4. The workflow runs the test matrix, builds the wheel and sdist, and smoke-tests the built artifacts
+5. The final publish job pauses on the GitHub `pypi` environment
+6. Approve the deployment in GitHub Actions
+7. GitHub publishes the package to PyPI
 
-## Prereleases
+## Notes
 
-Use normal PEP 440 prerelease versions in `pyproject.toml`, for example:
-
-- `0.2.0a1`
-- `0.2.0b1`
-- `0.2.0rc1`
-
-Push the matching tag:
-
-```bash
-git tag v0.2.0a1
-git push origin v0.2.0a1
-```
-
-The same workflow and approval gate handle prereleases.
-
-## SQL-specific notes
-
-- Keep both `implementation: cli` and `implementation: python` clearly supported in public docs.
-- `uvx` installs the MCP server package, not system database clients.
-- If users choose CLI mode, the docs should stay explicit about external requirements:
-  - PostgreSQL CLI mode needs `psql`
-  - ClickHouse CLI mode needs `clickhouse-client`
-  - CLI SSH password auth needs `sshpass`
-- Package smoke tests should cover the main server entry point and the management subcommands.
+- Keep both `implementation: cli` and `implementation: python` clearly supported in release notes and docs
+- `uvx` installs the Python package only; it does not install `psql`, `clickhouse-client`, or `sshpass`
+- If the public CLI or result-file behavior changes, keep the package smoke tests and README aligned with `mcp-read-only-sql`
