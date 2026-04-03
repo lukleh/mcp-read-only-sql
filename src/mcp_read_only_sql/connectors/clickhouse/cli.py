@@ -1,9 +1,9 @@
 import asyncio
 import logging
 import os
-from contextlib import asynccontextmanager, nullcontext, suppress
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from ..base_cli import BaseCLIConnector
 from ...utils.ssh_tunnel_cli import CLISSHTunnel
@@ -55,9 +55,10 @@ class ClickHouseCLIConnector(BaseCLIConnector):
         self, query: str, database: Optional[str] = None, server: Optional[str] = None
     ) -> str:
         """Execute a read-only query using clickhouse-client and return raw TSV output"""
-        return await self._run_query(
+        result = await self._run_query(
             query, database=database, server=server, output_path=None
         )
+        return result if result is not None else ""
 
     async def execute_query_to_file(
         self,
@@ -162,35 +163,38 @@ class ClickHouseCLIConnector(BaseCLIConnector):
                         if asyncio.iscoroutine(drain_result):
                             await drain_result
                     stdin.close()
+                elif self.password:
+                    process.kill()
+                    await process.wait()
+                    raise RuntimeError(
+                        "clickhouse-client: failed to create subprocess stdin pipe"
+                    )
 
                 stdout = process.stdout
-                stderr_task = asyncio.create_task(process.stderr.read())
+                stderr_stream = process.stderr
+                if stdout is None or stderr_stream is None:
+                    process.kill()
+                    await process.wait()
+                    raise RuntimeError(
+                        "clickhouse-client: failed to create subprocess pipes"
+                    )
 
-                lines = [] if output_path is None else None
-                pending_line = None
-                wrote_content = False
-
-                def emit_line(line: str) -> None:
-                    nonlocal wrote_content
-                    if output_path is None:
-                        lines.append(line)
-                    else:
-                        wrote_content = write_tsv_text_line(handle, line, wrote_content)
-
+                stderr_task = asyncio.create_task(stderr_stream.read())
+                lines: list[str] = []
                 loop = asyncio.get_event_loop()
                 deadline = loop.time() + self.query_timeout
 
-                async def read_line_with_timeout():
-                    remaining = deadline - loop.time()
-                    if remaining <= 0:
-                        raise asyncio.TimeoutError
-                    return await asyncio.wait_for(stdout.readline(), timeout=remaining)
+                async def stream_output(emit_line: Callable[[str], None]) -> str | None:
+                    pending_line: str | None = None
 
-                with (
-                    Path(output_path).open("w", encoding="utf-8", newline="")
-                    if output_path is not None
-                    else nullcontext()
-                ) as handle:
+                    async def read_line_with_timeout() -> bytes:
+                        remaining = deadline - loop.time()
+                        if remaining <= 0:
+                            raise asyncio.TimeoutError
+                        return await asyncio.wait_for(
+                            stdout.readline(), timeout=remaining
+                        )
+
                     try:
                         while True:
                             line_bytes = await read_line_with_timeout()
@@ -202,7 +206,6 @@ class ClickHouseCLIConnector(BaseCLIConnector):
                             if pending_line is not None:
                                 emit_line(pending_line)
                             pending_line = line
-
                     except asyncio.TimeoutError:
                         logger.warning(
                             "Query timeout - terminating clickhouse-client process"
@@ -217,34 +220,57 @@ class ClickHouseCLIConnector(BaseCLIConnector):
                         raise TimeoutError(
                             f"clickhouse-client: Query timeout after {self.query_timeout}s"
                         )
+                    return pending_line
 
-                try:
-                    await asyncio.wait_for(process.wait(), timeout=1.0)
-                except asyncio.TimeoutError:
-                    logger.error("clickhouse-client process did not terminate cleanly")
-                    process.kill()
-                    await process.wait()
+                async def finalize_process(
+                    emit_line: Callable[[str], None], pending_line: str | None
+                ) -> None:
+                    try:
+                        await asyncio.wait_for(process.wait(), timeout=1.0)
+                    except asyncio.TimeoutError:
+                        logger.error(
+                            "clickhouse-client process did not terminate cleanly"
+                        )
+                        process.kill()
+                        await process.wait()
 
-                if not stderr_task.done():
-                    stderr = await stderr_task
-                else:
-                    stderr = stderr_task.result()
+                    try:
+                        stderr = (
+                            await stderr_task
+                            if not stderr_task.done()
+                            else stderr_task.result()
+                        )
+                    except asyncio.CancelledError:
+                        stderr = b""
 
-                returncode = process.returncode
-                if returncode is None:
-                    logger.debug(
-                        "clickhouse-client process still running after wait(); treating as successful termination"
-                    )
-                if returncode not in (0, None):
-                    error_msg = stderr.decode() if stderr else "Unknown error"
-                    logger.error(f"clickhouse-client error: {error_msg}")
-                    raise RuntimeError(f"clickhouse-client: {error_msg}")
+                    returncode = process.returncode
+                    if returncode is None:
+                        logger.debug(
+                            "clickhouse-client process still running after wait(); treating as successful termination"
+                        )
+                    if returncode not in (0, None):
+                        error_msg = stderr.decode() if stderr else "Unknown error"
+                        logger.error(f"clickhouse-client error: {error_msg}")
+                        raise RuntimeError(f"clickhouse-client: {error_msg}")
 
-                if pending_line not in (None, ""):
-                    emit_line(pending_line)
+                    if pending_line not in (None, ""):
+                        emit_line(pending_line)
 
                 if output_path is None:
+                    pending_line = await stream_output(lines.append)
+                    await finalize_process(lines.append, pending_line)
                     return "\n".join(lines)
+
+                wrote_content = False
+
+                def emit_file_line(line: str) -> None:
+                    nonlocal wrote_content
+                    wrote_content = write_tsv_text_line(handle, line, wrote_content)
+
+                assert output_path is not None
+                with Path(output_path).open("w", encoding="utf-8", newline="") as handle:
+                    pending_line = await stream_output(emit_file_line)
+                    await finalize_process(emit_file_line, pending_line)
                 return None
 
             except FileNotFoundError:

@@ -234,7 +234,7 @@ class ClickHousePythonConnector(BaseConnector):
         port: int,
         database: str,
         query: str,
-        original_port: int = None,
+        original_port: Optional[int] = None,
         is_ssh_tunnel: bool = False,
         output_path: Optional[str] = None,
     ) -> str:
@@ -294,9 +294,9 @@ class ClickHousePythonConnector(BaseConnector):
         port: int,
         database: str,
         query: str,
-        original_port: int = None,
+        original_port: Optional[int] = None,
         is_ssh_tunnel: bool = False,
-        output_path: Optional[str] = None,
+        output_path: str = "",
     ) -> None:
         """Execute query synchronously and stream raw TSV output to a file."""
         client = None

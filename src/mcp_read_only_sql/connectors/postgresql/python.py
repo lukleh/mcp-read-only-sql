@@ -90,10 +90,13 @@ class PostgreSQLPythonConnector(BaseConnector):
             raise TimeoutError(
                 f"PostgreSQL: Operation exceeded combined timeout of {self.connection_timeout + self.query_timeout} seconds"
             )
-        except psycopg_errors.QueryCanceled as e:
-            logger.error(f"PostgreSQL query canceled: {e}")
-            raise TimeoutError(f"PostgreSQL: {e}")
         except psycopg2.Error as e:
+            query_canceled_type = getattr(psycopg_errors, "QueryCanceled", None)
+            if isinstance(query_canceled_type, type) and isinstance(
+                e, query_canceled_type
+            ):
+                logger.error(f"PostgreSQL query canceled: {e}")
+                raise TimeoutError(f"PostgreSQL: {e}")
             # Database-specific errors get prefixed
             logger.error(f"PostgreSQL database error: {e}")
             raise RuntimeError(f"PostgreSQL: {e}")

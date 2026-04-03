@@ -1,8 +1,9 @@
 import asyncio
 import logging
-import socket
 import select
+import socket
 import threading
+
 import paramiko
 
 logger = logging.getLogger(__name__)
@@ -28,7 +29,7 @@ class SSHTunnel:
         self.ssh_timeout = ssh_config.ssh_timeout or self.DEFAULT_SSH_TIMEOUT
         self.ssh_client = None
         self.transport = None
-        self.local_port = None
+        self.local_port: int | None = None
         self.tunnel_thread = None
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
@@ -49,6 +50,7 @@ class SSHTunnel:
         """Synchronous tunnel start using Paramiko"""
         with self._lock:
             if self.ssh_client and self.transport and self.transport.is_active():
+                assert self.local_port is not None
                 return self.local_port
 
             tunnel_established = False
@@ -149,6 +151,7 @@ class SSHTunnel:
                     f"SSH tunnel established: localhost:{self.local_port} -> {remote_host}:{remote_port}"
                 )
                 tunnel_established = True
+                assert self.local_port is not None
                 return self.local_port
 
             except ValueError as e:

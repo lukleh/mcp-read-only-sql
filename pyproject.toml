@@ -54,16 +54,3 @@ packages = ["src/mcp_read_only_sql"]
 
 [tool.ty.src]
 include = ["src"]
-exclude = [
-    "src/mcp_read_only_sql/config/connection.py",
-    "src/mcp_read_only_sql/config/dbeaver_import.py",
-    "src/mcp_read_only_sql/config/loader.py",
-    "src/mcp_read_only_sql/connectors/clickhouse/cli.py",
-    "src/mcp_read_only_sql/connectors/clickhouse/python.py",
-    "src/mcp_read_only_sql/connectors/postgresql/cli.py",
-    "src/mcp_read_only_sql/connectors/postgresql/python.py",
-    "src/mcp_read_only_sql/tools/test_ssh_tunnel.py",
-    "src/mcp_read_only_sql/utils/json_serializer.py",
-    "src/mcp_read_only_sql/utils/ssh_tunnel.py",
-    "src/mcp_read_only_sql/utils/timeout_wrapper.py",
-]

@@ -1,7 +1,7 @@
 """Connection configuration loader."""
 
 from pathlib import Path
-from typing import Dict
+from typing import Any, Dict, cast
 
 import yaml
 
@@ -35,16 +35,18 @@ def load_connections(yaml_path: str | Path) -> Dict[str, Connection]:
     if not isinstance(raw_configs, list):
         raise ValueError("Configuration file must contain a list of connections")
 
-    connections = {}
-    errors = []
+    connections: Dict[str, Connection] = {}
+    errors: list[str] = []
 
     for idx, config in enumerate(raw_configs):
         if not isinstance(config, dict):
             errors.append(f"Connection #{idx+1}: must be a dictionary")
             continue
 
+        config_dict = cast(Dict[str, Any], config)
+
         try:
-            conn = Connection(config)
+            conn = Connection(config_dict)
 
             # Check for duplicate names
             if conn.name in connections:
@@ -54,7 +56,7 @@ def load_connections(yaml_path: str | Path) -> Dict[str, Connection]:
 
         except Exception as e:
             # Get connection name if available for better error messages
-            name = config.get("connection_name", f"#{idx+1}")
+            name = config_dict.get("connection_name", f"#{idx+1}")
             errors.append(f"Connection '{name}': {e}")
 
     if errors:

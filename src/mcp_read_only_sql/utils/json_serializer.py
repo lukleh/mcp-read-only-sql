@@ -10,16 +10,16 @@ from typing import Any
 class DatabaseJSONEncoder(json.JSONEncoder):
     """Simple JSON encoder that converts unknown types to strings."""
 
-    def default(self, obj: Any) -> Any:
+    def default(self, o: Any) -> Any:
         """Convert non-JSON-serializable objects to strings."""
         # Try to convert numeric types to float
         try:
-            return float(obj)
+            return float(o)
         except (TypeError, ValueError):
             pass
 
         # For any other non-serializable type, convert to string
-        return str(obj)
+        return str(o)
 
 
 def serialize_result(result: dict) -> str:

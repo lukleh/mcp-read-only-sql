@@ -48,6 +48,8 @@ async def test_ssh_tunnels(
 
         for name, connection in ssh_connections.items():
             ssh_config = connection.ssh_tunnel
+            if ssh_config is None:
+                continue
             impl = connection.implementation
             servers = connection.servers
 

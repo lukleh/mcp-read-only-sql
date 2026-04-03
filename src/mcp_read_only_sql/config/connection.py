@@ -109,7 +109,7 @@ class SSHTunnelConfig:
                 raise ValueError("SSH tunnel timeout must be a positive integer")
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "SSHTunnelConfig":
+    def from_dict(cls, data: Dict[str, Any]) -> Optional["SSHTunnelConfig"]:
         """Create SSHTunnelConfig from dict with validation."""
         if not data.get("enabled", True):
             return None
