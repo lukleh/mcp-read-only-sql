@@ -39,6 +39,7 @@ dev = [
     "pytest-timeout>=2.2.0",
     "black>=23.0.0",
     "ruff>=0.1.0",
+    "ty>=0.0.28",
 ]
 
 [build-system]
@@ -50,3 +51,19 @@ mcp-read-only-sql = "mcp_read_only_sql.server:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/mcp_read_only_sql"]
+
+[tool.ty.src]
+include = ["src"]
+exclude = [
+    "src/mcp_read_only_sql/config/connection.py",
+    "src/mcp_read_only_sql/config/dbeaver_import.py",
+    "src/mcp_read_only_sql/config/loader.py",
+    "src/mcp_read_only_sql/connectors/clickhouse/cli.py",
+    "src/mcp_read_only_sql/connectors/clickhouse/python.py",
+    "src/mcp_read_only_sql/connectors/postgresql/cli.py",
+    "src/mcp_read_only_sql/connectors/postgresql/python.py",
+    "src/mcp_read_only_sql/tools/test_ssh_tunnel.py",
+    "src/mcp_read_only_sql/utils/json_serializer.py",
+    "src/mcp_read_only_sql/utils/ssh_tunnel.py",
+    "src/mcp_read_only_sql/utils/timeout_wrapper.py",
+]
