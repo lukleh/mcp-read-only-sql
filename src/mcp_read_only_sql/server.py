@@ -14,13 +14,13 @@ import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, TypeAlias
 from uuid import uuid4
 
 from mcp.server.fastmcp import FastMCP
 
 from . import __version__
-from .config import dbeaver_import, load_connections
+from .config import Connection, dbeaver_import, load_connections_from_text
 from .config.connection import (
     DEFAULT_CONNECTION_TIMEOUT,
     DEFAULT_QUERY_TIMEOUT,
@@ -42,6 +42,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 RESULT_FILE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
 RESULT_DIR_HASH_BYTES = 6
+ConfigMarker: TypeAlias = tuple[int, int] | None
 SAMPLE_CONNECTIONS_YAML = (
     files("mcp_read_only_sql")
     .joinpath("connections.yaml.sample")
@@ -81,6 +82,7 @@ class ReadOnlySQLServer:
     def __init__(self, runtime_paths: RuntimePaths):
         self.runtime_paths = runtime_paths
         self.connections: Dict[str, BaseConnector] = {}
+        self._connections_config_marker: ConfigMarker = None
 
         self.runtime_paths.ensure_directories()
         self.mcp = FastMCP("mcp-read-only-sql")
@@ -120,52 +122,102 @@ class ReadOnlySQLServer:
         raise FileExistsError("Could not allocate a unique managed result file")
 
     def _load_connections(self) -> None:
+        """Load connections during startup and remember the current config marker."""
         try:
-            connections_config = load_connections(self.runtime_paths.connections_file)
-
-            errors = []
-
-            for conn_name, connection in connections_config.items():
-                try:
-                    if connection.db_type == "postgresql":
-                        if connection.implementation == "cli":
-                            self.connections[conn_name] = PostgreSQLCLIConnector(
-                                connection
-                            )
-                        else:
-                            self.connections[conn_name] = PostgreSQLPythonConnector(
-                                connection
-                            )
-                    elif connection.db_type == "clickhouse":
-                        if connection.implementation == "cli":
-                            self.connections[conn_name] = ClickHouseCLIConnector(
-                                connection
-                            )
-                        else:
-                            self.connections[conn_name] = ClickHousePythonConnector(
-                                connection
-                            )
-
-                    logger.info(
-                        "Loaded connection: %s (%s, %s)",
-                        conn_name,
-                        connection.db_type,
-                        connection.implementation,
-                    )
-
-                except ImportError as exc:
-                    errors.append(f"  - {conn_name}: Missing dependency - {exc}")
-                except Exception as exc:
-                    errors.append(f"  - {conn_name}: {exc}")
-
-            if errors:
-                error_msg = "Failed to load some connections:\n" + "\n".join(errors)
-                logger.error(error_msg)
-                raise RuntimeError(error_msg)
-
+            self.connections, self._connections_config_marker = self._build_connections()
         except Exception as exc:
             logger.error("Failed to load connections: %s", exc)
             raise
+
+    def _read_connections_config_marker(self) -> ConfigMarker:
+        """Return a lightweight marker for the current connections.yaml state."""
+        try:
+            stat_result = self.runtime_paths.connections_file.stat()
+        except FileNotFoundError:
+            return None
+        return (stat_result.st_mtime_ns, stat_result.st_size)
+
+    def _build_connector(self, connection: Connection) -> BaseConnector:
+        """Create the correct connector implementation for a validated connection."""
+        if connection.db_type == "postgresql":
+            if connection.implementation == "cli":
+                return PostgreSQLCLIConnector(connection)
+            return PostgreSQLPythonConnector(connection)
+        if connection.db_type == "clickhouse":
+            if connection.implementation == "cli":
+                return ClickHouseCLIConnector(connection)
+            return ClickHousePythonConnector(connection)
+        raise ValueError(f"Unsupported database type: {connection.db_type}")
+
+    def _read_connections_config_snapshot(self) -> tuple[str, ConfigMarker]:
+        """Read connections.yaml once and return content with its matching marker."""
+        yaml_file = self.runtime_paths.connections_file.expanduser()
+        try:
+            with open(yaml_file, encoding="utf-8") as f:
+                yaml_text = f.read()
+                stat_result = os.fstat(f.fileno())
+        except FileNotFoundError as exc:
+            raise FileNotFoundError(
+                f"Configuration file not found: {self.runtime_paths.connections_file}"
+            ) from exc
+        return yaml_text, (stat_result.st_mtime_ns, stat_result.st_size)
+
+    def _build_connections(self) -> tuple[Dict[str, BaseConnector], ConfigMarker]:
+        """Build a fresh connector map from one config snapshot without mutating state."""
+        yaml_text, marker = self._read_connections_config_snapshot()
+        connections_config = load_connections_from_text(
+            yaml_text, self.runtime_paths.connections_file
+        )
+        built_connections: Dict[str, BaseConnector] = {}
+        errors = []
+
+        for conn_name, connection in connections_config.items():
+            try:
+                built_connections[conn_name] = self._build_connector(connection)
+                logger.info(
+                    "Loaded connection: %s (%s, %s)",
+                    conn_name,
+                    connection.db_type,
+                    connection.implementation,
+                )
+            except ImportError as exc:
+                errors.append(f"  - {conn_name}: Missing dependency - {exc}")
+            except Exception as exc:
+                errors.append(f"  - {conn_name}: {exc}")
+
+        if errors:
+            error_msg = "Failed to load some connections:\n" + "\n".join(errors)
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
+
+        return built_connections, marker
+
+    def _reload_connections_if_needed(self) -> None:
+        """Reload connections.yaml if it changed, preserving the last good config on errors."""
+        previous_marker = self._connections_config_marker
+        current_marker = self._read_connections_config_marker()
+        if current_marker == previous_marker:
+            return
+
+        logger.info("Detected change in %s; reloading connections", self.runtime_paths.connections_file)
+        try:
+            new_connections, new_marker = self._build_connections()
+        except Exception as exc:
+            logger.warning(
+                "Failed to reload connections from %s; keeping %s previously loaded connection(s): %s",
+                self.runtime_paths.connections_file,
+                len(self.connections),
+                exc,
+            )
+            return
+
+        self.connections = new_connections
+        self._connections_config_marker = new_marker
+        logger.info(
+            "Reloaded %s connection(s) from %s",
+            len(self.connections),
+            self.runtime_paths.connections_file,
+        )
 
     def _setup_tools(self) -> None:
         """Setup MCP tools using FastMCP decorators."""
@@ -192,6 +244,7 @@ class ReadOnlySQLServer:
                 directory for this server instance. Successful query results
                 are retained there until removed by the operator.
             """
+            self._reload_connections_if_needed()
             if connection_name not in self.connections:
                 raise ValueError(
                     f"Connection '{connection_name}' not found. Available connections: {', '.join(self.connections.keys())}"
@@ -223,6 +276,7 @@ class ReadOnlySQLServer:
                 hosts for each connection, while ``database`` and ``databases``
                 describe the default database and allowed database list.
             """
+            self._reload_connections_if_needed()
             conn_list = []
 
             for conn_name, connector in self.connections.items():
