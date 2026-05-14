@@ -278,8 +278,8 @@ def validate_config(
                         "ℹ️  SSH tunnel password is configured in connections.yaml"
                     )
                 else:
-                    errors.append(
-                        "SSH authentication missing - set ssh_tunnel.private_key or ssh_tunnel.password"
+                    infos.append(
+                        "ℹ️  SSH tunnel will use ssh-agent / ~/.ssh/config (no inline credentials)"
                     )
 
             # Report results
