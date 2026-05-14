@@ -17,7 +17,9 @@ logger = logging.getLogger(__name__)
 class CLISSHTunnel:
     """SSH tunnel using system SSH command"""
 
-    DEFAULT_SSH_TIMEOUT = 5  # seconds
+    DEFAULT_SSH_TIMEOUT = 30  # seconds — generous default to accommodate
+    # interactive auth (Skotty fingerprint scan, hardware tokens, etc.)
+    # before the first SSH cert lands in the agent.
 
     def __init__(self, ssh_config, remote_host: str, remote_port: int):
         """
@@ -130,26 +132,31 @@ class CLISSHTunnel:
                 preexec_fn=os.setsid,  # Create new process group for cleanup
             )
 
-            # Give SSH time to establish the tunnel
-            await asyncio.sleep(0.5)
-
-            # Check if process is still running
-            if self.ssh_process.returncode is not None:
-                # Process exited, get error
-                _, stderr = await self.ssh_process.communicate()
-                error_msg = stderr.decode() if stderr else "SSH tunnel failed to start"
-                raise RuntimeError(f"SSH: {error_msg}")
-
-            # Verify tunnel is working by trying to connect
-            try:
-                reader, writer = await asyncio.wait_for(
-                    asyncio.open_connection("127.0.0.1", self.local_port), timeout=2.0
-                )
-                writer.close()
-                await writer.wait_closed()
-            except (asyncio.TimeoutError, ConnectionRefusedError):
-                # Tunnel might still be establishing, give it more time
-                await asyncio.sleep(1.0)
+            # Poll the local forwarded port until ssh has finished
+            # authenticating and the listener is actually accepting
+            # connections. Without this loop, interactive auth (Skotty
+            # fingerprint, U2F, password prompt) blows past the old
+            # fixed sleep and the connector races into a Connection
+            # refused on the local port.
+            poll_interval = 0.25
+            while True:
+                if self.ssh_process.returncode is not None:
+                    _, stderr = await self.ssh_process.communicate()
+                    error_msg = (
+                        stderr.decode() if stderr else "SSH tunnel failed to start"
+                    )
+                    raise RuntimeError(f"SSH: {error_msg}")
+                try:
+                    reader, writer = await asyncio.wait_for(
+                        asyncio.open_connection("127.0.0.1", self.local_port),
+                        timeout=poll_interval,
+                    )
+                    writer.close()
+                    await writer.wait_closed()
+                    break
+                except (asyncio.TimeoutError, ConnectionRefusedError, OSError):
+                    await asyncio.sleep(poll_interval)
+                    continue
 
             logger.info(f"SSH tunnel established on local port {self.local_port}")
             return self.local_port
