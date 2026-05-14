@@ -37,7 +37,7 @@ See [READ_ONLY_ENFORCEMENT_MATRIX.md](READ_ONLY_ENFORCEMENT_MATRIX.md) for a sta
 - **Read-only enforcement** - Multiple layers of protection against writes
 - **Multi-database support** - PostgreSQL and ClickHouse
 - **Dual implementations** - Choose between Python (pure Python, no dependencies) or CLI (uses `psql`/`clickhouse-client`)
-- **SSH tunnel support** - Both implementations support key authentication; Python uses Paramiko for passwords and CLI uses `sshpass` for password-based tunnels
+- **SSH tunnel support** - Both implementations support key authentication, password authentication (Paramiko in Python, `sshpass` in CLI), and falling back to the local ssh-agent / `~/.ssh/config` when no credentials are provided
 - **Security built-in** - Timeouts, managed result files, session controls
 - **DBeaver import** - Import existing connections easily
 
@@ -331,3 +331,4 @@ When multiple servers are specified in a connection's configuration, the system 
 ### SSH Authentication
 - **Python implementation**: Supports both `ssh_tunnel.password` and `ssh_tunnel.private_key`
 - **CLI implementation**: Supports key-based authentication and can use passwords when `sshpass` is installed
+- **SSH agent / OpenSSH config fallback**: Omit both `private_key` and `password` to use the local ssh-agent and `~/.ssh/config`. The Python implementation lets paramiko discover keys via `look_for_keys`/`allow_agent`; the CLI implementation invokes system `ssh`, which honors agent identities and config Host blocks. Useful for short-lived certificates issued by tools like Skotty.

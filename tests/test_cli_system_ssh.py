@@ -83,24 +83,23 @@ class TestCLISystemSSH:
         assert int(count_value) > 0  # Should have events
 
     async def test_system_ssh_without_private_key(self):
-        """Configurator must supply credentials when enabling SSH"""
+        """SSH config without private_key/password is allowed (ssh-agent fallback)."""
         from conftest import make_connection
 
-        with pytest.raises(
-            ValueError, match="requires either 'private_key' or 'password'"
-        ):
-            make_connection(
-                {
-                    "connection_name": "pg_cli_default_ssh",
-                    "type": "postgresql",
-                    "servers": [{"host": "mcp-postgres-private", "port": 5432}],
-                    "db": "testdb",
-                    "username": "testuser",
-                    "password": "testpass",
-                    "ssh_tunnel": docker_test_ssh_tunnel(),
-                    # Missing credentials should be rejected up front
-                }
-            )
+        config = make_connection(
+            {
+                "connection_name": "pg_cli_default_ssh",
+                "type": "postgresql",
+                "servers": [{"host": "mcp-postgres-private", "port": 5432}],
+                "db": "testdb",
+                "username": "testuser",
+                "password": "testpass",
+                "ssh_tunnel": docker_test_ssh_tunnel(),
+            }
+        )
+        assert config.ssh_tunnel is not None
+        assert config.ssh_tunnel.private_key is None
+        assert config.ssh_tunnel.password is None
 
     async def test_system_ssh_disabled(self):
         """Test CLI connectors work normally when SSH is disabled"""

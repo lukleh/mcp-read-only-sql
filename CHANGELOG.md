@@ -7,6 +7,14 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- SSH tunnels accept configurations without `private_key` or `password`. When
+  neither is supplied the Python implementation lets paramiko fall back to
+  ssh-agent and `~/.ssh/*` discovery, and the CLI implementation invokes
+  system `ssh` with no `-i` flag, so `~/.ssh/config` Host blocks and agent
+  identities (e.g. Skotty short-lived certs) are honored.
+
 ## [0.2.2] - 2026-04-03
 
 ### Added

@@ -117,10 +117,8 @@ class SSHTunnel:
                     connect_kwargs["pkey"] = private_key
                 elif self.ssh_config.password:
                     connect_kwargs["password"] = self.ssh_config.password
-                else:
-                    raise ValueError(
-                        "SSH tunnel requires either private_key or password"
-                    )
+                # Otherwise fall through: paramiko will use ssh-agent and
+                # ~/.ssh/* keys via look_for_keys=True / allow_agent=True.
 
                 # Connect to SSH server
                 logger.info(f"Connecting to SSH server {ssh_host}:{ssh_port}")
