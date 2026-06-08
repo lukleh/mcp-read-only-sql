@@ -15,6 +15,10 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
   system `ssh` with no `-i` flag, so agent-loaded identities and matching
   identity options can be used. The configured SSH host, user, and port are
   still passed explicitly.
+- CLI SSH tunnel startup now defaults to 30 seconds to accommodate system
+  `ssh` interactive approval flows. Python/Paramiko startup keeps its 5 second
+  default; set `ssh_tunnel.ssh_timeout` lower when fail-fast behavior is
+  preferred for unreachable bastions.
 
 ## [0.2.6] - 2026-06-08
 

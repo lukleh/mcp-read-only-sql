@@ -17,9 +17,9 @@ logger = logging.getLogger(__name__)
 class CLISSHTunnel:
     """SSH tunnel using system SSH command"""
 
-    DEFAULT_SSH_TIMEOUT = 30  # seconds — generous default to accommodate
-    # interactive auth (Skotty fingerprint scan, hardware tokens, etc.)
-    # before the first SSH cert lands in the agent.
+    DEFAULT_SSH_TIMEOUT = 30  # seconds — generous CLI-only default to accommodate
+    # system ssh interactive auth (Skotty fingerprint scan, hardware tokens,
+    # etc.) before the first SSH cert lands in the agent.
 
     def __init__(self, ssh_config, remote_host: str, remote_port: int):
         """
