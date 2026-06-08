@@ -30,6 +30,7 @@ def build_stub_server(
     server = ReadOnlySQLServer.__new__(ReadOnlySQLServer)
     server.runtime_paths = runtime_paths
     server.connections = {connector.name: connector}
+    server._connections_config_marker = None
     server.mcp = FastMCP("mcp-read-only-sql-test")
     server._setup_tools()
     return server

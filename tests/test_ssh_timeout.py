@@ -80,13 +80,18 @@ class TestSSHTimeout:
         # Test CLI implementation
         connector = PostgreSQLCLIConnector(config)
 
-        with pytest.raises(RuntimeError) as exc_info:
+        start_time = asyncio.get_event_loop().time()
+        with pytest.raises(TimeoutError) as exc_info:
             await connector.execute_query("SELECT 1")
 
-        # The actual error might be connection refused (if it tries localhost port)
-        # or a psql connection error. Either way, it should fail.
-        error_msg = str(exc_info.value).lower()
-        assert "connection refused" in error_msg or "psql" in error_msg
+        elapsed = asyncio.get_event_loop().time() - start_time
+
+        # The CLI implementation now waits for the forwarded local port to
+        # accept connections, so unreachable SSH hosts should fail via the SSH
+        # startup timeout instead of racing into psql against a closed port.
+        assert elapsed < 4, f"SSH timeout took {elapsed:.1f}s, expected ~2s"
+        assert elapsed > 1.5, f"SSH timeout too fast {elapsed:.1f}s, expected ~2s"
+        assert "SSH: Connection timeout after 2s" in str(exc_info.value)
 
     @pytest.mark.timeout(10)  # Kill test after 10 seconds
     async def test_default_ssh_timeout(self):

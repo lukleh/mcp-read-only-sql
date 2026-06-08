@@ -15,6 +15,24 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
   system `ssh` with no `-i` flag, so `~/.ssh/config` Host blocks and agent
   identities (e.g. Skotty short-lived certs) are honored.
 
+## [0.2.6] - 2026-06-08
+
+### Fixed
+
+- Resolved the `psql` / `clickhouse-client` CLI binaries through an explicit lookup (env override → `PATH` → OS-aware fallback) instead of relying solely on `PATH`. Homebrew keg-only `libpq` installs on macOS, where `psql` is not symlinked onto `PATH`, now work without manual `PATH` setup. The resolved path can be pinned with `MCP_READ_ONLY_SQL_PSQL_PATH` / `MCP_READ_ONLY_SQL_CLICKHOUSE_CLIENT_PATH`, and is cached per connector.
+
+## [0.2.5] - 2026-04-21
+
+### Added
+
+- Added hot-reload regression tests covering connection add/change/remove flows, invalid live edits, and config changes that happen during a reload attempt.
+
+### Fixed
+
+- Reloaded `connections.yaml` automatically before both `list_connections` and `run_query_read_only`, without requiring an MCP server restart.
+- Kept hot-reload state atomic by building connectors from a single file snapshot and only storing a config marker for the exact snapshot that was actually loaded.
+- Preserved the last known good connections when live config edits are invalid or the config file is temporarily missing, while continuing to retry reloads on later tool calls.
+
 ## [0.2.2] - 2026-04-03
 
 ### Added
