@@ -51,6 +51,8 @@ See [READ_ONLY_ENFORCEMENT_MATRIX.md](READ_ONLY_ENFORCEMENT_MATRIX.md) for a sta
 
 Install the optional CLI binaries with your operating system's package manager or the official PostgreSQL / ClickHouse packages for your environment.
 
+The CLI binaries are located via the override environment variable (`MCP_READ_ONLY_SQL_PSQL_PATH` / `MCP_READ_ONLY_SQL_CLICKHOUSE_CLIENT_PATH`) if set, then `PATH`, then OS-specific fallback locations (e.g. Homebrew keg-only `libpq` on macOS, packaged PostgreSQL directories on Linux). If a binary is installed somewhere not on `PATH`, set the matching variable to its full path.
+
 The SQL package keeps both execution models first-class:
 
 - `implementation: cli` uses the official database client binaries you already trust in operations.

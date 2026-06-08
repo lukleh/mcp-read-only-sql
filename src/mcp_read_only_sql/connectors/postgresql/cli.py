@@ -75,9 +75,11 @@ class PostgreSQLCLIConnector(BaseCLIConnector):
                 COMMIT;
             """
 
-            # Build psql command with individual parameters
+            # Build psql command with individual parameters.
+            # Resolve the client binary explicitly so installs that are not on
+            # PATH (e.g. Homebrew keg-only libpq on macOS) still work.
             cmd = [
-                "psql",
+                self._resolve_binary("psql"),
                 "--single-transaction",
                 "-v",
                 "ON_ERROR_STOP=1",
