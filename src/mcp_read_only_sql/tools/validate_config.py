@@ -279,7 +279,7 @@ def validate_config(
                     )
                 else:
                     infos.append(
-                        "ℹ️  SSH tunnel will use ssh-agent / ~/.ssh/config (no inline credentials)"
+                        "ℹ️  SSH tunnel will use ssh-agent identities (no inline credentials)"
                     )
 
             # Report results

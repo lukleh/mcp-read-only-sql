@@ -100,9 +100,9 @@ class SSHTunnelConfig:
 
     def __post_init__(self):
         """Validate SSH tunnel configuration."""
-        # When neither private_key nor password is supplied, fall back to the
-        # local SSH agent / OpenSSH configuration. This supports setups like
-        # Skotty where short-lived certs live only in ssh-agent.
+        # When neither private_key nor password is supplied, fall back to
+        # agent-loaded identities. This supports setups like Skotty where
+        # short-lived certs live only in ssh-agent.
         if self.ssh_timeout is not None:
             if self.ssh_timeout <= 0:
                 raise ValueError("SSH tunnel timeout must be a positive integer")

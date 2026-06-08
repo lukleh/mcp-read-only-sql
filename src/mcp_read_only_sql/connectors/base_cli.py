@@ -17,6 +17,8 @@ logger = logging.getLogger(__name__)
 class BaseCLIConnector(BaseConnector):
     """Base class for CLI connectors with system SSH support"""
 
+    DEFAULT_SSH_TIMEOUT = CLISSHTunnel.DEFAULT_SSH_TIMEOUT
+
     def __init__(self, connection: Connection):
         super().__init__(connection)
         self._ssh_tunnel = None

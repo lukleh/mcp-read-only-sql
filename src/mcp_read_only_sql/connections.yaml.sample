@@ -111,11 +111,11 @@
     user: ssh_user
     password: change_me
 
-# SSH tunnel using only ssh-agent / ~/.ssh/config (no inline credentials).
+# SSH tunnel using only ssh-agent identities (no inline credentials).
 # Useful with short-lived certs from tools like Skotty: omit `private_key`
 # and `password` and let paramiko / system ssh discover the agent identity.
 - connection_name: remote_postgres_ssh_agent
-  description: Remote PostgreSQL via SSH using ssh-agent / OpenSSH config
+  description: Remote PostgreSQL via SSH using ssh-agent
   type: postgresql
   implementation: python
   servers:
@@ -126,7 +126,7 @@
   ssh_tunnel:
     host: bastion.example.com
     user: tunnel_user
-    # No private_key / password — uses ssh-agent and ~/.ssh/config
+    # No private_key / password — uses ssh-agent identities
 
 # ============================================================================
 # SECURITY-LIMITED CONNECTIONS

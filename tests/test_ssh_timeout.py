@@ -7,6 +7,7 @@ import pytest
 import asyncio
 from mcp_read_only_sql.connectors.postgresql.python import PostgreSQLPythonConnector
 from mcp_read_only_sql.connectors.postgresql.cli import PostgreSQLCLIConnector
+from mcp_read_only_sql.utils.ssh_tunnel_cli import CLISSHTunnel
 
 
 @pytest.mark.anyio
@@ -94,8 +95,8 @@ class TestSSHTimeout:
         assert "SSH: Connection timeout after 2s" in str(exc_info.value)
 
     @pytest.mark.timeout(10)  # Kill test after 10 seconds
-    async def test_default_ssh_timeout(self):
-        """Test that default SSH timeout is 5 seconds"""
+    async def test_python_default_ssh_timeout(self):
+        """Test that Python SSH default timeout is 5 seconds"""
         from conftest import make_connection
 
         config = make_connection(
@@ -130,3 +131,33 @@ class TestSSHTimeout:
         assert elapsed < 7, f"SSH timeout took {elapsed:.1f}s, expected ~5s"
         assert elapsed > 4, f"SSH timeout too fast {elapsed:.1f}s, expected ~5s"
         assert "SSH: Connection timeout after 5s" in str(exc_info.value)
+
+    async def test_cli_default_ssh_timeout_budget_matches_tunnel(self):
+        """CLI hard timeout budget should include the CLI tunnel startup default."""
+        from conftest import make_connection
+
+        config = make_connection(
+            {
+                "connection_name": "cli_default_timeout_budget_test",
+                "type": "postgresql",
+                "servers": [{"host": "internal-db", "port": 5432}],
+                "db": "testdb",
+                "username": "testuser",
+                "password": "testpass",
+                "ssh_tunnel": {
+                    "enabled": True,
+                    "host": "bastion.example.com",
+                    "port": 22,
+                    "user": "tunnel",
+                },
+            }
+        )
+
+        connector = PostgreSQLCLIConnector(config)
+
+        assert connector.ssh_timeout == CLISSHTunnel.DEFAULT_SSH_TIMEOUT
+        assert connector.hard_timeout == (
+            CLISSHTunnel.DEFAULT_SSH_TIMEOUT
+            + connector.connection_timeout
+            + connector.query_timeout
+        )
