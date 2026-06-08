@@ -7,6 +7,10 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Resolved the `psql` / `clickhouse-client` CLI binaries through an explicit lookup (env override → `PATH` → OS-aware fallback) instead of relying solely on `PATH`. Homebrew keg-only `libpq` installs on macOS, where `psql` is not symlinked onto `PATH`, now work without manual `PATH` setup. The resolved path can be pinned with `MCP_READ_ONLY_SQL_PSQL_PATH` / `MCP_READ_ONLY_SQL_CLICKHOUSE_CLIENT_PATH`, and is cached per connector.
+
 ## [0.2.5] - 2026-04-21
 
 ### Added

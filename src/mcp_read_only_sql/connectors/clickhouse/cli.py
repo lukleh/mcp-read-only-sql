@@ -110,9 +110,11 @@ class ClickHouseCLIConnector(BaseCLIConnector):
             # Use specified database or configured database (validated)
             db_name = self._resolve_database(database)
 
-            # Build clickhouse-client command with read-only enforcement
+            # Build clickhouse-client command with read-only enforcement.
+            # Resolve the client binary explicitly so installs that are not on
+            # PATH still work (mirrors the psql connector).
             cmd = [
-                "clickhouse-client",
+                self._resolve_binary("clickhouse-client"),
                 "--host",
                 host,
                 "--port",
