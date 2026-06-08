@@ -112,14 +112,14 @@ class TestSSHTunnelConfig:
                 {"host": "bastion.example.com", "private_key": "~/.ssh/id_rsa"}
             )
 
-    def test_ssh_tunnel_no_auth_method(self):
-        """Test SSH tunnel validation catches missing auth"""
-        with pytest.raises(
-            ValueError, match="requires either 'private_key' or 'password'"
-        ):
-            SSHTunnelConfig.from_dict(
-                {"host": "bastion.example.com", "user": "tunneluser"}
-            )
+    def test_ssh_tunnel_agent_only_auth(self):
+        """SSH tunnel may omit credentials to fall back to ssh-agent identities"""
+        config = SSHTunnelConfig.from_dict(
+            {"host": "bastion.example.com", "user": "tunneluser"}
+        )
+        assert config is not None
+        assert config.private_key is None
+        assert config.password is None
 
     def test_ssh_tunnel_disabled(self):
         """Test SSH tunnel returns None when disabled"""

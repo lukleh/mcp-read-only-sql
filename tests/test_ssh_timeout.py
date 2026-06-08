@@ -7,6 +7,7 @@ import pytest
 import asyncio
 from mcp_read_only_sql.connectors.postgresql.python import PostgreSQLPythonConnector
 from mcp_read_only_sql.connectors.postgresql.cli import PostgreSQLCLIConnector
+from mcp_read_only_sql.utils.ssh_tunnel_cli import CLISSHTunnel
 
 
 @pytest.mark.anyio
@@ -80,17 +81,22 @@ class TestSSHTimeout:
         # Test CLI implementation
         connector = PostgreSQLCLIConnector(config)
 
-        with pytest.raises(RuntimeError) as exc_info:
+        start_time = asyncio.get_event_loop().time()
+        with pytest.raises(TimeoutError) as exc_info:
             await connector.execute_query("SELECT 1")
 
-        # The actual error might be connection refused (if it tries localhost port)
-        # or a psql connection error. Either way, it should fail.
-        error_msg = str(exc_info.value).lower()
-        assert "connection refused" in error_msg or "psql" in error_msg
+        elapsed = asyncio.get_event_loop().time() - start_time
+
+        # The CLI implementation now waits for the forwarded local port to
+        # accept connections, so unreachable SSH hosts should fail via the SSH
+        # startup timeout instead of racing into psql against a closed port.
+        assert elapsed < 4, f"SSH timeout took {elapsed:.1f}s, expected ~2s"
+        assert elapsed > 1.5, f"SSH timeout too fast {elapsed:.1f}s, expected ~2s"
+        assert "SSH: Connection timeout after 2s" in str(exc_info.value)
 
     @pytest.mark.timeout(10)  # Kill test after 10 seconds
-    async def test_default_ssh_timeout(self):
-        """Test that default SSH timeout is 5 seconds"""
+    async def test_python_default_ssh_timeout(self):
+        """Test that Python SSH default timeout is 5 seconds"""
         from conftest import make_connection
 
         config = make_connection(
@@ -125,3 +131,33 @@ class TestSSHTimeout:
         assert elapsed < 7, f"SSH timeout took {elapsed:.1f}s, expected ~5s"
         assert elapsed > 4, f"SSH timeout too fast {elapsed:.1f}s, expected ~5s"
         assert "SSH: Connection timeout after 5s" in str(exc_info.value)
+
+    async def test_cli_default_ssh_timeout_budget_matches_tunnel(self):
+        """CLI hard timeout budget should include the CLI tunnel startup default."""
+        from conftest import make_connection
+
+        config = make_connection(
+            {
+                "connection_name": "cli_default_timeout_budget_test",
+                "type": "postgresql",
+                "servers": [{"host": "internal-db", "port": 5432}],
+                "db": "testdb",
+                "username": "testuser",
+                "password": "testpass",
+                "ssh_tunnel": {
+                    "enabled": True,
+                    "host": "bastion.example.com",
+                    "port": 22,
+                    "user": "tunnel",
+                },
+            }
+        )
+
+        connector = PostgreSQLCLIConnector(config)
+
+        assert connector.ssh_timeout == CLISSHTunnel.DEFAULT_SSH_TIMEOUT
+        assert connector.hard_timeout == (
+            CLISSHTunnel.DEFAULT_SSH_TIMEOUT
+            + connector.connection_timeout
+            + connector.query_timeout
+        )
