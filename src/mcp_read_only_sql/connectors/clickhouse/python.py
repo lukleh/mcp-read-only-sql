@@ -2,15 +2,14 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager, closing
 from pathlib import Path
-from typing import Optional
 
 import clickhouse_connect
 from clickhouse_connect.driver.exceptions import ClickHouseError
 
-from ..base import BaseConnector
 from ...utils.sql_guard import sanitize_read_only_sql
-from ...utils.tsv_formatter import format_tsv_line
 from ...utils.ssh_tunnel_cli import CLISSHTunnel
+from ...utils.tsv_formatter import format_tsv_line
+from ..base import BaseConnector
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +21,7 @@ class ClickHousePythonConnector(BaseConnector):
         return 8123  # HTTP port (clickhouse-connect default)
 
     @asynccontextmanager
-    async def _get_ssh_tunnel(self, server: Optional[str] = None):
+    async def _get_ssh_tunnel(self, server: str | None = None):
         """Override SSH tunnel to ensure we tunnel to correct HTTP/HTTPS port for clickhouse-connect"""
         if not self.ssh_config:
             yield None
@@ -78,7 +77,7 @@ class ClickHousePythonConnector(BaseConnector):
             await cli_tunnel.stop()
 
     async def execute_query(
-        self, query: str, database: Optional[str] = None, server: Optional[str] = None
+        self, query: str, database: str | None = None, server: str | None = None
     ) -> str:
         """Execute a read-only query using clickhouse-connect and return TSV"""
         return await self._run_executor_query(
@@ -89,8 +88,8 @@ class ClickHousePythonConnector(BaseConnector):
         self,
         query: str,
         output_path: Path,
-        database: Optional[str] = None,
-        server: Optional[str] = None,
+        database: str | None = None,
+        server: str | None = None,
     ) -> None:
         """Execute a read-only query using clickhouse-connect and stream TSV to a file."""
         await self._run_executor_query(
@@ -105,10 +104,10 @@ class ClickHousePythonConnector(BaseConnector):
         self,
         worker,
         query: str,
-        database: Optional[str] = None,
-        server: Optional[str] = None,
+        database: str | None = None,
+        server: str | None = None,
         *,
-        output_path: Optional[str] = None,
+        output_path: str | None = None,
     ):
         """Resolve connection settings and run a synchronous worker in the executor."""
         sanitized_query = sanitize_read_only_sql(query)
@@ -170,7 +169,7 @@ class ClickHousePythonConnector(BaseConnector):
         # Let other exceptions (programming errors) propagate unchanged
 
     def _resolve_client_endpoint(
-        self, port: int, original_port: Optional[int], is_ssh_tunnel: bool
+        self, port: int, original_port: int | None, is_ssh_tunnel: bool
     ) -> tuple[str, int]:
         """Map configured ClickHouse ports onto the HTTP(S) client endpoint."""
         config_port = original_port if original_port is not None else port
@@ -206,7 +205,7 @@ class ClickHousePythonConnector(BaseConnector):
         host: str,
         port: int,
         database: str,
-        original_port: Optional[int],
+        original_port: int | None,
         is_ssh_tunnel: bool,
     ):
         """Create a configured clickhouse-connect client for this endpoint."""
@@ -234,9 +233,9 @@ class ClickHousePythonConnector(BaseConnector):
         port: int,
         database: str,
         query: str,
-        original_port: Optional[int] = None,
+        original_port: int | None = None,
         is_ssh_tunnel: bool = False,
-        output_path: Optional[str] = None,
+        output_path: str | None = None,
     ) -> str:
         """Execute query synchronously and return TSV output."""
         if output_path is not None:
@@ -294,7 +293,7 @@ class ClickHousePythonConnector(BaseConnector):
         port: int,
         database: str,
         query: str,
-        original_port: Optional[int] = None,
+        original_port: int | None = None,
         is_ssh_tunnel: bool = False,
         output_path: str = "",
     ) -> None:
@@ -309,24 +308,23 @@ class ClickHousePythonConnector(BaseConnector):
                 is_ssh_tunnel,
             )
 
-            with Path(output_path).open("wb") as handle:
-                with closing(
-                    client.raw_stream(
-                        query,
-                        fmt="TabSeparatedWithNames",
-                        settings={
-                            "readonly": 1,
-                            "max_execution_time": self.query_timeout,
-                        },
-                    )
-                ) as stream:
-                    while True:
-                        chunk = stream.read(64 * 1024)
-                        if not chunk:
-                            break
-                        if isinstance(chunk, str):
-                            chunk = chunk.encode("utf-8")
-                        handle.write(chunk)
+            with Path(output_path).open("wb") as handle, closing(
+                client.raw_stream(
+                    query,
+                    fmt="TabSeparatedWithNames",
+                    settings={
+                        "readonly": 1,
+                        "max_execution_time": self.query_timeout,
+                    },
+                )
+            ) as stream:
+                while True:
+                    chunk = stream.read(64 * 1024)
+                    if not chunk:
+                        break
+                    if isinstance(chunk, str):
+                        chunk = chunk.encode("utf-8")
+                    handle.write(chunk)
         finally:
             if client:
                 client.close()

@@ -1,5 +1,6 @@
 import os
 import tempfile
+
 import yaml
 
 from mcp_read_only_sql.config.parser import ConfigParser

@@ -1,14 +1,14 @@
-#!/usr/bin/env python3
 """
 Result serialization tests
 Tests that query results with various data types are properly returned in TSV format
 """
 
 import pytest
-from mcp_read_only_sql.connectors.postgresql.python import PostgreSQLPythonConnector
-from mcp_read_only_sql.connectors.postgresql.cli import PostgreSQLCLIConnector
-from mcp_read_only_sql.connectors.clickhouse.python import ClickHousePythonConnector
+
 from mcp_read_only_sql.connectors.clickhouse.cli import ClickHouseCLIConnector
+from mcp_read_only_sql.connectors.clickhouse.python import ClickHousePythonConnector
+from mcp_read_only_sql.connectors.postgresql.cli import PostgreSQLCLIConnector
+from mcp_read_only_sql.connectors.postgresql.python import PostgreSQLPythonConnector
 from tests.docker_test_config import docker_test_server
 
 

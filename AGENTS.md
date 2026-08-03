@@ -11,11 +11,11 @@
 - `just validate` — lint `connections.yaml` against the schema and safety checks.
 - `just test` — spin up Dockerized fixtures and execute the full pytest suite via `./run_tests.sh`.
 - `uv run python -m pytest tests/test_sql_guard.py` — run an individual module when iterating quickly.
-- `uv run ruff check .` and `uv run black .` — run linting and formatting for the Python tree.
+- `uv run ruff check .` — lint the Python tree.
 - `uv run ty check` — type-check the full `src/` tree; there are no remaining package excludes.
 
 ## Coding Style & Naming Conventions
-Target Python 3.11+, four-space indentation, and Unix newlines. Format with `uv run black .`, lint via `uv run ruff check .`, and keep `uv run ty check` passing for `src/`. Modules and callables use snake_case, classes PascalCase (e.g., `TestReadOnlyGuards`), and immutable settings uppercase (`DEFAULT_QUERY_TIMEOUT`). Apply type hints on public surfaces and keep docstrings brief, emphasizing read-only guarantees and connector behavior.
+Target Python 3.11+, four-space indentation, and Unix newlines. Lint via `uv run ruff check .` and keep `uv run ty check` passing for `src/`. Modules and callables use snake_case, classes PascalCase (e.g., `TestReadOnlyGuards`), and immutable settings uppercase (`DEFAULT_QUERY_TIMEOUT`). Apply type hints on public surfaces and keep docstrings brief, emphasizing read-only guarantees and connector behavior.
 
 ## Testing Guidelines
 Pytest discovers `test_*.py` modules, `Test*` classes, and `test_*` functions per `pytest.ini`. Use the built-in markers (`security`, `cli`, `python`, `ssh`, `slow`) to scope runs, e.g. `pytest -m "security and not slow"`. A 30s default timeout applies, so tear down tunnels and subprocesses explicitly. `just test` emits JUnit XML at `test-results/pytest.xml` for CI uploads.

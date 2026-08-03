@@ -40,8 +40,10 @@ Changelog = "https://github.com/lukleh/mcp-read-only-sql/blob/main/CHANGELOG.md"
 dev = [
     "pytest>=7.0.0",
     "pytest-timeout>=2.2.0",
-    "black>=23.0.0",
-    "ruff>=0.1.0",
+    # uv.lock is gitignored here, so CI resolves this fresh every run; keep
+    # ruff pinned to one minor so a new release cannot change lint behavior
+    # under CI silently. Bumping the pin is a deliberate, separate change.
+    "ruff>=0.16,<0.17",
     "ty>=0.0.28",
     "vulture>=2.16",
 ]
@@ -57,11 +59,21 @@ mcp-read-only-sql = "mcp_read_only_sql.server:main"
 packages = ["src/mcp_read_only_sql"]
 
 [tool.ruff.lint]
-# State the rule set explicitly. The dev extra tracks the latest ruff, and
-# ruff 0.16 widened its implicit defaults (UP, I, BLE, SIM, DTZ, ...), which
-# turned CI red on unchanged code. These four are the set the tree is written
-# against; widening it is a deliberate, separate change.
-select = ["E4", "E7", "E9", "F"]
+# Rule set: ruff 0.16's implicit defaults (E4/E7/E9/F plus UP, I, BLE, SIM,
+# DTZ, ...). The ruff minor-version pin in the dev extra keeps that implicit
+# set deterministic — a new ruff minor cannot silently change lint behavior.
+# The opt-outs below are deliberate, not backlog:
+ignore = [
+    # Broad `except Exception` at the MCP tool boundaries is this server's
+    # documented design ("let exceptions propagate; the framework handles
+    # them") — the catch-all handlers exist to translate failures into tool
+    # results, not to hide bugs.
+    "BLE001",
+    # The exception types raised to callers are observable API behavior;
+    # changing them (e.g. TypeError vs ValueError) is out of scope for a
+    # lint pass.
+    "TRY004",
+]
 
 [tool.ty.src]
 include = ["src"]

@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import logging
 import select
 import socket
@@ -41,7 +42,7 @@ class SSHTunnel:
             return await asyncio.wait_for(
                 loop.run_in_executor(None, self._start_sync), timeout=self.ssh_timeout
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             # Clean up if timeout occurs
             self._stop_sync()
             raise TimeoutError(f"SSH: Connection timeout after {self.ssh_timeout}s")
@@ -165,15 +166,12 @@ class SSHTunnel:
             except paramiko.SSHException as e:
                 logger.error(f"SSH connection error: {e}")
                 raise RuntimeError(f"SSH: {e}")
-            except socket.timeout:
+            except TimeoutError:
                 logger.error(f"SSH connection timed out after {self.ssh_timeout}s")
                 raise TimeoutError(f"SSH: Connection timeout after {self.ssh_timeout}s")
-            except socket.error as e:
+            except OSError as e:
                 logger.error(f"Network error: {e}")
                 raise RuntimeError(f"SSH: Network error - {e}")
-            except (IOError, OSError) as e:
-                logger.error(f"System error: {e}")
-                raise RuntimeError(f"SSH: {e}")
             except Exception as e:
                 # Catch any other unexpected exceptions
                 logger.error(f"Unexpected error establishing SSH tunnel: {e}")
@@ -186,11 +184,9 @@ class SSHTunnel:
                     and hasattr(self, "ssh_client")
                     and self.ssh_client
                 ):
-                    try:
+                    # Don't mask the original exception
+                    with contextlib.suppress(Exception):
                         self._stop_sync()
-                    except Exception:
-                        # Don't mask the original exception
-                        pass
 
     def _forward_tunnel(self, local_port: int, remote_host: str, remote_port: int):
         """Thread function to handle port forwarding"""
@@ -218,13 +214,13 @@ class SSHTunnel:
 
                     while not self.stop_event.is_set():
                         try:
-                            client, addr = self.socket.accept()
+                            client, _addr = self.socket.accept()
                             thread = threading.Thread(
                                 target=self.handle_client, args=(client,)
                             )
                             thread.daemon = True
                             thread.start()
-                        except socket.timeout:
+                        except TimeoutError:
                             continue
                         except Exception as e:
                             if not self.stop_event.is_set():
@@ -244,7 +240,7 @@ class SSHTunnel:
                     )
 
                     while True:
-                        r, w, x = select.select([client_socket, channel], [], [])
+                        r, _w, _x = select.select([client_socket, channel], [], [])
                         if client_socket in r:
                             data = client_socket.recv(1024)
                             if not data:

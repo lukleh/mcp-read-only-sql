@@ -7,6 +7,35 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Dev tooling: pinned `ruff>=0.16,<0.17` in the dev extra (uv.lock is
+  gitignored, so CI previously linted with whatever ruff was latest), widened
+  the CI lint scope from `src/ tests/` to `ruff check .` to match the
+  RELEASING.md gate, and removed the unused `black` dev dependency.
+- Adopted ruff 0.16's default rule set (the minor-version pin keeps that
+  implicit set deterministic) with two documented opt-outs: `BLE001` (broad
+  `except Exception` at MCP tool boundaries is this server's documented
+  design) and `TRY004` (raised exception types are observable API behavior,
+  out of scope for a lint pass). The code was modernized accordingly, with no
+  behavior change: PEP 585/604 annotations (`list[str]`, `X | None`), sorted
+  imports, `TimeoutError`/`OSError` instead of their pre-3.11 aliases,
+  `contextlib.suppress` for intentional swallow-and-continue cleanup,
+  explicit `check=False` on `subprocess.run` calls, combined nested `with`
+  statements, and removal of stray shebang lines from modules that are only
+  ever imported or invoked via the console script. A dead duplicate
+  `except OSError` handler in `utils/ssh_tunnel.py` (unreachable since
+  `socket.error`/`IOError` are `OSError` aliases) was dropped. Intentional
+  naive-`datetime` uses (backup-filename timestamps, serialization tests) and
+  the connectors' local blocking file writes carry per-line `noqa` markers
+  instead of blanket ignores.
+- Fixed the five `ty check` diagnostics so the documented pre-release type
+  gate passes again: typed `list_connections`' row-building dict in
+  `server.py`, and the DBeaver dry-run diff preview in
+  `config/dbeaver_import.py` now keys its comparison maps only by string
+  `connection_name` values (a non-string name could previously crash the
+  preview's `sorted()` call).
+
 ## [0.4.0] - 2026-08-03
 
 ### Changed

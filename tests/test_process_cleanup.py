@@ -1,10 +1,12 @@
 """Test that CLI processes are properly cleaned up on timeout"""
 
 import asyncio
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
-from mcp_read_only_sql.connectors.postgresql.cli import PostgreSQLCLIConnector
+
 from mcp_read_only_sql.connectors.clickhouse.cli import ClickHouseCLIConnector
+from mcp_read_only_sql.connectors.postgresql.cli import PostgreSQLCLIConnector
 
 
 @pytest.mark.anyio
@@ -46,12 +48,9 @@ async def test_postgresql_cli_process_cleanup_on_timeout():
 
     # Create an async function that will be cancelled
     async def long_running_communicate():
-        try:
-            await asyncio.sleep(10)  # Simulate long query
-            return b"result", b""
-        except asyncio.CancelledError:
-            # Re-raise to simulate actual behavior
-            raise
+        # CancelledError propagates naturally, matching actual behavior
+        await asyncio.sleep(10)  # Simulate long query
+        return b"result", b""
 
     mock_process.communicate = long_running_communicate
 
@@ -60,7 +59,7 @@ async def test_postgresql_cli_process_cleanup_on_timeout():
             # The connector has a 0.1 second timeout
             await connector.execute_query("SELECT pg_sleep(10)")
             assert False, "Should have timed out"
-        except (asyncio.TimeoutError, RuntimeError) as e:
+        except (TimeoutError, RuntimeError) as e:
             # Expected - the query timed out
             # The connector wraps TimeoutError in RuntimeError
             assert "timed out" in str(e).lower() or isinstance(e, asyncio.TimeoutError)
@@ -108,12 +107,9 @@ async def test_clickhouse_cli_process_cleanup_on_timeout():
 
     # Create an async function that will be cancelled
     async def long_running_communicate():
-        try:
-            await asyncio.sleep(10)  # Simulate long query
-            return b"result", b""
-        except asyncio.CancelledError:
-            # Re-raise to simulate actual behavior
-            raise
+        # CancelledError propagates naturally, matching actual behavior
+        await asyncio.sleep(10)  # Simulate long query
+        return b"result", b""
 
     mock_process.communicate = long_running_communicate
 
@@ -122,7 +118,7 @@ async def test_clickhouse_cli_process_cleanup_on_timeout():
             # The connector has a 0.1 second timeout
             await connector.execute_query("SELECT sleep(10)")
             assert False, "Should have timed out"
-        except (asyncio.TimeoutError, RuntimeError) as e:
+        except (TimeoutError, RuntimeError) as e:
             # Expected - the query timed out
             # The connector wraps TimeoutError in RuntimeError
             assert "timed out" in str(e).lower() or isinstance(e, asyncio.TimeoutError)

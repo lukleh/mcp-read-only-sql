@@ -2,14 +2,13 @@
 Base class for CLI connectors with system SSH support
 """
 
-from typing import Optional
-from contextlib import asynccontextmanager
 import logging
+from contextlib import asynccontextmanager
 
-from .base import BaseConnector
-from ..config import Connection
 from ..cli_binaries import resolve_cli_binary
+from ..config import Connection
 from ..utils.ssh_tunnel_cli import CLISSHTunnel
+from .base import BaseConnector
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +43,7 @@ class BaseCLIConnector(BaseConnector):
         return cached
 
     @asynccontextmanager
-    async def _get_ssh_tunnel(self, server: Optional[str] = None):
+    async def _get_ssh_tunnel(self, server: str | None = None):
         """
         Context manager for SSH tunnel using system SSH
 

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 SSH Tunnel tests
 Tests SSH tunnel connectivity through bastion host to private databases
@@ -6,13 +5,15 @@ Tests SSH tunnel connectivity through bastion host to private databases
 
 import os
 import tempfile
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
+
 import paramiko
-from mcp_read_only_sql.connectors.postgresql.python import PostgreSQLPythonConnector
-from mcp_read_only_sql.connectors.clickhouse.python import ClickHousePythonConnector
-from mcp_read_only_sql.utils.ssh_tunnel import SSHTunnel
+import pytest
+
 from conftest import make_connection
+from mcp_read_only_sql.connectors.clickhouse.python import ClickHousePythonConnector
+from mcp_read_only_sql.connectors.postgresql.python import PostgreSQLPythonConnector
+from mcp_read_only_sql.utils.ssh_tunnel import SSHTunnel
 from tests.docker_test_config import (
     docker_test_server,
     docker_test_ssh_tunnel,
@@ -322,18 +323,17 @@ class TestSSHKeyAutoDetection:
 
         with patch(
             "paramiko.Ed25519Key.from_private_key_file", return_value=mock_ed25519_key
-        ):
-            with patch("paramiko.SSHClient"):
-                SSHTunnel(ssh_config, "db.internal", 5432)
-                # The key should be attempted to load when start() is called
-                # We're just testing the key loading logic here
+        ), patch("paramiko.SSHClient"):
+            SSHTunnel(ssh_config, "db.internal", 5432)
+            # The key should be attempted to load when start() is called
+            # We're just testing the key loading logic here
 
-                # Verify Ed25519 is tried first
-                assert paramiko.Ed25519Key in [
-                    paramiko.Ed25519Key,
-                    paramiko.ECDSAKey,
-                    paramiko.RSAKey,
-                ]
+            # Verify Ed25519 is tried first
+            assert paramiko.Ed25519Key in [
+                paramiko.Ed25519Key,
+                paramiko.ECDSAKey,
+                paramiko.RSAKey,
+            ]
 
     def test_rsa_key_loading(self):
         """Test that RSA keys are correctly auto-detected and loaded"""
@@ -354,22 +354,19 @@ class TestSSHKeyAutoDetection:
         with patch(
             "paramiko.Ed25519Key.from_private_key_file",
             side_effect=Exception("Not Ed25519"),
-        ):
-            with patch(
-                "paramiko.ECDSAKey.from_private_key_file",
-                side_effect=Exception("Not ECDSA"),
-            ):
-                with patch(
-                    "paramiko.RSAKey.from_private_key_file", return_value=mock_rsa_key
-                ):
-                    with patch("paramiko.SSHClient"):
-                        SSHTunnel(ssh_config, "db.internal", 5432)
-                        # Verify the key type order includes RSA
-                        assert paramiko.RSAKey in [
-                            paramiko.Ed25519Key,
-                            paramiko.ECDSAKey,
-                            paramiko.RSAKey,
-                        ]
+        ), patch(
+            "paramiko.ECDSAKey.from_private_key_file",
+            side_effect=Exception("Not ECDSA"),
+        ), patch(
+            "paramiko.RSAKey.from_private_key_file", return_value=mock_rsa_key
+        ), patch("paramiko.SSHClient"):
+            SSHTunnel(ssh_config, "db.internal", 5432)
+            # Verify the key type order includes RSA
+            assert paramiko.RSAKey in [
+                paramiko.Ed25519Key,
+                paramiko.ECDSAKey,
+                paramiko.RSAKey,
+            ]
 
     def test_ecdsa_key_loading(self):
         """Test that ECDSA keys are correctly auto-detected and loaded"""
@@ -390,18 +387,16 @@ class TestSSHKeyAutoDetection:
         with patch(
             "paramiko.Ed25519Key.from_private_key_file",
             side_effect=Exception("Not Ed25519"),
-        ):
-            with patch(
-                "paramiko.ECDSAKey.from_private_key_file", return_value=mock_ecdsa_key
-            ):
-                with patch("paramiko.SSHClient"):
-                    SSHTunnel(ssh_config, "db.internal", 5432)
-                    # Verify the key type order includes ECDSA
-                    assert paramiko.ECDSAKey in [
-                        paramiko.Ed25519Key,
-                        paramiko.ECDSAKey,
-                        paramiko.RSAKey,
-                    ]
+        ), patch(
+            "paramiko.ECDSAKey.from_private_key_file", return_value=mock_ecdsa_key
+        ), patch("paramiko.SSHClient"):
+            SSHTunnel(ssh_config, "db.internal", 5432)
+            # Verify the key type order includes ECDSA
+            assert paramiko.ECDSAKey in [
+                paramiko.Ed25519Key,
+                paramiko.ECDSAKey,
+                paramiko.RSAKey,
+            ]
 
     def test_key_loading_all_types_fail(self):
         """Test that appropriate error is raised when all key types fail to load"""

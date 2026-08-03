@@ -1,7 +1,6 @@
 from abc import ABC, abstractmethod
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import List, Optional
 
 from ..config import Connection, Server
 from ..utils.ssh_tunnel import SSHTunnel
@@ -11,7 +10,6 @@ from ..utils.timeout_wrapper import with_hard_timeout
 class ConnectionTimeoutError(Exception):
     """Raised when a connection or query times out"""
 
-    pass
 
 
 class BaseConnector(ABC):
@@ -50,7 +48,7 @@ class BaseConnector(ABC):
         )
 
     @asynccontextmanager
-    async def _get_ssh_tunnel(self, server: Optional[str] = None):
+    async def _get_ssh_tunnel(self, server: str | None = None):
         """
         Context manager for SSH tunnel
 
@@ -73,7 +71,7 @@ class BaseConnector(ABC):
         else:
             yield None
 
-    def _select_server(self, server: Optional[str] = None) -> Server:
+    def _select_server(self, server: str | None = None) -> Server:
         """
         Select a server from the configured list.
 
@@ -121,7 +119,7 @@ class BaseConnector(ABC):
                         return srv
 
         # No match found
-        available_hosts: List[str] = []
+        available_hosts: list[str] = []
         local_hosts = {"localhost", "127.0.0.1", "::1"}
         for srv in self.servers:
             display_host = srv.host
@@ -139,12 +137,12 @@ class BaseConnector(ABC):
         """Get default port for the database type"""
         return 5432  # Override in subclasses
 
-    def _resolve_database(self, database: Optional[str] = None) -> str:
+    def _resolve_database(self, database: str | None = None) -> str:
         """Resolve and validate database selection for this connection."""
         return self.connection.resolve_database(database)
 
     async def execute_query_with_timeout(
-        self, query: str, database: Optional[str] = None, server: Optional[str] = None
+        self, query: str, database: str | None = None, server: str | None = None
     ) -> str:
         """
         Execute a query with hard timeout protection.
@@ -171,8 +169,8 @@ class BaseConnector(ABC):
         self,
         query: str,
         output_path: Path,
-        database: Optional[str] = None,
-        server: Optional[str] = None,
+        database: str | None = None,
+        server: str | None = None,
     ) -> None:
         """
         Execute a query and stream TSV output to an existing managed file.
@@ -191,7 +189,7 @@ class BaseConnector(ABC):
 
     @abstractmethod
     async def execute_query(
-        self, query: str, database: Optional[str] = None, server: Optional[str] = None
+        self, query: str, database: str | None = None, server: str | None = None
     ) -> str:
         """
         Execute a read-only query and return TSV results (implementation-specific)
@@ -201,14 +199,13 @@ class BaseConnector(ABC):
             database: Optional database to use (overrides configured database)
             server: Optional server hostname
         """
-        pass
 
     async def execute_query_to_file(
         self,
         query: str,
         output_path: Path,
-        database: Optional[str] = None,
-        server: Optional[str] = None,
+        database: str | None = None,
+        server: str | None = None,
     ) -> None:
         """
         Execute a read-only query and write TSV results to an existing file.

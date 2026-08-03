@@ -2,8 +2,9 @@
 Custom pytest plugin to handle anyio/pytest-asyncio incompatibility.
 """
 
-import pytest
 import warnings
+
+import pytest
 
 
 @pytest.hookimpl(hookwrapper=True)

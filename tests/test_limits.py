@@ -1,10 +1,8 @@
 """Unified timeout regression tests."""
 
-import warnings
-
 import shutil
 import time
-from typing import Dict, Tuple
+import warnings
 
 import pytest
 
@@ -20,7 +18,7 @@ pytestmark = [pytest.mark.docker, pytest.mark.usefixtures("docker_check")]
 
 warnings.filterwarnings("ignore", category=pytest.PytestUnraisableExceptionWarning)
 
-CONNECTOR_CLASSES: Dict[Tuple[str, str], type] = {
+CONNECTOR_CLASSES: dict[tuple[str, str], type] = {
     ("postgresql", "python"): PostgreSQLPythonConnector,
     ("postgresql", "cli"): PostgreSQLCLIConnector,
     ("clickhouse", "python"): ClickHousePythonConnector,

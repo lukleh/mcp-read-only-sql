@@ -2,10 +2,10 @@
 Utilities for handling database connections
 """
 
-from typing import Dict, Any
+from typing import Any
 
 
-def get_connection_target(config: Dict[str, Any]) -> Dict[str, Any]:
+def get_connection_target(config: dict[str, Any]) -> dict[str, Any]:
     """
     Determine the final connection target based on SSH and server configuration.
 

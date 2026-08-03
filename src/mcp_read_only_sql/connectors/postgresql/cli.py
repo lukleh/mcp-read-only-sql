@@ -1,13 +1,13 @@
 import asyncio
 import logging
 import os
+from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
-from typing import Callable, Optional
 
-from ..base_cli import BaseCLIConnector
-from ...utils.sql_guard import sanitize_read_only_sql, ReadOnlyQueryError
+from ...utils.sql_guard import ReadOnlyQueryError, sanitize_read_only_sql
 from ...utils.tsv_formatter import write_tsv_text_line
+from ..base_cli import BaseCLIConnector
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +19,7 @@ class PostgreSQLCLIConnector(BaseCLIConnector):
         return 5432
 
     async def execute_query(
-        self, query: str, database: Optional[str] = None, server: Optional[str] = None
+        self, query: str, database: str | None = None, server: str | None = None
     ) -> str:
         """Execute a read-only query using psql and return raw TSV output"""
         result = await self._run_query(
@@ -31,8 +31,8 @@ class PostgreSQLCLIConnector(BaseCLIConnector):
         self,
         query: str,
         output_path: Path,
-        database: Optional[str] = None,
-        server: Optional[str] = None,
+        database: str | None = None,
+        server: str | None = None,
     ) -> None:
         """Execute a read-only query using psql and stream TSV to a file."""
         await self._run_query(
@@ -45,10 +45,10 @@ class PostgreSQLCLIConnector(BaseCLIConnector):
     async def _run_query(
         self,
         query: str,
-        database: Optional[str] = None,
-        server: Optional[str] = None,
-        output_path: Optional[Path] = None,
-    ) -> Optional[str]:
+        database: str | None = None,
+        server: str | None = None,
+        output_path: Path | None = None,
+    ) -> str | None:
         """Run the psql command and optionally stream output to a managed file."""
         sanitized_query = sanitize_read_only_sql(query)
         selected_server = self._select_server(server)
@@ -98,7 +98,7 @@ class PostgreSQLCLIConnector(BaseCLIConnector):
                 wrapped_query,  # Query to execute
             ]
 
-            async def run_psql(env_vars: dict[str, str]) -> Optional[str]:
+            async def run_psql(env_vars: dict[str, str]) -> str | None:
                 process = await asyncio.create_subprocess_exec(
                     *cmd,
                     stdout=asyncio.subprocess.PIPE,
@@ -124,7 +124,7 @@ class PostgreSQLCLIConnector(BaseCLIConnector):
                     async def read_line_with_timeout() -> bytes:
                         remaining = deadline - loop.time()
                         if remaining <= 0:
-                            raise asyncio.TimeoutError
+                            raise TimeoutError
                         return await asyncio.wait_for(
                             stdout.readline(), timeout=remaining
                         )
@@ -149,7 +149,7 @@ class PostgreSQLCLIConnector(BaseCLIConnector):
                             if pending_line is not None:
                                 emit_line(pending_line)
                             pending_line = line
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         logger.warning("Query timeout - terminating psql process")
                         process.kill()
                         with suppress(asyncio.CancelledError):
@@ -167,7 +167,7 @@ class PostgreSQLCLIConnector(BaseCLIConnector):
                 ) -> None:
                     try:
                         await asyncio.wait_for(process.wait(), timeout=1.0)
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         logger.error("psql process did not terminate cleanly")
                         process.kill()
                         await process.wait()
@@ -205,7 +205,9 @@ class PostgreSQLCLIConnector(BaseCLIConnector):
                     wrote_content = write_tsv_text_line(handle, line, wrote_content)
 
                 assert output_path is not None
-                with Path(output_path).open("w", encoding="utf-8", newline="") as handle:
+                with Path(output_path).open(  # noqa: ASYNC230 -- local file writes are fast; async file IO would add a dependency for no benefit
+                    "w", encoding="utf-8", newline=""
+                ) as handle:
                     pending_line = await stream_output(emit_file_line)
                     await finalize_process(emit_file_line, pending_line)
                 return None
@@ -242,7 +244,7 @@ class PostgreSQLCLIConnector(BaseCLIConnector):
                     )
                 except ReadOnlyQueryError:
                     raise
-                except asyncio.TimeoutError as exc:
+                except TimeoutError as exc:
                     logger.error(f"Query execution error: {exc}")
                     raise
                 except Exception as e:

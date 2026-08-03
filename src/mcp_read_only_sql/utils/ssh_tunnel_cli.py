@@ -4,11 +4,11 @@ Supports key-based authentication and password authentication (via sshpass).
 """
 
 import asyncio
-import socket
 import logging
 import os
-import signal
 import shutil
+import signal
+import socket
 from contextlib import closing
 
 logger = logging.getLogger(__name__)
@@ -58,7 +58,7 @@ class CLISSHTunnel:
             return await asyncio.wait_for(
                 self._start_tunnel(), timeout=self.ssh_timeout
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             # Clean up if timeout occurs
             await self.stop()
             raise TimeoutError(f"SSH: Connection timeout after {self.ssh_timeout}s")
@@ -147,14 +147,14 @@ class CLISSHTunnel:
                     )
                     raise RuntimeError(f"SSH: {error_msg}")
                 try:
-                    reader, writer = await asyncio.wait_for(
+                    _reader, writer = await asyncio.wait_for(
                         asyncio.open_connection("127.0.0.1", self.local_port),
                         timeout=poll_interval,
                     )
                     writer.close()
                     await writer.wait_closed()
                     break
-                except (asyncio.TimeoutError, ConnectionRefusedError, OSError):
+                except (TimeoutError, ConnectionRefusedError, OSError):
                     await asyncio.sleep(poll_interval)
                     continue
 
@@ -181,7 +181,7 @@ class CLISSHTunnel:
                 # Wait for process to terminate
                 try:
                     await asyncio.wait_for(self.ssh_process.wait(), timeout=5.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     # Force kill if it doesn't terminate
                     os.killpg(os.getpgid(self.ssh_process.pid), signal.SIGKILL)
                     await self.ssh_process.wait()

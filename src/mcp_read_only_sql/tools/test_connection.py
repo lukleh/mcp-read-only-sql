@@ -1,9 +1,7 @@
-#!/usr/bin/env python3
 """Test database connections."""
 
 import asyncio
 import sys
-from typing import Optional
 
 from .. import __version__
 from ..config import load_connections
@@ -16,7 +14,7 @@ from ..runtime_paths import RuntimePaths, resolve_runtime_paths
 
 async def test_connection(
     runtime_paths: RuntimePaths,
-    connection_name: Optional[str] = None,
+    connection_name: str | None = None,
 ) -> bool:
     """Test database connection(s)."""
     try:

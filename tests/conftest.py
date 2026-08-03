@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Shared test fixtures for MCP SQL Server tests
 Uses the minimal_client.py pattern for real MCP protocol testing
@@ -7,7 +6,7 @@ Uses the minimal_client.py pattern for real MCP protocol testing
 import os
 import subprocess
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 import pytest
 from mcp import ClientSession, StdioServerParameters
@@ -24,7 +23,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 # Helper function to create Connection objects from dict configs
-def make_connection(config_dict: Dict[str, Any]) -> Connection:
+def make_connection(config_dict: dict[str, Any]) -> Connection:
     """
     Helper to create Connection objects from dict configs for tests.
     This allows existing test fixtures that return dicts to work with the new Connection class.
@@ -51,7 +50,7 @@ class RecordingConnector(BaseConnector):
         return "ok"
 
 
-def make_recording_connector(config_dict: Dict[str, Any]) -> RecordingConnector:
+def make_recording_connector(config_dict: dict[str, Any]) -> RecordingConnector:
     """Convenience helper returning a RecordingConnector from a raw dict config."""
     return RecordingConnector(make_connection(config_dict))
 
@@ -135,10 +134,12 @@ async def mcp_client(test_config_file):
     )
 
     # Use the pattern from minimal_client.py exactly
-    async with stdio_client(server_params) as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            yield session
+    async with (
+        stdio_client(server_params) as (read, write),
+        ClientSession(read, write) as session,
+    ):
+        await session.initialize()
+        yield session
 
 
 # Docker-based fixtures for integration tests
@@ -146,7 +147,10 @@ async def mcp_client(test_config_file):
 def docker_check():
     """Check if Docker containers are running"""
     result = subprocess.run(
-        ["docker", "ps", "--format", "table {{.Names}}"], capture_output=True, text=True
+        ["docker", "ps", "--format", "table {{.Names}}"],
+        capture_output=True,
+        text=True,
+        check=False,
     )
     running_containers = result.stdout
 
@@ -161,7 +165,10 @@ def docker_check():
 def ssh_container_check():
     """Check if SSH bastion container is running"""
     result = subprocess.run(
-        ["docker", "ps", "--format", "{{.Names}}"], capture_output=True, text=True
+        ["docker", "ps", "--format", "{{.Names}}"],
+        capture_output=True,
+        text=True,
+        check=False,
     )
     running_containers = result.stdout
 
@@ -248,16 +255,18 @@ async def integration_client(integration_config_file, docker_check):
         env=dict(os.environ),
     )
 
-    async with stdio_client(server_params) as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            yield session
+    async with (
+        stdio_client(server_params) as (read, write),
+        ClientSession(read, write) as session,
+    ):
+        await session.initialize()
+        yield session
 
 
 # Helper functions for tests
 async def call_tool(
-    session: ClientSession, tool_name: str, arguments: Dict[str, Any]
-) -> Dict[str, Any]:
+    session: ClientSession, tool_name: str, arguments: dict[str, Any]
+) -> dict[str, Any]:
     """
     Helper to call a tool and parse the response.
     Query tools return plain-text paths or TSV payloads (no JSON).
@@ -353,7 +362,7 @@ async def execute_query(
     connection_name: str,
     query: str,
     server: str | None = None,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Helper to execute a SQL query.
 

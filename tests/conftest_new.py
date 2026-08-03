@@ -3,6 +3,7 @@ Alternative conftest with fixed async fixture handling.
 This avoids the anyio/pytest-asyncio incompatibility.
 """
 
+import contextlib
 import os
 from pathlib import Path
 
@@ -104,13 +105,9 @@ async def mcp_client_fixed(test_config_file):
 
     finally:
         if session:
-            try:
+            with contextlib.suppress(Exception):
                 await session.__aexit__(None, None, None)
-            except Exception:
-                pass
 
         if client_ctx:
-            try:
+            with contextlib.suppress(Exception):
                 await client_ctx.__aexit__(None, None, None)
-            except Exception:
-                pass

@@ -1,11 +1,12 @@
-#!/usr/bin/env python3
 """
 Server tests using real MCP protocol
 Tests server initialization and basic functionality
 """
 
-import pytest
 from pathlib import Path
+
+import pytest
+
 from tests.conftest import call_tool, execute_query, list_connections
 
 pytestmark = pytest.mark.filterwarnings(
@@ -122,10 +123,10 @@ class TestResolvedEndpoints:
 
     @pytest.fixture
     async def ssh_resolved_client(self, ssh_resolved_config):
-        from mcp import StdioServerParameters
-        from mcp import ClientSession
-        from mcp.client.stdio import stdio_client
         import os
+
+        from mcp import ClientSession, StdioServerParameters
+        from mcp.client.stdio import stdio_client
 
         server_params = StdioServerParameters(
             command="uv",
@@ -142,10 +143,12 @@ class TestResolvedEndpoints:
             env=dict(os.environ),
         )
 
-        async with stdio_client(server_params) as (read, write):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                yield session
+        async with (
+            stdio_client(server_params) as (read, write),
+            ClientSession(read, write) as session,
+        ):
+            await session.initialize()
+            yield session
 
     async def test_ssh_host_resolution(self, ssh_resolved_client):
         connections = await list_connections(ssh_resolved_client)
@@ -222,10 +225,12 @@ class TestMultipleConnections:
         from mcp import ClientSession
         from mcp.client.stdio import stdio_client
 
-        async with stdio_client(multi_server) as (read, write):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                yield session
+        async with (
+            stdio_client(multi_server) as (read, write),
+            ClientSession(read, write) as session,
+        ):
+            await session.initialize()
+            yield session
 
     async def test_multiple_connections(self, multi_client):
         """Test that multiple connections are loaded"""
@@ -292,10 +297,12 @@ class TestSecurityLimits:
         from mcp import ClientSession
         from mcp.client.stdio import stdio_client
 
-        async with stdio_client(secure_server) as (read, write):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                yield session
+        async with (
+            stdio_client(secure_server) as (read, write),
+            ClientSession(read, write) as session,
+        ):
+            await session.initialize()
+            yield session
 
     async def test_security_limits_configured(self, secure_client):
         """Test that security limits are properly configured"""
@@ -340,7 +347,7 @@ class TestServerParameter:
     @pytest.fixture
     async def multi_server_client(self, multi_server_config_file):
         """Client for multi-server connection"""
-        from mcp import StdioServerParameters, ClientSession
+        from mcp import ClientSession, StdioServerParameters
         from mcp.client.stdio import stdio_client
 
         server_params = StdioServerParameters(
@@ -357,10 +364,12 @@ class TestServerParameter:
             ],
         )
 
-        async with stdio_client(server_params) as (read, write):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                yield session
+        async with (
+            stdio_client(server_params) as (read, write),
+            ClientSession(read, write) as session,
+        ):
+            await session.initialize()
+            yield session
 
     async def test_server_parameter_not_found(self, multi_server_client):
         """Test that specifying non-existent server returns error"""

@@ -1,15 +1,14 @@
 import asyncio
 import logging
 from pathlib import Path
-from typing import Optional
 
 import psycopg2
 from psycopg2 import errors as psycopg_errors
 from psycopg2.extras import RealDictCursor
 
-from ..base import BaseConnector
-from ...utils.tsv_formatter import format_tsv_line, write_tsv_text_line
 from ...utils.sql_guard import sanitize_read_only_sql
+from ...utils.tsv_formatter import format_tsv_line, write_tsv_text_line
+from ..base import BaseConnector
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +20,7 @@ class PostgreSQLPythonConnector(BaseConnector):
         return 5432
 
     async def execute_query(
-        self, query: str, database: Optional[str] = None, server: Optional[str] = None
+        self, query: str, database: str | None = None, server: str | None = None
     ) -> str:
         """Execute a read-only query using psycopg2"""
         return await self._run_executor_query(
@@ -32,8 +31,8 @@ class PostgreSQLPythonConnector(BaseConnector):
         self,
         query: str,
         output_path: Path,
-        database: Optional[str] = None,
-        server: Optional[str] = None,
+        database: str | None = None,
+        server: str | None = None,
     ) -> None:
         """Execute a read-only query using psycopg2 and stream TSV to a file."""
         await self._run_executor_query(
@@ -48,10 +47,10 @@ class PostgreSQLPythonConnector(BaseConnector):
         self,
         worker,
         query: str,
-        database: Optional[str] = None,
-        server: Optional[str] = None,
+        database: str | None = None,
+        server: str | None = None,
         *,
-        output_path: Optional[str] = None,
+        output_path: str | None = None,
     ):
         """Resolve connection settings and run a synchronous worker in the executor."""
         sanitized_query = sanitize_read_only_sql(query)
@@ -108,7 +107,7 @@ class PostgreSQLPythonConnector(BaseConnector):
         port: int,
         database: str,
         query: str,
-        output_path: Optional[str] = None,
+        output_path: str | None = None,
     ) -> str:
         """Execute query synchronously and return TSV output."""
         if output_path is not None:

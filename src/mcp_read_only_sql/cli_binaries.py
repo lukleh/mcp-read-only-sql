@@ -79,6 +79,7 @@ def _brew_prefix(formula: str) -> str | None:
             capture_output=True,
             text=True,
             timeout=_BREW_PROBE_TIMEOUT,
+            check=False,
         )
     except (OSError, subprocess.SubprocessError):
         return None
