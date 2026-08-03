@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-MCP Read-Only SQL Server - FastMCP Implementation
+MCP Read-Only SQL Server - MCPServer Implementation
 A secure MCP server providing read-only SQL query capabilities for PostgreSQL and ClickHouse databases.
 """
 
@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, TypeAlias
 from uuid import uuid4
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from . import __version__
 from .config import Connection, dbeaver_import, load_connections_from_text
@@ -77,7 +77,7 @@ def _display_hosts_for_connector(connector: BaseConnector) -> List[str]:
 
 
 class ReadOnlySQLServer:
-    """MCP Read-Only SQL Server using FastMCP."""
+    """MCP Read-Only SQL Server using MCPServer."""
 
     def __init__(self, runtime_paths: RuntimePaths):
         self.runtime_paths = runtime_paths
@@ -85,7 +85,7 @@ class ReadOnlySQLServer:
         self._connections_config_marker: ConfigMarker = None
 
         self.runtime_paths.ensure_directories()
-        self.mcp = FastMCP("mcp-read-only-sql")
+        self.mcp = MCPServer("mcp-read-only-sql", version=__version__)
 
         self._load_connections()
         self._setup_tools()
@@ -220,7 +220,7 @@ class ReadOnlySQLServer:
         )
 
     def _setup_tools(self) -> None:
-        """Setup MCP tools using FastMCP decorators."""
+        """Setup MCP tools using MCPServer decorators."""
 
         @self.mcp.tool()
         async def run_query_read_only(

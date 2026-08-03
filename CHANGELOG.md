@@ -7,6 +7,35 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-03
+
+### Changed
+
+- Ported the server from the MCP Python SDK 1.x `FastMCP` API to the 2.x
+  `MCPServer` API. `mcp.server.fastmcp.FastMCP` was replaced by
+  `mcp.server.mcpserver.MCPServer`; the SDK 2.0.0 release removed
+  `mcp.server.fastmcp` outright and ships no compatibility shim, so this is a
+  hard cutover rather than an optional upgrade. The tool bodies, their
+  signatures, and their docstrings are unchanged.
+- Raised the SDK dependency to `mcp>=2.0.0,<3`, replacing the temporary
+  `mcp>=1.10.0,<2` pin added in 0.3.1. The upper cap is kept so that the next
+  major SDK rewrite cannot silently break fresh installs the way 2.0.0 did when
+  it removed `mcp.server.fastmcp`.
+- `serverInfo.version` in the `initialize` response now reports this package's
+  version (`0.4.0`) instead of the MCP SDK's version. Under 1.x `FastMCP` filled
+  that field with the SDK version (for example `1.29.0`), which was never the
+  intent; SDK 2 leaves it empty unless the server passes its own version, and it
+  is now passed explicitly.
+- The advertised tool surface is unchanged. `tools/list` output from the built
+  wheel is byte-identical to the 0.3.1 output: the same two tools
+  (`list_connections`, `run_query_read_only`) with identical descriptions,
+  `inputSchema`, and `outputSchema` — including the `*Arguments` / `*Output`
+  schema titles.
+- Test-only: the in-process tool-manager helpers now pass the `Context` argument
+  that `ToolManager.call_tool` requires in SDK 2 (it was optional in 1.x), and
+  the `CallToolResult` error flag is read as `is_error`, the SDK 2 attribute name
+  for the unchanged `isError` wire field.
+
 ## [0.3.1] - 2026-08-03
 
 ### Fixed

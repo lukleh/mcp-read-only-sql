@@ -6,7 +6,8 @@ from pathlib import Path
 
 import pytest
 import yaml
-from mcp.server.fastmcp.exceptions import ToolError
+from mcp.server.mcpserver import Context
+from mcp.server.mcpserver.exceptions import ToolError
 
 import mcp_read_only_sql.server as server_module
 from mcp_read_only_sql.config import Connection
@@ -92,10 +93,11 @@ def count_load_connections(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
 
 
 async def list_connections(server: ReadOnlySQLServer) -> list[dict[str, str]]:
-    """Call list_connections directly on the in-process FastMCP server."""
+    """Call list_connections directly on the in-process MCPServer instance."""
     result = await server.mcp._tool_manager.call_tool(
         "list_connections",
         {},
+        Context(),
         convert_result=False,
     )
     assert isinstance(result, str)
@@ -103,10 +105,11 @@ async def list_connections(server: ReadOnlySQLServer) -> list[dict[str, str]]:
 
 
 async def run_query(server: ReadOnlySQLServer, connection_name: str) -> Path:
-    """Run a query against the in-process FastMCP server and return the TSV path."""
+    """Run a query against the in-process MCPServer instance and return the TSV path."""
     result = await server.mcp._tool_manager.call_tool(
         "run_query_read_only",
         {"connection_name": connection_name, "query": "SELECT 1"},
+        Context(),
         convert_result=False,
     )
     assert isinstance(result, str)

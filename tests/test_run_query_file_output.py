@@ -6,7 +6,7 @@ from pathlib import Path
 from stat import S_IMODE
 
 import pytest
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import Context, MCPServer
 
 from mcp_read_only_sql.config import Connection
 from mcp_read_only_sql.connectors.base import BaseConnector
@@ -31,7 +31,7 @@ def build_stub_server(
     server.runtime_paths = runtime_paths
     server.connections = {connector.name: connector}
     server._connections_config_marker = None
-    server.mcp = FastMCP("mcp-read-only-sql-test")
+    server.mcp = MCPServer("mcp-read-only-sql-test", version="0.0.0-test")
     server._setup_tools()
     return server
 
@@ -76,6 +76,7 @@ async def test_run_query_writes_to_managed_results_dir(tmp_path):
             "connection_name": "stub_conn",
             "query": "SELECT 1 AS id, 'test' AS value",
         },
+        Context(),
         convert_result=False,
     )
 
@@ -101,6 +102,7 @@ async def test_run_query_creates_unique_result_files(tmp_path):
             "connection_name": "stub_conn",
             "query": "SELECT 1",
         },
+        Context(),
         convert_result=False,
     )
     second = await server.mcp._tool_manager.call_tool(
@@ -109,6 +111,7 @@ async def test_run_query_creates_unique_result_files(tmp_path):
             "connection_name": "stub_conn",
             "query": "SELECT 2",
         },
+        Context(),
         convert_result=False,
     )
 

@@ -57,7 +57,7 @@ class TestServerBasics:
             "run_query_read_only", arguments={"query": "SELECT 1"}
         )
         # Should have error in result
-        assert result.isError or (
+        assert result.is_error or (
             result.content and "error" in str(result.content[0]).lower()
         )
 
