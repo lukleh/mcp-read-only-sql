@@ -1,6 +1,7 @@
 """Tests for server selection parameter feature"""
 
 import pytest
+
 from mcp_read_only_sql.connectors.base import BaseConnector
 
 

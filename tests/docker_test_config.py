@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from copy import deepcopy
 import os
-from typing import Any, Dict
+from copy import deepcopy
+from typing import Any
 
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 _DEFAULT_PORTS = {
@@ -42,7 +42,7 @@ def docker_test_ssh_port() -> int:
     return int(os.environ.get("TEST_SSH_PORT", str(_DEFAULT_SSH_PORT)))
 
 
-def docker_test_server(db_type: str, port: int | None = None) -> Dict[str, Any]:
+def docker_test_server(db_type: str, port: int | None = None) -> dict[str, Any]:
     """Build a Docker-backed server definition for the requested database."""
     return {
         "host": docker_test_host(),
@@ -67,9 +67,9 @@ def docker_test_ssh_tunnel(
     user: str = "tunnel",
     private_key: str | None = None,
     password: str | None = None,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Build a Docker-backed SSH tunnel configuration."""
-    config: Dict[str, Any] = {
+    config: dict[str, Any] = {
         "enabled": enabled,
         "host": docker_test_ssh_host(),
         "port": docker_test_ssh_port(),
@@ -82,7 +82,7 @@ def docker_test_ssh_tunnel(
     return config
 
 
-def apply_docker_test_overrides(config: Dict[str, Any]) -> Dict[str, Any]:
+def apply_docker_test_overrides(config: dict[str, Any]) -> dict[str, Any]:
     """Rewrite localhost-style Docker test configs to use externally supplied hosts/ports."""
     updated = deepcopy(config)
     db_type = updated.get("type")
@@ -112,8 +112,8 @@ def apply_docker_test_overrides(config: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _rewrite_server_dict(
-    server: Dict[str, Any], db_type: str | None, default_port: int | None
-) -> Dict[str, Any]:
+    server: dict[str, Any], db_type: str | None, default_port: int | None
+) -> dict[str, Any]:
     updated = dict(server)
     host = updated.get("host")
     if host in _LOCAL_HOSTS:
@@ -144,7 +144,7 @@ def _rewrite_server_string(
     return server
 
 
-def _rewrite_ssh_tunnel(ssh_tunnel: Dict[str, Any]) -> Dict[str, Any]:
+def _rewrite_ssh_tunnel(ssh_tunnel: dict[str, Any]) -> dict[str, Any]:
     updated = dict(ssh_tunnel)
     host = updated.get("host")
     if host in _LOCAL_HOSTS:

@@ -1,9 +1,8 @@
-#!/usr/bin/env python3
 """Test SSH tunnel connectivity."""
 
 import asyncio
+import contextlib
 import sys
-from typing import Optional
 
 from .. import __version__
 from ..config import load_connections
@@ -14,7 +13,7 @@ from ..utils.ssh_tunnel_cli import CLISSHTunnel
 
 async def test_ssh_tunnels(
     runtime_paths: RuntimePaths,
-    connection_name: Optional[str] = None,
+    connection_name: str | None = None,
 ) -> bool:
     """Test SSH tunnel connectivity for connections."""
     try:
@@ -156,10 +155,8 @@ async def test_ssh_tunnels(
                     all_success = False
                 finally:
                     if tunnel:
-                        try:
+                        with contextlib.suppress(Exception):
                             await tunnel.stop()
-                        except Exception:
-                            pass
 
                 print()
 

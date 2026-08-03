@@ -4,22 +4,24 @@ This is a critical security test for Layer 2 of our three-layer security model.
 """
 
 import asyncio
+from typing import ClassVar
 
+import clickhouse_connect
 import psycopg2
 import pytest
-import clickhouse_connect
-from mcp_read_only_sql.connectors.postgresql.python import PostgreSQLPythonConnector
-from mcp_read_only_sql.connectors.postgresql.cli import PostgreSQLCLIConnector
-from mcp_read_only_sql.connectors.clickhouse.python import ClickHousePythonConnector
-from mcp_read_only_sql.connectors.clickhouse.cli import ClickHouseCLIConnector
 from clickhouse_connect.driver.exceptions import ClickHouseError
-from mcp_read_only_sql.utils.sql_guard import sanitize_read_only_sql, ReadOnlyQueryError
 
+from mcp_read_only_sql.connectors.clickhouse.cli import ClickHouseCLIConnector
+from mcp_read_only_sql.connectors.clickhouse.python import ClickHousePythonConnector
+from mcp_read_only_sql.connectors.postgresql.cli import PostgreSQLCLIConnector
+from mcp_read_only_sql.connectors.postgresql.python import PostgreSQLPythonConnector
+from mcp_read_only_sql.utils.sql_guard import ReadOnlyQueryError, sanitize_read_only_sql
 from tests.sql_statement_lists import (
     CLICKHOUSE_DDL_STATEMENTS,
     CLICKHOUSE_DML_STATEMENTS,
     CLICKHOUSE_KILL_STATEMENTS,
     CLICKHOUSE_SYSTEM_STATEMENTS,
+    POSTGRESQL_ALLOWED_LITERAL_QUERIES,
     POSTGRESQL_DDL_ALTER_STATEMENTS,
     POSTGRESQL_DDL_CREATE_STATEMENTS,
     POSTGRESQL_DDL_DROP_STATEMENTS,
@@ -27,7 +29,6 @@ from tests.sql_statement_lists import (
     POSTGRESQL_LOCK_STATEMENTS,
     POSTGRESQL_MAINTENANCE_STATEMENTS,
     POSTGRESQL_PROCEDURAL_STATEMENTS,
-    POSTGRESQL_ALLOWED_LITERAL_QUERIES,
     POSTGRESQL_TRANSACTION_STATEMENTS,
 )
 
@@ -616,8 +617,8 @@ def test_clickhouse_python_sets_readonly_setting(monkeypatch, clickhouse_config)
     captured = {}
 
     class DummyResult:
-        column_names = ["col"]
-        result_rows = [[1]]
+        column_names: ClassVar[list[str]] = ["col"]
+        result_rows: ClassVar[list[list[int]]] = [[1]]
 
     class DummyClient:
         def __init__(self, **kwargs):

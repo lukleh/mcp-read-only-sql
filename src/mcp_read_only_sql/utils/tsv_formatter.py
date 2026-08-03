@@ -2,10 +2,10 @@
 
 import csv
 import io
-from typing import Any, List, TextIO
+from typing import Any, TextIO
 
 
-def format_as_tsv(rows: List[Any], columns: List[str]) -> str:
+def format_as_tsv(rows: list[Any], columns: list[str]) -> str:
     """Format query results as TSV (Tab-Separated Values).
 
     Args:
@@ -44,7 +44,7 @@ def format_as_tsv(rows: List[Any], columns: List[str]) -> str:
     return buffer.getvalue().rstrip("\n")
 
 
-def format_tsv_line(values: List[Any]) -> str:
+def format_tsv_line(values: list[Any]) -> str:
     """Render a single TSV line (without trailing newline)."""
 
     buffer = io.StringIO()

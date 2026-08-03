@@ -2,8 +2,9 @@
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from functools import wraps
-from typing import Any, Awaitable, Callable, Dict
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -11,7 +12,6 @@ logger = logging.getLogger(__name__)
 class HardTimeoutError(Exception):
     """Raised when a hard timeout is reached"""
 
-    pass
 
 
 async def with_hard_timeout(
@@ -125,7 +125,7 @@ class HardTimeoutMixin:
 
     async def execute_with_timeout(
         self, coro, operation_name: str = "query"
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Execute a coroutine with hard timeout protection.
 

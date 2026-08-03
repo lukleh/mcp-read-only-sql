@@ -1,11 +1,12 @@
-#!/usr/bin/env python3
 """
 Tests for Connection configuration classes
 """
 
-import pytest
-import tempfile
 import os
+import tempfile
+
+import pytest
+
 from mcp_read_only_sql.config import (
     Connection,
     Server,

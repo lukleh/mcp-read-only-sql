@@ -7,8 +7,8 @@ from .loader import load_connections, load_connections_from_text
 
 __all__ = [
     "Connection",
-    "Server",
     "SSHTunnelConfig",
+    "Server",
     "load_connections",
     "load_connections_from_text",
 ]

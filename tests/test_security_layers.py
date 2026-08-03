@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Security layers integration tests for MCP SQL Server
 Tests all three security layers working together:
@@ -7,9 +6,10 @@ Tests all three security layers working together:
 """
 
 import pytest
+
 from mcp_read_only_sql.config.parser import ConfigParser
-from mcp_read_only_sql.connectors.postgresql.python import PostgreSQLPythonConnector
 from mcp_read_only_sql.connectors.clickhouse.python import ClickHousePythonConnector
+from mcp_read_only_sql.connectors.postgresql.python import PostgreSQLPythonConnector
 from mcp_read_only_sql.utils.sql_guard import ReadOnlyQueryError
 from tests.docker_test_config import apply_docker_test_overrides
 

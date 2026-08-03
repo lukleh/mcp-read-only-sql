@@ -1,20 +1,20 @@
-#!/usr/bin/env python3
 """
 MCP Read-Only SQL Server - MCPServer Implementation
 A secure MCP server providing read-only SQL query capabilities for PostgreSQL and ClickHouse databases.
 """
 
 import argparse
-from contextlib import suppress
-from hashlib import blake2b
-from importlib.resources import files
 import logging
 import os
 import re
 import sys
-from datetime import datetime, timezone
+from collections.abc import Callable
+from contextlib import suppress
+from datetime import UTC, datetime
+from hashlib import blake2b
+from importlib.resources import files
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, TypeAlias
+from typing import Any, TypeAlias
 from uuid import uuid4
 
 from mcp.server.mcpserver import MCPServer
@@ -33,8 +33,8 @@ from .connectors.postgresql.python import PostgreSQLPythonConnector
 from .runtime_paths import (
     PRIVATE_DIR_MODE,
     PRIVATE_FILE_MODE,
-    resolve_runtime_paths,
     RuntimePaths,
+    resolve_runtime_paths,
 )
 from .tools import test_connection, test_ssh_tunnel, validate_config
 
@@ -56,9 +56,9 @@ SUBCOMMAND_HANDLERS: dict[str, Callable[[], None]] = {
 }
 
 
-def _display_hosts_for_connector(connector: BaseConnector) -> List[str]:
+def _display_hosts_for_connector(connector: BaseConnector) -> list[str]:
     """Return unique display hostnames for a connector."""
-    servers: List[str] = []
+    servers: list[str] = []
     local_hosts = {"localhost", "127.0.0.1", "::1"}
 
     for server in connector.connection.servers:
@@ -81,7 +81,7 @@ class ReadOnlySQLServer:
 
     def __init__(self, runtime_paths: RuntimePaths):
         self.runtime_paths = runtime_paths
-        self.connections: Dict[str, BaseConnector] = {}
+        self.connections: dict[str, BaseConnector] = {}
         self._connections_config_marker: ConfigMarker = None
 
         self.runtime_paths.ensure_directories()
@@ -102,7 +102,7 @@ class ReadOnlySQLServer:
         output_dir.mkdir(parents=True, exist_ok=True)
         output_dir.chmod(PRIVATE_DIR_MODE)
 
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
         return output_dir / f"{timestamp}-{uuid4().hex[:8]}.tsv"
 
     def _create_result_file(self, connection_name: str) -> Path:
@@ -162,13 +162,13 @@ class ReadOnlySQLServer:
             ) from exc
         return yaml_text, (stat_result.st_mtime_ns, stat_result.st_size)
 
-    def _build_connections(self) -> tuple[Dict[str, BaseConnector], ConfigMarker]:
+    def _build_connections(self) -> tuple[dict[str, BaseConnector], ConfigMarker]:
         """Build a fresh connector map from one config snapshot without mutating state."""
         yaml_text, marker = self._read_connections_config_snapshot()
         connections_config = load_connections_from_text(
             yaml_text, self.runtime_paths.connections_file
         )
-        built_connections: Dict[str, BaseConnector] = {}
+        built_connections: dict[str, BaseConnector] = {}
         errors = []
 
         for conn_name, connection in connections_config.items():
@@ -226,8 +226,8 @@ class ReadOnlySQLServer:
         async def run_query_read_only(
             connection_name: str,
             query: str,
-            database: Optional[str] = None,
-            server: Optional[str] = None,
+            database: str | None = None,
+            server: str | None = None,
         ) -> str:
             """Run a read-only SQL query and return a managed TSV result path.
 
@@ -277,7 +277,7 @@ class ReadOnlySQLServer:
                 describe the default database and allowed database list.
             """
             self._reload_connections_if_needed()
-            conn_list: List[Dict[str, Any]] = []
+            conn_list: list[dict[str, Any]] = []
 
             for conn_name, connector in self.connections.items():
                 conn_type = connector.connection.db_type

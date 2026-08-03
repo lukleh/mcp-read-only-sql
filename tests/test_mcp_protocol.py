@@ -1,10 +1,10 @@
-#!/usr/bin/env python3
 """
 MCP Protocol tests
 Tests the MCP server/client communication and protocol handling
 """
 
 import pytest
+
 from tests.conftest import execute_query, list_connections
 
 

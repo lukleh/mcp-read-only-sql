@@ -1,9 +1,8 @@
-#!/usr/bin/env python3
 """Validate SQL configuration stored in connections.yaml."""
 
 import sys
 from pathlib import Path
-from typing import Any, List
+from typing import Any
 
 import yaml
 
@@ -12,9 +11,9 @@ from ..config.parser import ConfigParser
 from ..runtime_paths import resolve_runtime_paths
 
 
-def find_legacy_credential_errors(raw_config: List[Any]) -> List[str]:
+def find_legacy_credential_errors(raw_config: list[Any]) -> list[str]:
     """Return validation errors for unsupported env-era credential fields."""
-    errors: List[str] = []
+    errors: list[str] = []
 
     for conn in raw_config:
         if not isinstance(conn, dict):
@@ -42,7 +41,7 @@ def find_legacy_credential_errors(raw_config: List[Any]) -> List[str]:
     return errors
 
 
-def validate_server_format(server: Any) -> List[str]:
+def validate_server_format(server: Any) -> list[str]:
     """Validate server format and return errors."""
     errors = []
 

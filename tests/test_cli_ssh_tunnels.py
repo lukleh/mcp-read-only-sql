@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 SSH tunnel tests for CLI connectors
 Tests that CLI connectors can properly use SSH tunnels via Paramiko
@@ -6,9 +5,11 @@ Tests that CLI connectors can properly use SSH tunnels via Paramiko
 
 import asyncio
 import shutil
+
 import pytest
-from mcp_read_only_sql.connectors.postgresql.cli import PostgreSQLCLIConnector
+
 from mcp_read_only_sql.connectors.clickhouse.cli import ClickHouseCLIConnector
+from mcp_read_only_sql.connectors.postgresql.cli import PostgreSQLCLIConnector
 from tests.docker_test_config import docker_test_server, docker_test_ssh_tunnel
 
 

@@ -1,13 +1,13 @@
-#!/usr/bin/env python3
 """
 Test simple JSON serialization with string fallback.
 Ensures the serializer never fails by converting unknown types to strings.
 """
 
 import json
+
 from mcp_read_only_sql.utils.json_serializer import (
-    serialize_result,
     DatabaseJSONEncoder,
+    serialize_result,
 )
 
 
@@ -64,7 +64,7 @@ def test_mixed_serializable_result():
             {
                 "id": 1,
                 "name": "test",
-                "created": datetime.datetime.now(),
+                "created": datetime.datetime.now(),  # noqa: DTZ005 -- naive datetime is the case under test
                 "price": decimal.Decimal("123.45"),
                 "custom_obj": CustomClass(),
             }
@@ -101,8 +101,8 @@ def test_encoder_with_special_types():
 
     # Test various non-JSON types
     test_values = [
-        datetime.datetime.now(),
-        datetime.date.today(),
+        datetime.datetime.now(),  # noqa: DTZ005 -- naive datetime is the case under test
+        datetime.date.today(),  # noqa: DTZ011 -- naive date is the case under test
         decimal.Decimal("999.99"),
         UUID("12345678-1234-5678-1234-567812345678"),
         CustomClass(),  # custom class
@@ -129,7 +129,7 @@ def test_result_never_fails():
         {"simple": "value"},
         {"number": 42},
         {"nested": {"list": [1, 2, 3]}},
-        {"datetime": datetime.datetime.now()},
+        {"datetime": datetime.datetime.now()},  # noqa: DTZ005 -- naive datetime is the case under test
         {"custom": CustomClass()},
         {"mixed": [1, "two", CustomClass(), None]},
     ]

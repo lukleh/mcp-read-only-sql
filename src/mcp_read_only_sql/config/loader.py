@@ -1,7 +1,7 @@
 """Connection configuration loader."""
 
 from pathlib import Path
-from typing import Any, Dict, cast
+from typing import Any, cast
 
 import yaml
 
@@ -10,7 +10,7 @@ from .connection import Connection
 
 def _build_connections_from_raw_configs(
     raw_configs: Any, source: str | Path
-) -> Dict[str, Connection]:
+) -> dict[str, Connection]:
     """Validate parsed YAML data and return Connection objects."""
     source_name = str(source)
     if not raw_configs:
@@ -19,7 +19,7 @@ def _build_connections_from_raw_configs(
     if not isinstance(raw_configs, list):
         raise ValueError("Configuration file must contain a list of connections")
 
-    connections: Dict[str, Connection] = {}
+    connections: dict[str, Connection] = {}
     errors: list[str] = []
 
     for idx, config in enumerate(raw_configs):
@@ -27,7 +27,7 @@ def _build_connections_from_raw_configs(
             errors.append(f"Connection #{idx+1}: must be a dictionary")
             continue
 
-        config_dict = cast(Dict[str, Any], config)
+        config_dict = cast(dict[str, Any], config)
 
         try:
             conn = Connection(config_dict)
@@ -52,7 +52,7 @@ def _build_connections_from_raw_configs(
 
 def load_connections_from_text(
     yaml_text: str, source: str | Path = "<memory>"
-) -> Dict[str, Connection]:
+) -> dict[str, Connection]:
     """
     Load and validate connections from a YAML text snapshot.
 
@@ -64,7 +64,7 @@ def load_connections_from_text(
     return _build_connections_from_raw_configs(raw_configs, source)
 
 
-def load_connections(yaml_path: str | Path) -> Dict[str, Connection]:
+def load_connections(yaml_path: str | Path) -> dict[str, Connection]:
     """
     Load and validate all connections from YAML configuration file.
 

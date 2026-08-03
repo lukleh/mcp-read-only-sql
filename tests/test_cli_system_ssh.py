@@ -1,12 +1,13 @@
-#!/usr/bin/env python3
 """
 Test CLI connectors with system SSH (not Paramiko)
 """
 
-import pytest
 import asyncio
-from mcp_read_only_sql.connectors.postgresql.cli import PostgreSQLCLIConnector
+
+import pytest
+
 from mcp_read_only_sql.connectors.clickhouse.cli import ClickHouseCLIConnector
+from mcp_read_only_sql.connectors.postgresql.cli import PostgreSQLCLIConnector
 from tests.docker_test_config import docker_test_server, docker_test_ssh_tunnel
 
 

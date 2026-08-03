@@ -5,7 +5,7 @@ import os
 import re
 import subprocess
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from .. import __version__
 from ..runtime_paths import resolve_runtime_paths
@@ -27,9 +27,9 @@ class DBeaverImporter:
         self.dbeaver_path = Path(dbeaver_path)
         self.data_sources_path = self.dbeaver_path / "data-sources.json"
         self.credentials_path = self.dbeaver_path / "credentials-config.json"
-        self.last_imported_names: List[str] = []
-        self.last_requested_names: List[str] = []
-        self.last_seen_names: List[str] = []
+        self.last_imported_names: list[str] = []
+        self.last_requested_names: list[str] = []
+        self.last_seen_names: list[str] = []
 
     def _decrypt_credentials(
         self,
@@ -56,7 +56,7 @@ class DBeaverImporter:
         ]
 
         try:
-            result = subprocess.run(cmd, capture_output=True)
+            result = subprocess.run(cmd, capture_output=True, check=False)
 
             if result.returncode != 0:
                 logger.warning(
@@ -90,8 +90,8 @@ class DBeaverImporter:
             return {}, {}
 
     def import_connections(
-        self, merge_clusters: bool = True, only_names: Optional[List[str]] = None
-    ) -> List[Dict[str, Any]]:
+        self, merge_clusters: bool = True, only_names: list[str] | None = None
+    ) -> list[dict[str, Any]]:
         """Import connections from DBeaver configuration"""
         if not self.data_sources_path.exists():
             raise FileNotFoundError(
@@ -129,8 +129,8 @@ class DBeaverImporter:
         self.last_requested_names = requested
 
         connections: list[dict[str, Any]] = []
-        imported_names: List[str] = []
-        seen_names: List[str] = []
+        imported_names: list[str] = []
+        seen_names: list[str] = []
         connections_data = data_sources.get("connections", {})
         if not isinstance(connections_data, dict):
             connections_data = {}
@@ -163,10 +163,10 @@ class DBeaverImporter:
     def _convert_connection(
         self,
         conn_id: str,
-        conn_data: Dict[str, Any],
-        creds: Optional[Dict[str, Any]] = None,
-        ssh_creds: Optional[Dict[str, Any]] = None,
-    ) -> Optional[Dict[str, Any]]:
+        conn_data: dict[str, Any],
+        creds: dict[str, Any] | None = None,
+        ssh_creds: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
         """Convert a DBeaver connection to our format"""
         provider = conn_data.get("provider", "")
         config = conn_data.get("configuration", {})
@@ -309,13 +309,13 @@ class DBeaverImporter:
         sanitized = sanitized.lower()
         return sanitized or "connection"
 
-    def _host_pattern(self, server: str) -> Tuple[str, str]:
+    def _host_pattern(self, server: str) -> tuple[str, str]:
         """Extract pattern from host for grouping (replaces digits with #)"""
         host, _, port = server.partition(":")
         digit_re = re.compile(r"\d+")
         return digit_re.sub("#", host), port
 
-    def _group_key(self, conn: Dict[str, Any]) -> Tuple:
+    def _group_key(self, conn: dict[str, Any]) -> tuple:
         """Generate a grouping key for connection merging"""
         ssh_tunnel = conn.get("ssh_tunnel") or {}
         ssh_serialized = json.dumps(ssh_tunnel, sort_keys=True)
@@ -334,11 +334,11 @@ class DBeaverImporter:
         return fields_part, patterns
 
     def _merge_cluster_connections(
-        self, connections: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
+        self, connections: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
         """Merge connections that appear to be part of the same cluster"""
-        groups: Dict[Tuple, Dict[str, Any]] = {}
-        order: List[Tuple] = []
+        groups: dict[tuple, dict[str, Any]] = {}
+        order: list[tuple] = []
 
         for conn in connections:
             servers = conn.get("servers", []) or []
@@ -450,11 +450,11 @@ class DBeaverImporter:
         return merged
 
     def _build_merge_report(
-        self, connections: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
+        self, connections: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
         """Build a report of which connections would be merged together"""
-        groups: Dict[Tuple, Dict[str, Any]] = {}
-        order: List[Tuple] = []
+        groups: dict[tuple, dict[str, Any]] = {}
+        order: list[tuple] = []
 
         for conn in connections:
             ssh = conn.get("ssh_tunnel")
@@ -482,10 +482,11 @@ class DBeaverImporter:
 
 def main() -> None:
     """Command-line entry point for importing DBeaver connections"""
-    import sys
-    import yaml
     import argparse
+    import sys
     from datetime import datetime
+
+    import yaml
 
     parser = argparse.ArgumentParser(
         prog="mcp-read-only-sql import-dbeaver",
@@ -548,7 +549,7 @@ def main() -> None:
         else runtime_paths.connections_file
     )
     dry_run = args.dry_run
-    only_names: List[str] = []
+    only_names: list[str] = []
     if args.only:
         for entry in args.only:
             only_names.extend(
@@ -585,8 +586,8 @@ def main() -> None:
         new_connections = []
         imported_db_passwords = 0
         imported_ssh_passwords = 0
-        missing_db_passwords: List[str] = []
-        missing_ssh_passwords: List[str] = []
+        missing_db_passwords: list[str] = []
+        missing_ssh_passwords: list[str] = []
 
         print("\nImporting connections...")
         for conn in connections:
@@ -671,7 +672,9 @@ def main() -> None:
                 print(f"\n✓ {output_path} unchanged; skipped write and backup")
             else:
                 if existing_yaml is not None:
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    # Local wall-clock is intentional: the backup filename should
+                    # match the user's clock, not UTC.
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")  # noqa: DTZ005
                     # Create backup filename: connections.yaml.bak.20241230_143022
                     backup_name = f"{output_path.stem}.yaml.bak.{timestamp}"
                     backup_path = output_path.parent / backup_name
@@ -683,7 +686,7 @@ def main() -> None:
         # Dry-run preview of changes vs existing connections.yaml
         if dry_run:
 
-            def _normalize(conn: Dict[str, Any]) -> Dict[str, Any]:
+            def _normalize(conn: dict[str, Any]) -> dict[str, Any]:
                 normalized = dict(conn)
                 servers = normalized.get("servers")
                 if isinstance(servers, list):
@@ -715,15 +718,15 @@ def main() -> None:
                 }
 
                 added = sorted(
-                    [n for n in new_by_name.keys() if n not in existing_by_name]
+                    [n for n in new_by_name if n not in existing_by_name]
                 )
                 removed = sorted(
-                    [n for n in existing_by_name.keys() if n not in new_by_name]
+                    [n for n in existing_by_name if n not in new_by_name]
                 )
                 changed = sorted(
                     [
                         n
-                        for n in new_by_name.keys()
+                        for n in new_by_name
                         if n in existing_by_name
                         and new_by_name[n] != existing_by_name[n]
                     ]

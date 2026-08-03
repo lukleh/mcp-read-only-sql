@@ -1,12 +1,13 @@
-#!/usr/bin/env python3
 """
 Test SSH timeout handling
 """
 
-import pytest
 import asyncio
-from mcp_read_only_sql.connectors.postgresql.python import PostgreSQLPythonConnector
+
+import pytest
+
 from mcp_read_only_sql.connectors.postgresql.cli import PostgreSQLCLIConnector
+from mcp_read_only_sql.connectors.postgresql.python import PostgreSQLPythonConnector
 from mcp_read_only_sql.utils.ssh_tunnel_cli import CLISSHTunnel
 
 

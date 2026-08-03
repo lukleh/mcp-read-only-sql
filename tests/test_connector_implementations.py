@@ -2,12 +2,14 @@
 Test that the default implementation is CLI when not specified.
 """
 
-import tempfile
-import yaml
 import os
+import tempfile
+
+import yaml
+
 from mcp_read_only_sql.config.parser import ConfigParser
-from mcp_read_only_sql.server import ReadOnlySQLServer
 from mcp_read_only_sql.runtime_paths import resolve_runtime_paths
+from mcp_read_only_sql.server import ReadOnlySQLServer
 
 
 def test_parser_default_implementation():

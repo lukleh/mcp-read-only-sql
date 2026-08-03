@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 import yaml
 
@@ -9,7 +9,7 @@ class ConfigParser:
     def __init__(self, config_path: str | Path):
         self.config_path = Path(config_path).expanduser()
 
-    def load_config(self) -> List[Dict[str, Any]]:
+    def load_config(self) -> list[dict[str, Any]]:
         """Load and parse connection configuration from YAML file."""
         if not self.config_path.exists():
             return []
@@ -25,7 +25,7 @@ class ConfigParser:
 
         return processed_config
 
-    def _process_connection(self, conn: Dict[str, Any]) -> Dict[str, Any]:
+    def _process_connection(self, conn: dict[str, Any]) -> dict[str, Any]:
         """Process a single connection configuration."""
         conn = dict(conn)
 
@@ -81,7 +81,7 @@ class ConfigParser:
 
         return conn
 
-    def save_config(self, config: List[Dict[str, Any]]) -> None:
+    def save_config(self, config: list[dict[str, Any]]) -> None:
         """Save configuration to YAML file."""
         clean_config = []
         for conn in config:

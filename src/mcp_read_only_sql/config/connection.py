@@ -2,7 +2,7 @@
 
 import os
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 # Default values
 DEFAULT_IMPLEMENTATION = "cli"
@@ -20,13 +20,13 @@ def _normalize_positive_timeout(value: Any, field_name: str) -> float:
     return value
 
 
-def _normalize_database_list(value: Any, field_name: str) -> List[str]:
+def _normalize_database_list(value: Any, field_name: str) -> list[str]:
     """Normalize a database list field to a deduplicated list of names."""
     if value is None:
         return []
     if not isinstance(value, list):
         raise ValueError(f"'{field_name}' must be a non-empty list of database names")
-    cleaned: List[str] = []
+    cleaned: list[str] = []
     for item in value:
         if not isinstance(item, str):
             raise ValueError(f"'{field_name}' entries must be strings")
@@ -94,21 +94,20 @@ class SSHTunnelConfig:
     host: str
     port: int
     user: str
-    private_key: Optional[str] = None
-    password: Optional[str] = None
-    ssh_timeout: Optional[int] = None
+    private_key: str | None = None
+    password: str | None = None
+    ssh_timeout: int | None = None
 
     def __post_init__(self):
         """Validate SSH tunnel configuration."""
         # When neither private_key nor password is supplied, fall back to
         # agent-loaded identities. This supports setups like Skotty where
         # short-lived certs live only in ssh-agent.
-        if self.ssh_timeout is not None:
-            if self.ssh_timeout <= 0:
-                raise ValueError("SSH tunnel timeout must be a positive integer")
+        if self.ssh_timeout is not None and self.ssh_timeout <= 0:
+            raise ValueError("SSH tunnel timeout must be a positive integer")
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> Optional["SSHTunnelConfig"]:
+    def from_dict(cls, data: dict[str, Any]) -> Optional["SSHTunnelConfig"]:
         """Create SSHTunnelConfig from dict with validation."""
         if not data.get("enabled", True):
             return None
@@ -157,7 +156,7 @@ class Connection:
     including validation of inline passwords.
     """
 
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: dict[str, Any]):
         """
         Initialize and validate connection configuration.
 
@@ -308,7 +307,7 @@ class Connection:
         return self._db_type
 
     @property
-    def servers(self) -> List[Server]:
+    def servers(self) -> list[Server]:
         """List of database servers"""
         return self._servers
 
@@ -318,11 +317,11 @@ class Connection:
         return self._database
 
     @property
-    def allowed_databases(self) -> List[str]:
+    def allowed_databases(self) -> list[str]:
         """Allowed database names for this connection"""
         return list(self._allowed_databases)
 
-    def resolve_database(self, database: Optional[str] = None) -> str:
+    def resolve_database(self, database: str | None = None) -> str:
         """Resolve and validate the database name against the allowlist."""
         if database is None:
             return self._database
@@ -353,7 +352,7 @@ class Connection:
         return self._implementation
 
     @property
-    def ssh_tunnel(self) -> Optional[SSHTunnelConfig]:
+    def ssh_tunnel(self) -> SSHTunnelConfig | None:
         """SSH tunnel configuration (None if not configured)"""
         return self._ssh_tunnel
 

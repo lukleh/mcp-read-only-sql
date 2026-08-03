@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Docker environment tests for MCP SQL Server
 Verifies that Docker databases are accessible and basic queries work.
@@ -6,9 +5,10 @@ The main security testing (read-only, timeouts, managed result files) is in the 
 """
 
 import pytest
+
 from mcp_read_only_sql.config.parser import ConfigParser
-from mcp_read_only_sql.connectors.postgresql.python import PostgreSQLPythonConnector
 from mcp_read_only_sql.connectors.clickhouse.python import ClickHousePythonConnector
+from mcp_read_only_sql.connectors.postgresql.python import PostgreSQLPythonConnector
 from tests.docker_test_config import apply_docker_test_overrides
 
 
