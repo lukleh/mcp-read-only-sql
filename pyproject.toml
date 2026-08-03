@@ -1,6 +1,6 @@
 [project]
 name = "mcp-read-only-sql"
-version = "0.3.0"
+version = "0.3.1"
 description = "MCP server for read-only SQL queries supporting PostgreSQL and ClickHouse"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -20,7 +20,12 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
 ]
 dependencies = [
-    "mcp>=1.0.0",
+    # Floor: mcp.server.fastmcp first shipped in 1.2.0, and FastMCP only emits
+    # outputSchema / structured content from 1.10.0 — on older 1.x the server
+    # still starts but silently drops the output schemas its tools declare.
+    # Cap: 2.0.0 removed mcp.server.fastmcp outright. Keep the cap until the
+    # server is ported to the 2.x API.
+    "mcp>=1.10.0,<2",
     "pyyaml>=6.0",
     "psycopg2-binary>=2.9.0",
     "clickhouse-connect>=0.7.0",
@@ -52,6 +57,13 @@ mcp-read-only-sql = "mcp_read_only_sql.server:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/mcp_read_only_sql"]
+
+[tool.ruff.lint]
+# State the rule set explicitly. The dev extra tracks the latest ruff, and
+# ruff 0.16 widened its implicit defaults (UP, I, BLE, SIM, DTZ, ...), which
+# turned CI red on unchanged code. These four are the set the tree is written
+# against; widening it is a deliberate, separate change.
+select = ["E4", "E7", "E9", "F"]
 
 [tool.ty.src]
 include = ["src"]

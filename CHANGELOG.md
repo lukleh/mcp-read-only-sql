@@ -7,6 +7,16 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-08-03
+
+### Fixed
+
+- Constrained the MCP Python SDK dependency to `mcp>=1.10.0,<2`. The SDK's 2.0.0 release (2026-07-28) removed `mcp.server.fastmcp`, which this server imports, so any fresh install resolving to 2.x crashed on startup with `ModuleNotFoundError: No module named 'mcp.server.fastmcp'` and the server never connected. The previous floor of `>=1.0.0` was also wrong in the other direction: `mcp.server.fastmcp` only appeared in 1.2.0, and FastMCP only emits `outputSchema` / structured content from 1.10.0, so older 1.x resolves either crashed identically or started with the tools' declared output schemas silently missing. The cap stays until the server is ported to the 2.x API.
+
+### Changed
+
+- Declared the ruff rule set explicitly as `select = ["E4", "E7", "E9", "F"]`, the set this tree is written against. `uv.lock` is not committed here and the dev extra tracks the latest ruff, so ruff 0.16 widening its implicit defaults would otherwise fail the CI lint step on unchanged code. Development-only; no runtime effect.
+
 ## [0.3.0] - 2026-06-08
 
 ### Added
