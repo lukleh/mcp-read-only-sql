@@ -94,10 +94,14 @@ def count_load_connections(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
 
 async def list_connections(server: ReadOnlySQLServer) -> list[dict[str, str]]:
     """Call list_connections directly on the in-process MCPServer instance."""
+    # SDK 2 made the tool context a required argument on the tool manager. Build
+    # it exactly the way MCPServer.call_tool does; the public wrapper is not
+    # usable here because it forces convert_result=True and these tests assert
+    # on the tools' raw return values.
     result = await server.mcp._tool_manager.call_tool(
         "list_connections",
         {},
-        Context(),
+        Context(mcp_server=server.mcp, subscriptions=server.mcp._subscriptions),
         convert_result=False,
     )
     assert isinstance(result, str)
@@ -109,7 +113,7 @@ async def run_query(server: ReadOnlySQLServer, connection_name: str) -> Path:
     result = await server.mcp._tool_manager.call_tool(
         "run_query_read_only",
         {"connection_name": connection_name, "query": "SELECT 1"},
-        Context(),
+        Context(mcp_server=server.mcp, subscriptions=server.mcp._subscriptions),
         convert_result=False,
     )
     assert isinstance(result, str)

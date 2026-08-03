@@ -76,7 +76,7 @@ async def test_run_query_writes_to_managed_results_dir(tmp_path):
             "connection_name": "stub_conn",
             "query": "SELECT 1 AS id, 'test' AS value",
         },
-        Context(),
+        Context(mcp_server=server.mcp, subscriptions=server.mcp._subscriptions),
         convert_result=False,
     )
 
@@ -102,7 +102,7 @@ async def test_run_query_creates_unique_result_files(tmp_path):
             "connection_name": "stub_conn",
             "query": "SELECT 1",
         },
-        Context(),
+        Context(mcp_server=server.mcp, subscriptions=server.mcp._subscriptions),
         convert_result=False,
     )
     second = await server.mcp._tool_manager.call_tool(
@@ -111,7 +111,7 @@ async def test_run_query_creates_unique_result_files(tmp_path):
             "connection_name": "stub_conn",
             "query": "SELECT 2",
         },
-        Context(),
+        Context(mcp_server=server.mcp, subscriptions=server.mcp._subscriptions),
         convert_result=False,
     )
 
