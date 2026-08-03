@@ -702,14 +702,16 @@ def main() -> None:
                     print(f"\nDry run: could not read {output_path}: {e}")
 
                 existing_by_name = {
-                    c.get("connection_name"): _normalize(c)
+                    name: _normalize(c)
                     for c in existing
                     if isinstance(c, dict)
+                    and isinstance(name := c.get("connection_name"), str)
                 }
                 new_by_name = {
-                    c.get("connection_name"): _normalize(c)
+                    name: _normalize(c)
                     for c in output_connections
                     if isinstance(c, dict)
+                    and isinstance(name := c.get("connection_name"), str)
                 }
 
                 added = sorted(

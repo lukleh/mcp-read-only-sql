@@ -14,7 +14,7 @@ import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, TypeAlias
+from typing import Any, Callable, Dict, List, Optional, TypeAlias
 from uuid import uuid4
 
 from mcp.server.mcpserver import MCPServer
@@ -277,7 +277,7 @@ class ReadOnlySQLServer:
                 describe the default database and allowed database list.
             """
             self._reload_connections_if_needed()
-            conn_list = []
+            conn_list: List[Dict[str, Any]] = []
 
             for conn_name, connector in self.connections.items():
                 conn_type = connector.connection.db_type
