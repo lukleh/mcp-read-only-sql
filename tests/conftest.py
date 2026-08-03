@@ -273,7 +273,7 @@ async def call_tool(
     result = await session.call_tool(tool_name, arguments=arguments)
 
     # Check if this is an error response
-    if hasattr(result, "isError") and result.isError:
+    if hasattr(result, "is_error") and result.is_error:
         if result.content and len(result.content) > 0:
             error_text = result.content[0].text
             return {"success": False, "error": error_text}

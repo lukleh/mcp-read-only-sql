@@ -57,7 +57,7 @@ class TestServerBasics:
             "run_query_read_only", arguments={"query": "SELECT 1"}
         )
         # Should have error in result
-        assert result.isError or (
+        assert result.is_error or (
             result.content and "error" in str(result.content[0]).lower()
         )
 
@@ -404,6 +404,6 @@ class TestServerParameter:
 
         # Check tool description mentions server parameter
         assert "server" in run_query_tool.description.lower() or (
-            run_query_tool.inputSchema
-            and "server" in str(run_query_tool.inputSchema).lower()
+            run_query_tool.input_schema
+            and "server" in str(run_query_tool.input_schema).lower()
         )
