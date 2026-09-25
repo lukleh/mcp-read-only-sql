@@ -30,7 +30,7 @@ def parse_tsv(tsv_str):
 @pytest.fixture
 def postgres_python_conn():
     """PostgreSQL Python connector"""
-    from conftest import make_connection
+    from tests.conftest import make_connection
 
     config = make_connection(
         {
@@ -48,7 +48,7 @@ def postgres_python_conn():
 @pytest.fixture
 def postgres_cli_conn():
     """PostgreSQL CLI connector"""
-    from conftest import make_connection
+    from tests.conftest import make_connection
 
     config = make_connection(
         {
@@ -66,7 +66,7 @@ def postgres_cli_conn():
 @pytest.fixture
 def clickhouse_python_conn():
     """ClickHouse Python connector"""
-    from conftest import make_connection
+    from tests.conftest import make_connection
 
     config = make_connection(
         {
@@ -84,7 +84,7 @@ def clickhouse_python_conn():
 @pytest.fixture
 def clickhouse_cli_conn():
     """ClickHouse CLI connector"""
-    from conftest import make_connection
+    from tests.conftest import make_connection
 
     config = make_connection(
         {

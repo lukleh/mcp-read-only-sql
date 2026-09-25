@@ -29,7 +29,7 @@ class TestCLISSHTunnels:
 
     async def test_postgresql_cli_with_ssh_tunnel(self):
         """Test PostgreSQL CLI connector through SSH tunnel"""
-        from conftest import make_connection
+        from tests.conftest import make_connection
 
         config = make_connection(
             {
@@ -60,7 +60,7 @@ class TestCLISSHTunnels:
         if shutil.which("sshpass") is None:
             pytest.skip("sshpass not installed; skipping CLI password tunnel test")
 
-        from conftest import make_connection
+        from tests.conftest import make_connection
 
         config = make_connection(
             {
@@ -85,7 +85,7 @@ class TestCLISSHTunnels:
 
     async def test_clickhouse_cli_with_ssh_tunnel(self):
         """Test ClickHouse CLI connector through SSH tunnel"""
-        from conftest import make_connection
+        from tests.conftest import make_connection
 
         config = make_connection(
             {
@@ -115,7 +115,7 @@ class TestCLISSHTunnels:
 
     async def test_cli_ssh_tunnel_cleanup(self):
         """Test that SSH tunnels are properly cleaned up after use"""
-        from conftest import make_connection
+        from tests.conftest import make_connection
 
         config = make_connection(
             {
@@ -146,7 +146,7 @@ class TestCLISSHTunnels:
 
     async def test_cli_ssh_with_wrong_credentials(self):
         """Test CLI connector handles SSH authentication failure gracefully"""
-        from conftest import make_connection
+        from tests.conftest import make_connection
 
         config = make_connection(
             {
@@ -178,7 +178,7 @@ class TestCLISSHTunnels:
 
     async def test_cli_ssh_disabled(self):
         """Test CLI connectors work normally when SSH is disabled"""
-        from conftest import make_connection
+        from tests.conftest import make_connection
 
         config = make_connection(
             {
@@ -206,7 +206,7 @@ class TestCLISSHTunnels:
 
     async def test_cli_ssh_complex_query(self):
         """Test complex queries work through CLI SSH tunnel"""
-        from conftest import make_connection
+        from tests.conftest import make_connection
 
         config = make_connection(
             {

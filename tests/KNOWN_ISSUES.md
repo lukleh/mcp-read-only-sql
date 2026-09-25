@@ -58,7 +58,6 @@ Potential fixes being considered:
 ### Tests Affected
 
 The following test files use MCP client fixtures and show teardown errors:
-- `test_concurrent_queries.py`
 - `test_mcp_protocol.py`
 - `test_mcp_server.py`
 - `test_result_serialization.py` (MCP tests only)

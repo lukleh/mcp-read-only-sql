@@ -10,7 +10,7 @@
 - `uv run mcp-read-only-sql import-dbeaver ...` or `just import-dbeaver` — convert a DBeaver workspace into `connections.yaml`.
 - `just validate` — lint `connections.yaml` against the schema and safety checks.
 - `just test` — spin up Dockerized fixtures and execute the full pytest suite via `./run_tests.sh`.
-- `uv run python -m pytest tests/test_sql_guard.py` — run an individual module when iterating quickly.
+- `uv run python -m pytest tests/test_sql_guard_postgresql.py` — run an individual module when iterating quickly.
 - `uv run ruff check .` — lint the Python tree.
 - `uv run ty check` — type-check the full `src/` tree; there are no remaining package excludes.
 

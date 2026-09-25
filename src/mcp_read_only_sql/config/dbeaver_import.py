@@ -27,8 +27,6 @@ class DBeaverImporter:
         self.dbeaver_path = Path(dbeaver_path)
         self.data_sources_path = self.dbeaver_path / "data-sources.json"
         self.credentials_path = self.dbeaver_path / "credentials-config.json"
-        self.last_imported_names: list[str] = []
-        self.last_requested_names: list[str] = []
         self.last_seen_names: list[str] = []
 
     def _decrypt_credentials(
@@ -126,7 +124,6 @@ class DBeaverImporter:
         only_set = set(requested) if requested else None
         if only_set:
             print(f"Filtering: only {len(only_set)} requested connection(s)")
-        self.last_requested_names = requested
 
         connections: list[dict[str, Any]] = []
         imported_names: list[str] = []
@@ -156,7 +153,6 @@ class DBeaverImporter:
         if merge_clusters:
             connections = self._merge_cluster_connections(connections)
 
-        self.last_imported_names = imported_names
         self.last_seen_names = seen_names
         return connections
 

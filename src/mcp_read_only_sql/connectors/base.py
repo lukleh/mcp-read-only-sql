@@ -7,11 +7,6 @@ from ..utils.ssh_tunnel import SSHTunnel
 from ..utils.timeout_wrapper import with_hard_timeout
 
 
-class ConnectionTimeoutError(Exception):
-    """Raised when a connection or query times out"""
-
-
-
 class BaseConnector(ABC):
     """Base class for database connectors"""
 
@@ -132,10 +127,6 @@ class BaseConnector(ABC):
             f"Server '{server}' not found in connection '{self.name}'. "
             f"Available servers: {', '.join(available_hosts)}"
         )
-
-    def _get_default_port(self) -> int:
-        """Get default port for the database type"""
-        return 5432  # Override in subclasses
 
     def _resolve_database(self, database: str | None = None) -> str:
         """Resolve and validate database selection for this connection."""

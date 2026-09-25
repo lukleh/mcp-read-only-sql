@@ -158,7 +158,7 @@ def docker_check():
         "mcp-postgres" not in running_containers
         or "mcp-clickhouse" not in running_containers
     ):
-        pytest.skip("Docker containers not running. Run: just docker-test-setup")
+        pytest.skip("Docker containers not running. Run: docker-compose --profile test up -d")
 
 
 @pytest.fixture(scope="session")

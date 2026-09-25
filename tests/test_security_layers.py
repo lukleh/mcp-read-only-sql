@@ -24,7 +24,7 @@ def test_config():
 @pytest.fixture
 def postgres_connector(test_config):
     """Create PostgreSQL connector for testing"""
-    from conftest import make_connection
+    from tests.conftest import make_connection
 
     config = next(
         (c for c in test_config if c["connection_name"] == "test_postgres"), None
@@ -40,7 +40,7 @@ def postgres_connector(test_config):
 @pytest.fixture
 def clickhouse_connector(test_config):
     """Create ClickHouse connector for testing"""
-    from conftest import make_connection
+    from tests.conftest import make_connection
 
     config = next(
         (c for c in test_config if c["connection_name"] == "test_clickhouse"), None

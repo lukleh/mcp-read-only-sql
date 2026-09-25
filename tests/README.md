@@ -11,26 +11,30 @@ This test suite is organized by functionality to clearly test the core security 
 ### MCP Protocol
 - **test_mcp_protocol.py** - Tests MCP server/client communication
 - **test_mcp_server.py** - Tests MCP server functionality
-- **test_concurrent_queries.py** - Tests concurrent query handling
 
 ### Database Connectivity
 - **test_docker_connectivity.py** - Verifies Docker databases are accessible
 
-## Security Tests (Three-Layer Model)
+## Security Tests
 
-### Layer 1 & 2: Read-Only Enforcement
-- **test_security_readonly.py** - Tests database-level read-only enforcement
+### Layer 1: Client-side statement policy
+- **test_sql_guard_postgresql.py** - The PostgreSQL parse-tree allow-list: accepted shapes, refused statements and functions, `allowed_functions`
+
+### Layer 2: Database-level read-only
+- **test_security_readonly.py** - Read-only sessions for both implementations, with mocked clients
   - Blocks INSERT, UPDATE, DELETE, DROP, CREATE, ALTER, TRUNCATE
-  - Tests both CLI and Python implementations
+- **test_security_readonly_integration.py** - The same against the Docker databases, including with the client-side guard bypassed
 
-### Layer 3: Timeout and Managed Result Files
+### Layer 3: Timeouts
 - **test_limits.py** - Tests timeout enforcement and hard timeout behavior
   - Ensures long-running queries are terminated
+
+### Managed result files
 - **test_run_query_file_output.py** - Tests managed result-file creation
   - Ensures query results are written under the managed state directory with `0600` permissions
 
 ### Integration
-- **test_security_layers.py** - Tests all three security layers working together
+- **test_security_layers.py** - Tests the layers working together
 
 ## Running Tests
 

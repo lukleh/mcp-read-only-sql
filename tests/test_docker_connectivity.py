@@ -22,7 +22,7 @@ def test_connections():
 @pytest.fixture
 def postgres_conn(test_connections):
     """Get PostgreSQL test connection"""
-    from conftest import make_connection
+    from tests.conftest import make_connection
 
     config = next(
         (c for c in test_connections if c["connection_name"] == "test_postgres"), None
@@ -38,7 +38,7 @@ def postgres_conn(test_connections):
 @pytest.fixture
 def clickhouse_conn(test_connections):
     """Get ClickHouse test connection"""
-    from conftest import make_connection
+    from tests.conftest import make_connection
 
     config = next(
         (c for c in test_connections if c["connection_name"] == "test_clickhouse"), None

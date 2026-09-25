@@ -10,11 +10,11 @@ from unittest.mock import MagicMock, patch
 import paramiko
 import pytest
 
-from conftest import make_connection
 from mcp_read_only_sql.connectors.clickhouse.python import ClickHousePythonConnector
 from mcp_read_only_sql.connectors.postgresql.python import PostgreSQLPythonConnector
 from mcp_read_only_sql.utils.sql_guard import ReadOnlyQueryError
 from mcp_read_only_sql.utils.ssh_tunnel import SSHTunnel
+from tests.conftest import make_connection
 from tests.docker_test_config import (
     docker_test_server,
     docker_test_ssh_tunnel,

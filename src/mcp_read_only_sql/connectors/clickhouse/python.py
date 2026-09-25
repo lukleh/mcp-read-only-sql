@@ -18,9 +18,6 @@ logger = logging.getLogger(__name__)
 class ClickHousePythonConnector(BaseConnector):
     """ClickHouse connector using clickhouse-connect (supports both HTTP and native protocols)"""
 
-    def _get_default_port(self) -> int:
-        return 8123  # HTTP port (clickhouse-connect default)
-
     @asynccontextmanager
     async def _get_ssh_tunnel(self, server: str | None = None):
         """Override SSH tunnel to ensure we tunnel to correct HTTP/HTTPS port for clickhouse-connect"""
