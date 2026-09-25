@@ -212,7 +212,7 @@ async def test_postgresql_cli_includes_readonly_flags(postgres_config, monkeypat
 
     class DummyProcess:
         def __init__(self):
-            self.stdout = DummyStdout(["BEGIN\n", "SET\n", "col\n", "COMMIT\n"])
+            self.stdout = DummyStdout(["col\n"])
             self.stderr = DummyStderr()
             self.returncode = 0
 
@@ -238,7 +238,11 @@ async def test_postgresql_cli_includes_readonly_flags(postgres_config, monkeypat
     cmd = captured["cmd"]
     assert "--single-transaction" in cmd
     assert "-v" in cmd and "ON_ERROR_STOP=1" in cmd
-    assert any("SELECT 1 as test" in part for part in cmd if isinstance(part, str))
+    assert "-q" in cmd and "footer=off" in cmd
+    command_string = cmd[cmd.index("-c") + 1]
+    assert "SELECT 1 as test" in command_string
+    assert command_string.lstrip().startswith("SET TRANSACTION READ ONLY;")
+    assert "BEGIN" not in command_string and "COMMIT" not in command_string
     env = captured["env"]
     assert "default_transaction_read_only=on" in env.get("PGOPTIONS", "")
 
@@ -592,7 +596,7 @@ def test_postgresql_python_sets_readonly_options(monkeypatch, postgres_config):
             if sql.startswith("SET statement_timeout"):
                 return
             self.description = [("col",)]
-            self._rows = [{"col": 1}]
+            self._rows = [(1,)]
 
         def fetchmany(self, _size):
             if self._rows:

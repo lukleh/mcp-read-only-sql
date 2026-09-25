@@ -7,6 +7,21 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- The psql connector no longer drops rows. It parsed psql's output and
+  skipped any line equal to `BEGIN`, `SET`, `DO`, `COMMIT` or `ROLLBACK`,
+  any line shaped like `(N rows)`, and a trailing empty line, so a row with
+  one of those values disappeared and a single-column result whose last row
+  was NULL or empty lost that row. psql now runs with `-q` and `footer=off`,
+  which keeps command tags and the row count off stdout, and every line is
+  returned as data. The command string no longer carries its own
+  `BEGIN`/`COMMIT` inside `--single-transaction`, which removed two warnings
+  per query.
+- The Python PostgreSQL connector returns duplicate column names correctly.
+  It used a dict cursor, so `SELECT 1 AS a, 2 AS a` came back as `2 2`; it
+  now uses a plain tuple cursor like psql does.
+
 ## [0.5.1] - 2026-09-25
 
 ### Changed

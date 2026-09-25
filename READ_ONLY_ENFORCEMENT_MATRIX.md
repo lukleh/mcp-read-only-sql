@@ -33,9 +33,12 @@ Legend:
   connection by `allowed_functions`. Operators and `TABLESAMPLE` methods
   outside `pg_catalog` are refused too. This is the layer that stops what a
   read-only transaction does not.
-- CLI: the sanitized single statement is wrapped in `BEGIN; SET TRANSACTION
-  READ ONLY; ... COMMIT;`. `psql` always runs with `--single-transaction`,
-  `-v ON_ERROR_STOP=1`, and `PGOPTIONS=-c default_transaction_read_only=on`.
+- CLI: `psql --single-transaction` opens the transaction and the command
+  string starts with `SET TRANSACTION READ ONLY;` before the sanitized single
+  statement. `psql` always runs with `-v ON_ERROR_STOP=1` and
+  `PGOPTIONS=-c default_transaction_read_only=on`. Output is read with `-q`
+  and `footer=off`, so stdout carries only the header and the rows and no
+  line is filtered client-side.
 - Python: `psycopg2.connect(..., options='-c default_transaction_read_only=on')`
   plus `conn.set_session(readonly=True, autocommit=True)` create a database
   session that refuses writes at the protocol level.
