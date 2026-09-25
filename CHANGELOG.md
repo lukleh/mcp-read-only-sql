@@ -7,6 +7,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-09-25
+
 ### Changed
 
 - Narrowed the SDK dependency from `mcp>=2.0.0,<3` to `mcp>=2.2.0,<2.3`.
