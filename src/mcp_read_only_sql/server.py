@@ -8,8 +8,8 @@ import logging
 import os
 import re
 import sys
-from collections.abc import Callable
-from contextlib import suppress
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager, suppress
 from datetime import UTC, datetime
 from hashlib import blake2b
 from importlib.resources import files
@@ -17,7 +17,9 @@ from pathlib import Path
 from typing import Any, TypeAlias
 from uuid import uuid4
 
+from mcp import MCPError
 from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 
 from . import __version__
 from .config import Connection, dbeaver_import, load_connections_from_text
@@ -30,6 +32,7 @@ from .connectors.clickhouse.cli import ClickHouseCLIConnector
 from .connectors.clickhouse.python import ClickHousePythonConnector
 from .connectors.postgresql.cli import PostgreSQLCLIConnector
 from .connectors.postgresql.python import PostgreSQLPythonConnector
+from .errors import ConnectorError
 from .runtime_paths import (
     PRIVATE_DIR_MODE,
     PRIVATE_FILE_MODE,
@@ -37,6 +40,7 @@ from .runtime_paths import (
     resolve_runtime_paths,
 )
 from .tools import test_connection, test_ssh_tunnel, validate_config
+from .utils.timeout_wrapper import HardTimeoutError
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -47,6 +51,18 @@ SAMPLE_CONNECTIONS_YAML = (
     files("mcp_read_only_sql")
     .joinpath("connections.yaml.sample")
     .read_text(encoding="utf-8")
+)
+# Exception types the connectors and this module raise for operational failures
+# the caller can act on: an unknown connection or server, a rejected statement,
+# a database/CLI/SSH error (ConnectorError), a timeout, a result-file problem.
+# A plain RuntimeError is deliberately absent: connectors raise ConnectorError for
+# anything they wrap, so everything else is a bug and stays a crash.
+ANTICIPATED_TOOL_ERRORS: tuple[type[Exception], ...] = (
+    ValueError,
+    ConnectorError,
+    TimeoutError,
+    OSError,
+    HardTimeoutError,
 )
 SUBCOMMAND_HANDLERS: dict[str, Callable[[], None]] = {
     "import-dbeaver": dbeaver_import.main,
@@ -74,6 +90,25 @@ def _display_hosts_for_connector(connector: BaseConnector) -> list[str]:
             servers.append(display_host)
 
     return servers
+
+
+@contextmanager
+def _surface_tool_errors() -> Iterator[None]:
+    """Report an anticipated tool failure to the caller with its message.
+
+    Since mcp 2.x the SDK treats any exception other than ``ToolError`` (or a
+    protocol-level ``MCPError``) as a crash and replaces its text with the
+    generic ``Error executing tool <name>``. The operational failures listed in
+    ``ANTICIPATED_TOOL_ERRORS`` are re-raised as ``ToolError`` so the caller
+    sees the reason. Anything else is a bug and keeps the SDK's crash handling:
+    the text stays on the server, logged with its traceback.
+    """
+    try:
+        yield
+    except (ToolError, MCPError):
+        raise
+    except ANTICIPATED_TOOL_ERRORS as exc:
+        raise ToolError(str(exc) or type(exc).__name__) from exc
 
 
 class ReadOnlySQLServer:
@@ -244,26 +279,28 @@ class ReadOnlySQLServer:
                 directory for this server instance. Successful query results
                 are retained there until removed by the operator.
             """
-            self._reload_connections_if_needed()
-            if connection_name not in self.connections:
-                raise ValueError(
-                    f"Connection '{connection_name}' not found. Available connections: {', '.join(self.connections.keys())}"
-                )
+            with _surface_tool_errors():
+                self._reload_connections_if_needed()
+                if connection_name not in self.connections:
+                    raise ValueError(
+                        f"Connection '{connection_name}' not found. Available connections: {', '.join(self.connections.keys())}"
+                    )
 
-            connector = self.connections[connection_name]
-            output_path = self._create_result_file(connection_name)
-            try:
-                await connector.execute_query_to_file_with_timeout(
-                    query,
-                    output_path,
-                    database=database,
-                    server=server,
-                )
-            except Exception:
-                with suppress(FileNotFoundError):
-                    output_path.unlink()
-                raise
-            return str(output_path.resolve())
+                connector = self.connections[connection_name]
+                output_path = self._create_result_file(connection_name)
+                try:
+                    await connector.execute_query_to_file_with_timeout(
+                        query,
+                        output_path,
+                        database=database,
+                        server=server,
+                    )
+                except BaseException:
+                    # BaseException so a cancelled call also removes the empty file.
+                    with suppress(FileNotFoundError):
+                        output_path.unlink()
+                    raise
+                return str(output_path.resolve())
 
         @self.mcp.tool()
         async def list_connections() -> str:
@@ -276,7 +313,8 @@ class ReadOnlySQLServer:
                 hosts for each connection, while ``database`` and ``databases``
                 describe the default database and allowed database list.
             """
-            self._reload_connections_if_needed()
+            with _surface_tool_errors():
+                self._reload_connections_if_needed()
             conn_list: list[dict[str, Any]] = []
 
             for conn_name, connector in self.connections.items():

@@ -64,7 +64,10 @@ class Server:
                 raise ValueError("Server configuration missing required field 'host'")
             if "port" not in data:
                 raise ValueError("Server configuration missing required field 'port'")
-            return cls(host=data["host"], port=int(data["port"]))
+            host = data["host"]
+            if not isinstance(host, str) or not host.strip():
+                raise ValueError("Server field 'host' must be a non-empty string")
+            return cls(host=host, port=int(data["port"]))
 
         # Handle string format: "host:port" or "host"
         if isinstance(data, str):
@@ -191,6 +194,11 @@ class Connection:
                 "Connection configuration missing required field 'username'"
             )
 
+        for field_name in ("connection_name", "username"):
+            value = config[field_name]
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"Field '{field_name}' must be a non-empty string")
+
         # Validate type
         db_type = config["type"]
         if db_type not in ("postgresql", "clickhouse"):
@@ -294,7 +302,12 @@ class Connection:
             config.get("connection_timeout", DEFAULT_CONNECTION_TIMEOUT),
             "connection_timeout",
         )
-        self._description = config.get("description", "")
+        description = config.get("description")
+        if description is None:
+            description = ""
+        if not isinstance(description, str):
+            raise ValueError("Field 'description' must be a string")
+        self._description = description
 
     @property
     def name(self) -> str:

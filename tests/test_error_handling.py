@@ -9,6 +9,7 @@ from mcp_read_only_sql.connectors.clickhouse.cli import ClickHouseCLIConnector
 from mcp_read_only_sql.connectors.clickhouse.python import ClickHousePythonConnector
 from mcp_read_only_sql.connectors.postgresql.cli import PostgreSQLCLIConnector
 from mcp_read_only_sql.connectors.postgresql.python import PostgreSQLPythonConnector
+from mcp_read_only_sql.errors import ConnectorError
 from tests.docker_test_config import docker_test_host, docker_test_server
 
 
@@ -331,6 +332,6 @@ class TestErrorMessageQuality:
         with pytest.raises(RuntimeError) as exc_info:
             await postgres_python_conn.execute_query("SELECT * FROM nonexistent")
 
-        # Error should be a RuntimeError with a message
-        assert exc_info.type is RuntimeError
+        # Error should be the connector's operational error with a message
+        assert exc_info.type is ConnectorError
         assert str(exc_info.value)  # Should have a message
