@@ -264,6 +264,33 @@ async def test_postgresql_cli_blocks_write_statements(
 
 
 @pytest.mark.anyio
+async def test_postgresql_cli_surfaces_server_readonly_error(
+    postgres_config, monkeypatch
+):
+    """With the AST guard bypassed, a psql read-only error becomes a RuntimeError."""
+
+    monkeypatch.setattr(
+        "mcp_read_only_sql.connectors.postgresql.cli.sanitize_postgresql_read_only_sql",
+        lambda query, allowed_functions=(): query.strip(),
+    )
+    connector = PostgreSQLCLIConnector(postgres_config)
+    called = {"value": False}
+
+    async def fake_create_subprocess_exec(*cmd, **kwargs):
+        called["value"] = True
+        return _FakeProcess("ERROR: cannot execute INSERT in a read-only transaction")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        await connector.execute_query("INSERT INTO users (id) VALUES (1)")
+
+    assert called["value"], "psql was not invoked"
+    assert str(exc_info.value).startswith("psql:")
+    _assert_readonly_error(exc_info, "PostgreSQL CLI")
+
+
+@pytest.mark.anyio
 @pytest.mark.parametrize("statement", POSTGRESQL_DDL_CREATE_STATEMENTS)
 async def test_postgresql_cli_blocks_create_statements(
     statement, postgres_config, monkeypatch

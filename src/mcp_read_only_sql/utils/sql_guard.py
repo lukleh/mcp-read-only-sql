@@ -176,7 +176,12 @@ class _ReadOnlyPolicy(visitors.Visitor):
 
     def __init__(self, extra_functions: frozenset[str]):
         super().__init__()
-        self._extra_functions = extra_functions
+        # A configured ``schema.name`` permits both the qualified call and the
+        # bare ``name(...)``, which is how such a function is normally invoked
+        # with its schema on search_path. A bare entry permits the bare call
+        # and ``pg_catalog.name``.
+        self._extra_qualified = frozenset(f for f in extra_functions if "." in f)
+        self._extra_bare = frozenset(f.rsplit(".", 1)[-1] for f in extra_functions)
 
     def visit(self, ancestors, node):
         if isinstance(node, ast.Node) and type(node).__name__.endswith("Stmt"):
@@ -193,29 +198,28 @@ class _ReadOnlyPolicy(visitors.Visitor):
     def visit_FuncCall(self, ancestors, node):
         parts = [str(part.sval) for part in node.funcname]
         qualified = ".".join(parts)
-        if qualified in self._extra_functions:
+        if qualified in self._extra_qualified:
             return
-        if len(parts) == 1:
-            name = parts[0]
-        elif len(parts) == 2 and parts[0] == "pg_catalog":
-            name = parts[1]
-        else:
+        name = _strip_pg_catalog(parts)
+        if name is None:
             raise ReadOnlyQueryError(_function_message(qualified))
-        if name not in PG_CATALOG_ALLOWED_FUNCTIONS and name not in self._extra_functions:
+        if name not in PG_CATALOG_ALLOWED_FUNCTIONS and name not in self._extra_bare:
             raise ReadOnlyQueryError(_function_message(qualified))
 
     def visit_A_Expr(self, ancestors, node):
-        parts = [str(part.sval) for part in node.name or ()]
-        if len(parts) > 1 and parts[0] != "pg_catalog":
-            raise ReadOnlyQueryError(
-                f"Operator {'.'.join(parts)} outside pg_catalog is not allowed in read-only mode"
-            )
+        _check_operator([str(part.sval) for part in node.name or ()])
+
+    def visit_SortBy(self, ancestors, node):
+        # ORDER BY ... USING <op> sorts through the operator's btree opclass,
+        # whose support function is user code for a user-defined operator.
+        _check_operator([str(part.sval) for part in node.useOp or ()])
 
     def visit_RangeTableSample(self, ancestors, node):
-        method = ".".join(str(part.sval) for part in node.method)
-        if method.lower() not in _ALLOWED_TABLESAMPLE_METHODS:
+        parts = [str(part.sval) for part in node.method]
+        method = _strip_pg_catalog(parts)
+        if method is None or method.lower() not in _ALLOWED_TABLESAMPLE_METHODS:
             raise ReadOnlyQueryError(
-                f"TABLESAMPLE method {method} is not allowed in read-only mode"
+                f"TABLESAMPLE method {'.'.join(parts)} is not allowed in read-only mode"
             )
 
     @staticmethod
@@ -227,6 +231,22 @@ class _ReadOnlyPolicy(visitors.Visitor):
         raise ReadOnlyQueryError(
             f"{label} statements are not allowed in read-only mode "
             "(only SELECT, EXPLAIN and SHOW are accepted)"
+        )
+
+
+def _strip_pg_catalog(parts: list[str]) -> str | None:
+    """Return the bare name for ``name`` or ``pg_catalog.name``, else None."""
+    if len(parts) == 1:
+        return parts[0]
+    if len(parts) == 2 and parts[0] == "pg_catalog":
+        return parts[1]
+    return None
+
+
+def _check_operator(parts: list[str]) -> None:
+    if len(parts) > 1 and parts[0] != "pg_catalog":
+        raise ReadOnlyQueryError(
+            f"Operator {'.'.join(parts)} outside pg_catalog is not allowed in read-only mode"
         )
 
 

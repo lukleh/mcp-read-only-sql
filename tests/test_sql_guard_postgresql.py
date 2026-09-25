@@ -30,6 +30,8 @@ ALLOWED_QUERIES = [
     "SELECT * FROM generate_series(1, 3) AS g(n), unnest(ARRAY[1, 2]) AS u(v)",
     "SELECT * FROM users TABLESAMPLE SYSTEM (10)",
     "SELECT * FROM users TABLESAMPLE BERNOULLI (10)",
+    "SELECT * FROM users TABLESAMPLE pg_catalog.system (10)",
+    "SELECT * FROM users ORDER BY id USING <, name USING OPERATOR(pg_catalog.>)",
     "SELECT 1 UNION SELECT 2 EXCEPT SELECT 3",
     "VALUES (1, 'a'), (2, 'b')",
     "TABLE users",
@@ -84,6 +86,9 @@ BLOCKED_READ_ONLY_TRANSACTION_ESCAPES = [
     "SELECT pg_catalog.pg_terminate_backend(1)",
     "SELECT 1 OPERATOR(public.===) 2",
     "SELECT * FROM users TABLESAMPLE system_rows (10)",
+    "SELECT * FROM users TABLESAMPLE public.system (10)",
+    "SELECT * FROM users ORDER BY id USING OPERATOR(public.<<<)",
+    "SELECT * FROM users ORDER BY id USING OPERATOR(myschema.<)",
     "SELECT 1 FOR UPDATE",
     "SELECT 1 FOR SHARE",
     "SELECT 1 INTO new_table",
@@ -166,9 +171,20 @@ def test_allowed_functions_extend_the_policy_per_connection():
         sanitize_postgresql_read_only_sql("SELECT my_helper(1)", ["my_helper"])
         == "SELECT my_helper(1)"
     )
-    # A bare allowance does not cover a schema-qualified call to another schema.
+    # A schema-qualified allowance also covers the usual bare call, which
+    # resolves through search_path.
+    assert (
+        sanitize_postgresql_read_only_sql("SELECT my_helper(1)", ["public.my_helper"])
+        == "SELECT my_helper(1)"
+    )
+    # A bare allowance does not cover a schema-qualified call to another schema,
+    # and a qualified allowance does not cover a different schema.
     with pytest.raises(ReadOnlyQueryError):
         sanitize_postgresql_read_only_sql("SELECT other.my_helper(1)", ["my_helper"])
+    with pytest.raises(ReadOnlyQueryError):
+        sanitize_postgresql_read_only_sql(
+            "SELECT other.my_helper(1)", ["public.my_helper"]
+        )
 
 
 @pytest.mark.security

@@ -170,7 +170,7 @@ To allow a connection to access multiple databases, add an explicit allowlist:
 
 If you only set `db`, that single database is implicitly the allowlist.
 
-PostgreSQL connections refuse function calls outside the built-in allow-list. If a query legitimately needs another function, list it under `allowed_functions`, bare or schema-qualified, exactly as the catalog spells it:
+PostgreSQL connections refuse function calls outside the built-in allow-list. If a query legitimately needs another function, list it under `allowed_functions`, spelled as the catalog spells it. A `schema.name` entry permits both `schema.name(...)` and the bare `name(...)`; a bare entry permits only the bare call:
 
 ```yaml
 - connection_name: analytics
