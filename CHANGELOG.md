@@ -13,14 +13,20 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
   than `ToolError` raised inside a tool is treated as a crash and reported as
   the generic `Error executing tool <name>`, hiding the actual reason (unknown
   connection, unreachable host, rejected statement). The operational failure
-  types the connectors raise (`ValueError`, `RuntimeError`, `TimeoutError`,
-  `OSError`, `HardTimeoutError`) are now re-raised as `ToolError`, so the
-  result carries the underlying message after the SDK prefix. Programming
-  errors keep the SDK's crash handling: generic text to the caller, traceback
-  in the server log.
-- A non-string `description` in `connections.yaml` is rejected when the config
-  loads, with the connection named, instead of failing `list_connections` with
-  a generic error.
+  types (`ValueError`, the new `ConnectorError`, `TimeoutError`, `OSError`,
+  `HardTimeoutError`) are now re-raised as `ToolError`, so the result carries
+  the underlying message after the SDK prefix. Programming errors keep the
+  SDK's crash handling: generic text to the caller, traceback in the server
+  log.
+- Connectors and the SSH tunnels raise `ConnectorError` (a `RuntimeError`
+  subclass) for driver errors, non-zero client exits, and SSH failures, and
+  no longer wrap arbitrary exceptions with a `psql:`/`clickhouse-client:`/
+  `SSH:` prefix. Only process-spawn and socket failures (`OSError`) are wrapped;
+  anything else propagates as the bug it is.
+- Non-string `connection_name`, `username`, `description`, or server `host`
+  values in `connections.yaml` are rejected when the config loads, with the
+  connection named, instead of failing `list_connections` with a generic
+  error.
 
 ### Changed
 

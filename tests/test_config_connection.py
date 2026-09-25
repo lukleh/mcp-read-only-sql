@@ -216,6 +216,30 @@ class TestConnection:
                 }
             )
 
+    @pytest.mark.parametrize("field_name", ["connection_name", "username"])
+    @pytest.mark.parametrize("bad_value", [42, "", "   ", None])
+    def test_connection_rendered_fields_must_be_strings(self, field_name, bad_value):
+        """Fields echoed by list_connections are validated at load time."""
+        config = {
+            "connection_name": "test",
+            "type": "postgresql",
+            "servers": [{"host": "localhost", "port": 5432}],
+            "db": "testdb",
+            "username": "testuser",
+            "password": "testpass",
+        }
+        config[field_name] = bad_value
+        with pytest.raises(
+            ValueError, match=f"Field '{field_name}' must be a non-empty string"
+        ):
+            Connection(config)
+
+    @pytest.mark.parametrize("bad_host", [42, "", None])
+    def test_server_dict_host_must_be_string(self, bad_host):
+        """A dict server entry with a non-string host is rejected at load time."""
+        with pytest.raises(ValueError, match="Server field 'host' must be a non-empty string"):
+            Server.from_dict({"host": bad_host, "port": 5432})
+
     def test_connection_empty_description_normalized(self):
         """A bare ``description:`` key (YAML null) reads back as an empty string."""
         conn = Connection(

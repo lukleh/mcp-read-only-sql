@@ -5,6 +5,7 @@ from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
 
+from ...errors import ConnectorError
 from ...utils.sql_guard import ReadOnlyQueryError, sanitize_read_only_sql
 from ...utils.tsv_formatter import write_tsv_text_line
 from ..base_cli import BaseCLIConnector
@@ -111,7 +112,7 @@ class PostgreSQLCLIConnector(BaseCLIConnector):
                 if stdout is None or stderr_stream is None:
                     process.kill()
                     await process.wait()
-                    raise RuntimeError("psql: failed to create subprocess pipes")
+                    raise ConnectorError("psql: failed to create subprocess pipes")
 
                 stderr_task = asyncio.create_task(stderr_stream.read())
                 lines: list[str] = []
@@ -188,7 +189,7 @@ class PostgreSQLCLIConnector(BaseCLIConnector):
                     if returncode not in (0, None):
                         error_msg = stderr.decode() if stderr else "Unknown error"
                         logger.error(f"psql error: {error_msg}")
-                        raise RuntimeError(f"psql: {error_msg}")
+                        raise ConnectorError(f"psql: {error_msg}")
 
                     if pending_line not in (None, ""):
                         emit_line(pending_line)
@@ -247,8 +248,7 @@ class PostgreSQLCLIConnector(BaseCLIConnector):
                 except TimeoutError as exc:
                     logger.error(f"Query execution error: {exc}")
                     raise
-                except Exception as e:
+                except OSError as e:
+                    # Spawning or talking to the psql process failed
                     logger.error(f"Query execution error: {e}")
-                    if not str(e).startswith("psql:"):
-                        raise RuntimeError(f"psql: {e}")
-                    raise
+                    raise ConnectorError(f"psql: {e}") from e

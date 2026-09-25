@@ -32,6 +32,7 @@ from .connectors.clickhouse.cli import ClickHouseCLIConnector
 from .connectors.clickhouse.python import ClickHousePythonConnector
 from .connectors.postgresql.cli import PostgreSQLCLIConnector
 from .connectors.postgresql.python import PostgreSQLPythonConnector
+from .errors import ConnectorError
 from .runtime_paths import (
     PRIVATE_DIR_MODE,
     PRIVATE_FILE_MODE,
@@ -53,11 +54,12 @@ SAMPLE_CONNECTIONS_YAML = (
 )
 # Exception types the connectors and this module raise for operational failures
 # the caller can act on: an unknown connection or server, a rejected statement,
-# a database/SSH error or timeout, an unreachable host, a result-file problem.
-# The connectors wrap driver errors into these and let programming errors through.
+# a database/CLI/SSH error (ConnectorError), a timeout, a result-file problem.
+# A plain RuntimeError is deliberately absent: connectors raise ConnectorError for
+# anything they wrap, so everything else is a bug and stays a crash.
 ANTICIPATED_TOOL_ERRORS: tuple[type[Exception], ...] = (
     ValueError,
-    RuntimeError,
+    ConnectorError,
     TimeoutError,
     OSError,
     HardTimeoutError,

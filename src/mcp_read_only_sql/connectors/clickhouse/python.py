@@ -6,6 +6,7 @@ from pathlib import Path
 import clickhouse_connect
 from clickhouse_connect.driver.exceptions import ClickHouseError
 
+from ...errors import ConnectorError
 from ...utils.sql_guard import sanitize_read_only_sql
 from ...utils.ssh_tunnel_cli import CLISSHTunnel
 from ...utils.tsv_formatter import format_tsv_line
@@ -165,7 +166,7 @@ class ClickHousePythonConnector(BaseConnector):
         except ClickHouseError as e:
             # ClickHouse-specific database errors get prefixed
             logger.error(f"ClickHouse database error: {e}")
-            raise RuntimeError(f"ClickHouse: {e}")
+            raise ConnectorError(f"ClickHouse: {e}")
         # Let other exceptions (programming errors) propagate unchanged
 
     def _resolve_client_endpoint(

@@ -4,6 +4,7 @@ import pytest
 from mcp import MCPError
 from mcp.server.mcpserver.exceptions import ToolError
 
+from mcp_read_only_sql.errors import ConnectorError
 from mcp_read_only_sql.server import ANTICIPATED_TOOL_ERRORS, _surface_tool_errors
 from mcp_read_only_sql.utils.timeout_wrapper import HardTimeoutError
 
@@ -12,7 +13,7 @@ from mcp_read_only_sql.utils.timeout_wrapper import HardTimeoutError
     "exc",
     [
         ValueError("Connection 'alpha' not found"),
-        RuntimeError("PostgreSQL: connection refused"),
+        ConnectorError("PostgreSQL: connection refused"),
         TimeoutError("ClickHouse: Operation exceeded combined timeout"),
         OSError("psql binary missing"),
         HardTimeoutError("Operation exceeded hard timeout"),
@@ -31,7 +32,7 @@ def test_anticipated_list_matches_parametrized_cases():
     """Guard the allow-list against silent drift."""
     assert ANTICIPATED_TOOL_ERRORS == (
         ValueError,
-        RuntimeError,
+        ConnectorError,
         TimeoutError,
         OSError,
         HardTimeoutError,
@@ -44,9 +45,15 @@ def test_empty_message_falls_back_to_class_name():
         raise TimeoutError
 
 
-@pytest.mark.parametrize("exc_type", [TypeError, AttributeError, KeyError])
+@pytest.mark.parametrize(
+    "exc_type", [TypeError, AttributeError, KeyError, RuntimeError]
+)
 def test_programming_errors_keep_sdk_crash_handling(exc_type):
-    """Bugs propagate unchanged so the SDK masks the text and logs the traceback."""
+    """Bugs propagate unchanged so the SDK masks the text and logs the traceback.
+
+    A plain RuntimeError counts as a bug: connectors raise ConnectorError for
+    every failure they wrap on purpose.
+    """
     with pytest.raises(exc_type), _surface_tool_errors():
         raise exc_type("internal detail")
 

@@ -7,6 +7,8 @@ import threading
 
 import paramiko
 
+from ..errors import ConnectorError
+
 logger = logging.getLogger(__name__)
 
 
@@ -159,24 +161,19 @@ class SSHTunnel:
                 raise
             except paramiko.AuthenticationException as e:
                 logger.error(f"SSH authentication failed: {e}")
-                raise RuntimeError(f"SSH: Authentication failed - {e}")
+                raise ConnectorError(f"SSH: Authentication failed - {e}")
             except paramiko.BadHostKeyException as e:
                 logger.error(f"SSH host key verification failed: {e}")
-                raise RuntimeError(f"SSH: Host key verification failed - {e}")
+                raise ConnectorError(f"SSH: Host key verification failed - {e}")
             except paramiko.SSHException as e:
                 logger.error(f"SSH connection error: {e}")
-                raise RuntimeError(f"SSH: {e}")
+                raise ConnectorError(f"SSH: {e}")
             except TimeoutError:
                 logger.error(f"SSH connection timed out after {self.ssh_timeout}s")
                 raise TimeoutError(f"SSH: Connection timeout after {self.ssh_timeout}s")
             except OSError as e:
                 logger.error(f"Network error: {e}")
-                raise RuntimeError(f"SSH: Network error - {e}")
-            except Exception as e:
-                # Catch any other unexpected exceptions
-                logger.error(f"Unexpected error establishing SSH tunnel: {e}")
-                # Re-raise with SSH prefix for context
-                raise RuntimeError(f"SSH: Unexpected error - {e}")
+                raise ConnectorError(f"SSH: Network error - {e}")
             finally:
                 # Clean up on any failure
                 if (
