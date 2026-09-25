@@ -40,6 +40,24 @@ def _normalize_database_list(value: Any, field_name: str) -> list[str]:
     return cleaned
 
 
+def _normalize_function_list(value: Any, db_type: str) -> list[str]:
+    """Normalize the PostgreSQL ``allowed_functions`` field to a list of names."""
+    if value is None:
+        return []
+    if db_type != "postgresql":
+        raise ValueError("'allowed_functions' is only supported for postgresql")
+    if not isinstance(value, list):
+        raise ValueError("'allowed_functions' must be a list of function names")
+    cleaned: list[str] = []
+    for item in value:
+        if not isinstance(item, str) or not item.strip():
+            raise ValueError("'allowed_functions' entries must be non-empty strings")
+        name = item.strip()
+        if name not in cleaned:
+            cleaned.append(name)
+    return cleaned
+
+
 @dataclass
 class Server:
     """Database server configuration"""
@@ -308,6 +326,9 @@ class Connection:
         if not isinstance(description, str):
             raise ValueError("Field 'description' must be a string")
         self._description = description
+        self._allowed_functions = _normalize_function_list(
+            config.get("allowed_functions"), db_type
+        )
 
     @property
     def name(self) -> str:
@@ -333,6 +354,11 @@ class Connection:
     def allowed_databases(self) -> list[str]:
         """Allowed database names for this connection"""
         return list(self._allowed_databases)
+
+    @property
+    def allowed_functions(self) -> list[str]:
+        """Extra PostgreSQL functions the read-only guard accepts for this connection"""
+        return list(self._allowed_functions)
 
     def resolve_database(self, database: str | None = None) -> str:
         """Resolve and validate the database name against the allowlist."""

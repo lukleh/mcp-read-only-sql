@@ -6,7 +6,13 @@ from contextlib import suppress
 from pathlib import Path
 
 from ...errors import ConnectorError
-from ...utils.sql_guard import ReadOnlyQueryError, sanitize_read_only_sql
+from ...utils.sql_guard import (
+    SHADOW_GUARD_PREFIX,
+    ReadOnlyQueryError,
+    postgresql_shadow_guard_block,
+    postgresql_shadow_query,
+    sanitize_postgresql_read_only_sql,
+)
 from ...utils.tsv_formatter import write_tsv_text_line
 from ..base_cli import BaseCLIConnector
 
@@ -51,7 +57,15 @@ class PostgreSQLCLIConnector(BaseCLIConnector):
         output_path: Path | None = None,
     ) -> str | None:
         """Run the psql command and optionally stream output to a managed file."""
-        sanitized_query = sanitize_read_only_sql(query)
+        sanitized_query = sanitize_postgresql_read_only_sql(
+            query, self.connection.allowed_functions
+        )
+        shadow_query = postgresql_shadow_query(
+            query, self.connection.allowed_functions
+        )
+        shadow_guard = (
+            postgresql_shadow_guard_block(shadow_query) + ";" if shadow_query else ""
+        )
         selected_server = self._select_server(server)
 
         async with self._get_ssh_tunnel(server) as local_port:
@@ -72,6 +86,7 @@ class PostgreSQLCLIConnector(BaseCLIConnector):
                 BEGIN;
                 SET TRANSACTION READ ONLY;
                 SET LOCAL statement_timeout = {self.query_timeout * 1000};
+                {shadow_guard}
                 {sanitized_query};
                 COMMIT;
             """
@@ -138,7 +153,7 @@ class PostgreSQLCLIConnector(BaseCLIConnector):
 
                             line = line_bytes.decode(errors="replace").rstrip("\r\n")
 
-                            if line in ("BEGIN", "SET", "COMMIT", "ROLLBACK"):
+                            if line in ("BEGIN", "SET", "DO", "COMMIT", "ROLLBACK"):
                                 continue
                             if (
                                 line.startswith("(")
@@ -188,6 +203,11 @@ class PostgreSQLCLIConnector(BaseCLIConnector):
                         )
                     if returncode not in (0, None):
                         error_msg = stderr.decode() if stderr else "Unknown error"
+                        if SHADOW_GUARD_PREFIX in error_msg:
+                            start = error_msg.index(SHADOW_GUARD_PREFIX)
+                            raise ReadOnlyQueryError(
+                                error_msg[start:].splitlines()[0].strip()
+                            )
                         logger.error(f"psql error: {error_msg}")
                         raise ConnectorError(f"psql: {error_msg}")
 

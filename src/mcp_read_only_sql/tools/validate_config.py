@@ -193,6 +193,17 @@ def validate_config(
                     "default_database/db must be included in allowed_databases"
                 )
 
+            allowed_functions = conn.get("allowed_functions")
+            if allowed_functions is not None:
+                if conn.get("type") != "postgresql":
+                    errors.append("allowed_functions is only supported for postgresql")
+                elif not isinstance(allowed_functions, list) or not all(
+                    isinstance(item, str) and item.strip() for item in allowed_functions
+                ):
+                    errors.append(
+                        "allowed_functions must be a list of non-empty function names"
+                    )
+
             if not conn.get("username"):
                 errors.append("Missing username")
 

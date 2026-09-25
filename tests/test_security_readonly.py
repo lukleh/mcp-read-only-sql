@@ -117,7 +117,7 @@ async def test_postgresql_python_readonly(postgres_config):
     ]
 
     for query in write_queries:
-        with pytest.raises(RuntimeError) as exc_info:
+        with pytest.raises(ReadOnlyQueryError) as exc_info:
             await connector.execute_query(query)
         _assert_readonly_error(exc_info, "PostgreSQL Python")
 
@@ -145,7 +145,7 @@ async def test_postgresql_cli_readonly(postgres_config):
     ]
 
     for query in write_queries:
-        with pytest.raises(RuntimeError) as exc_info:
+        with pytest.raises(ReadOnlyQueryError) as exc_info:
             await connector.execute_query(query)
         _assert_readonly_error(exc_info, "PostgreSQL CLI")
 
@@ -248,24 +248,79 @@ async def test_postgresql_cli_includes_readonly_flags(postgres_config, monkeypat
 async def test_postgresql_cli_blocks_write_statements(
     statement, postgres_config, monkeypatch
 ):
-    """Write-oriented SQL should surface as runtime errors in the CLI connector."""
+    """Write-oriented SQL is refused by the AST guard before psql is invoked."""
 
+    connector = PostgreSQLCLIConnector(postgres_config)
+
+    async def fake_create_subprocess_exec(*cmd, **kwargs):
+        raise AssertionError("psql must not be invoked for a rejected statement")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    with pytest.raises(ReadOnlyQueryError) as exc_info:
+        await connector.execute_query(statement)
+
+    assert "read-only" in str(exc_info.value).lower()
+
+
+@pytest.mark.anyio
+async def test_postgresql_cli_surfaces_server_readonly_error(
+    postgres_config, monkeypatch
+):
+    """With the AST guard bypassed, a psql read-only error becomes a RuntimeError."""
+
+    monkeypatch.setattr(
+        "mcp_read_only_sql.connectors.postgresql.cli.sanitize_postgresql_read_only_sql",
+        lambda query, allowed_functions=(): query.strip(),
+    )
+    monkeypatch.setattr(
+        "mcp_read_only_sql.connectors.postgresql.cli.postgresql_shadow_query",
+        lambda query, allowed_functions=(): None,
+    )
     connector = PostgreSQLCLIConnector(postgres_config)
     called = {"value": False}
 
     async def fake_create_subprocess_exec(*cmd, **kwargs):
         called["value"] = True
-        return _FakeProcess(
-            f"ERROR: cannot execute {statement} in a read-only transaction"
-        )
+        return _FakeProcess("ERROR: cannot execute INSERT in a read-only transaction")
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
 
     with pytest.raises(RuntimeError) as exc_info:
-        await connector.execute_query(statement)
+        await connector.execute_query("INSERT INTO users (id) VALUES (1)")
 
     assert called["value"], "psql was not invoked"
-    assert "psql" in str(exc_info.value).lower()
+    assert str(exc_info.value).startswith("psql:")
+    _assert_readonly_error(exc_info, "PostgreSQL CLI")
+
+
+@pytest.mark.anyio
+async def test_postgresql_cli_runs_shadow_guard_and_surfaces_it(
+    postgres_config, monkeypatch
+):
+    """Bare names add a DO guard to the psql script; its RAISE becomes ReadOnlyQueryError."""
+
+    captured = {}
+
+    async def fake_create_subprocess_exec(*cmd, **kwargs):
+        captured["cmd"] = list(cmd)
+        return _FakeProcess(
+            "ERROR:  Read-only guard: public.md5(text) shadow a name this query uses\n"
+            "CONTEXT:  PL/pgSQL function inline_code_block line 1 at RAISE\n"
+        )
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    connector = PostgreSQLCLIConnector(postgres_config)
+
+    with pytest.raises(ReadOnlyQueryError) as exc_info:
+        await connector.execute_query("SELECT md5('x')")
+
+    script = captured["cmd"][-1]
+    assert "DO $readonly_guard$" in script
+    assert script.index("$readonly_guard$") < script.index("SELECT md5('x')")
+    assert str(exc_info.value) == (
+        "Read-only guard: public.md5(text) shadow a name this query uses"
+    )
 
 
 @pytest.mark.anyio
@@ -278,11 +333,11 @@ async def test_postgresql_cli_blocks_create_statements(
     connector = PostgreSQLCLIConnector(postgres_config)
 
     async def fake_create_subprocess_exec(*cmd, **kwargs):
-        return _FakeProcess(f"ERROR: READ ONLY: {statement}")
+        raise AssertionError("psql must not be invoked for a rejected statement")
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(ReadOnlyQueryError):
         await connector.execute_query(statement)
 
 
@@ -296,11 +351,11 @@ async def test_postgresql_cli_blocks_alter_statements(
     connector = PostgreSQLCLIConnector(postgres_config)
 
     async def fake_create_subprocess_exec(*cmd, **kwargs):
-        return _FakeProcess(f"ERROR: READ ONLY: {statement}")
+        raise AssertionError("psql must not be invoked for a rejected statement")
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(ReadOnlyQueryError):
         await connector.execute_query(statement)
 
 
@@ -314,11 +369,11 @@ async def test_postgresql_cli_blocks_drop_statements(
     connector = PostgreSQLCLIConnector(postgres_config)
 
     async def fake_create_subprocess_exec(*cmd, **kwargs):
-        return _FakeProcess(f"ERROR: READ ONLY: {statement}")
+        raise AssertionError("psql must not be invoked for a rejected statement")
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(ReadOnlyQueryError):
         await connector.execute_query(statement)
 
 
@@ -332,11 +387,11 @@ async def test_postgresql_cli_blocks_maintenance_statements(
     connector = PostgreSQLCLIConnector(postgres_config)
 
     async def fake_create_subprocess_exec(*cmd, **kwargs):
-        return _FakeProcess(f"ERROR: READ ONLY: {statement}")
+        raise AssertionError("psql must not be invoked for a rejected statement")
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(ReadOnlyQueryError):
         await connector.execute_query(statement)
 
 
@@ -350,11 +405,11 @@ async def test_postgresql_cli_blocks_procedural_statements(
     connector = PostgreSQLCLIConnector(postgres_config)
 
     async def fake_create_subprocess_exec(*cmd, **kwargs):
-        return _FakeProcess(f"ERROR: READ ONLY: {statement}")
+        raise AssertionError("psql must not be invoked for a rejected statement")
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(ReadOnlyQueryError):
         await connector.execute_query(statement)
 
 
@@ -368,11 +423,11 @@ async def test_postgresql_cli_blocks_lock_statements(
     connector = PostgreSQLCLIConnector(postgres_config)
 
     async def fake_create_subprocess_exec(*cmd, **kwargs):
-        return _FakeProcess(f"ERROR: READ ONLY: {statement}")
+        raise AssertionError("psql must not be invoked for a rejected statement")
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(ReadOnlyQueryError):
         await connector.execute_query(statement)
 
 
@@ -590,11 +645,10 @@ def test_postgresql_python_sets_readonly_options(monkeypatch, postgres_config):
 async def test_postgresql_python_blocks_write_statements(
     statement, postgres_config, monkeypatch
 ):
-    """The Python connector should surface read-only errors for every mutation."""
+    """The Python connector refuses every mutation before opening a connection."""
 
     def fake_sync_query(self, host, port, database, query):
-        assert query == statement
-        raise psycopg2.Error("read-only violation")
+        raise AssertionError("psycopg2 must not be used for a rejected statement")
 
     monkeypatch.setattr(
         PostgreSQLPythonConnector, "_execute_sync_query", fake_sync_query
@@ -602,13 +656,10 @@ async def test_postgresql_python_blocks_write_statements(
 
     connector = PostgreSQLPythonConnector(postgres_config)
 
-    with pytest.raises((ReadOnlyQueryError, RuntimeError)) as exc_info:
+    with pytest.raises(ReadOnlyQueryError) as exc_info:
         await connector.execute_query(statement)
 
-    if isinstance(exc_info.value, ReadOnlyQueryError):
-        assert "transaction" in str(exc_info.value).lower()
-    else:
-        assert "postgresql" in str(exc_info.value).lower()
+    assert "read-only" in str(exc_info.value).lower()
 
 
 def test_clickhouse_python_sets_readonly_setting(monkeypatch, clickhouse_config):
@@ -687,7 +738,7 @@ async def test_clickhouse_python_blocks_mutations(
 async def test_postgresql_python_write_attempt_raises_runtime(
     monkeypatch, postgres_config
 ):
-    """Write attempts should surface as RuntimeError to the caller."""
+    """Server-side read-only violations surface as RuntimeError to the caller."""
 
     def fake_sync_query(self, *args, **kwargs):
         raise psycopg2.Error("read-only violation")
@@ -699,7 +750,7 @@ async def test_postgresql_python_write_attempt_raises_runtime(
     connector = PostgreSQLPythonConnector(postgres_config)
 
     with pytest.raises(RuntimeError) as exc_info:
-        await connector.execute_query("INSERT INTO users VALUES (1)")
+        await connector.execute_query("SELECT 1")
 
     assert "postgresql" in str(exc_info.value).lower()
 
@@ -802,7 +853,9 @@ class TestReadOnlyEnforcement:
             else:
                 insert_query = "INSERT INTO events VALUES (now(), 'test', 'type', '{}')"
 
-            with pytest.raises(RuntimeError) as exc_info:
+            # PostgreSQL is refused by the AST guard, ClickHouse by the server.
+            expected = ReadOnlyQueryError if "PostgreSQL" in name else RuntimeError
+            with pytest.raises(expected) as exc_info:
                 await connector.execute_query(insert_query)
             _assert_readonly_error(exc_info, name)
 
@@ -826,7 +879,7 @@ async def test_postgres_malicious_queries_blocked(postgres_config):
 
     for name, connector in connectors:
         for query in attack_queries:
-            with pytest.raises(RuntimeError) as exc_info:
+            with pytest.raises(ReadOnlyQueryError) as exc_info:
                 await connector.execute_query(query)
             _assert_readonly_error(exc_info, name)
 

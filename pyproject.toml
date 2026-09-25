@@ -28,6 +28,7 @@ dependencies = [
     "psycopg2-binary>=2.9.0",
     "clickhouse-connect>=0.7.0",
     "paramiko>=3.0.0",
+    "pglast>=8,<9",
 ]
 
 [project.urls]

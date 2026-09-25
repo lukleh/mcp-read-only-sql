@@ -10,6 +10,7 @@ from mcp_read_only_sql.connectors.clickhouse.python import ClickHousePythonConne
 from mcp_read_only_sql.connectors.postgresql.cli import PostgreSQLCLIConnector
 from mcp_read_only_sql.connectors.postgresql.python import PostgreSQLPythonConnector
 from mcp_read_only_sql.errors import ConnectorError
+from mcp_read_only_sql.utils.sql_guard import ReadOnlyQueryError
 from tests.docker_test_config import docker_test_host, docker_test_server
 
 
@@ -279,8 +280,8 @@ class TestSyntaxErrors:
     """Test SQL syntax error handling"""
 
     async def test_syntax_error_postgres(self, postgres_python_conn):
-        """Test invalid SQL syntax in PostgreSQL"""
-        with pytest.raises(RuntimeError) as exc_info:
+        """Invalid PostgreSQL syntax is caught by the parser before execution"""
+        with pytest.raises(ReadOnlyQueryError) as exc_info:
             await postgres_python_conn.execute_query(
                 "SELCT * FROM users"  # Typo: SELCT instead of SELECT
             )
@@ -301,8 +302,8 @@ class TestSyntaxErrors:
         )
 
     async def test_cli_syntax_error(self, postgres_cli_conn):
-        """Test CLI connector with syntax error"""
-        with pytest.raises(RuntimeError) as exc_info:
+        """CLI connector: invalid syntax is caught by the parser before psql runs"""
+        with pytest.raises(ReadOnlyQueryError) as exc_info:
             await postgres_cli_conn.execute_query("INVALID SQL QUERY")
 
         error_msg = str(exc_info.value).lower()

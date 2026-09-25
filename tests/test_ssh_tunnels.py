@@ -13,6 +13,7 @@ import pytest
 from conftest import make_connection
 from mcp_read_only_sql.connectors.clickhouse.python import ClickHousePythonConnector
 from mcp_read_only_sql.connectors.postgresql.python import PostgreSQLPythonConnector
+from mcp_read_only_sql.utils.sql_guard import ReadOnlyQueryError
 from mcp_read_only_sql.utils.ssh_tunnel import SSHTunnel
 from tests.docker_test_config import (
     docker_test_server,
@@ -190,8 +191,8 @@ class TestSSHTunnelSecurity:
             make_connection(postgres_ssh_password_config)
         )
 
-        # Try a write operation
-        with pytest.raises(RuntimeError) as exc_info:
+        # Try a write operation (refused by the AST guard before the tunnel is used)
+        with pytest.raises(ReadOnlyQueryError) as exc_info:
             await connector.execute_query(
                 "INSERT INTO users (username, email) VALUES ('test', 'test@test.com')"
             )

@@ -23,12 +23,15 @@ All write operations (INSERT, UPDATE, DELETE, etc.) are blocked at the database 
 
 ### How Read-Only Is Enforced
 
+- **PostgreSQL (both implementations)** – Every query is parsed with PostgreSQL's own grammar (`pglast`) before it leaves the server. Only `SELECT`, `EXPLAIN` and `SHOW` shapes are accepted, and every function call must be on an allow-list of `pg_catalog` functions PostgreSQL declares side-effect free. This refuses the things a read-only transaction alone does not stop, such as `COPY ... TO PROGRAM`, `DO` blocks, and calls like `pg_terminate_backend()` or `pg_read_file()`. The list can be extended per connection with `allowed_functions`.
 - **PostgreSQL (Python)** – Connections are opened with `default_transaction_read_only=on`, sessions are set to read-only, and every statement runs with a configurable `statement_timeout`.
-- **PostgreSQL (CLI)** – Queries are wrapped in a transaction that issues `SET TRANSACTION READ ONLY;` before execution. Input is sanitized so only a single statement (plus optional trailing semicolon) is forwarded, transaction-control keywords are rejected up front, and all `psql` invocations include `--single-transaction`, `-v ON_ERROR_STOP=1`, and `PGOPTIONS=-c default_transaction_read_only=on` for defence in depth.
+- **PostgreSQL (CLI)** – Queries are wrapped in a transaction that issues `SET TRANSACTION READ ONLY;` before execution. Only a single statement (plus optional trailing semicolon) is forwarded, and all `psql` invocations include `--single-transaction`, `-v ON_ERROR_STOP=1`, and `PGOPTIONS=-c default_transaction_read_only=on` for defence in depth.
 - **ClickHouse (Python)** – The driver sets `readonly=1` plus connection/query timeouts, forcing the server to reject any write or DDL attempt.
 - **ClickHouse (CLI)** – `clickhouse-client` is invoked with `--readonly=1`, `--max_execution_time`, and connection timeouts, turning the session into a read-only context.
 
 The shared connector base also applies hard timeouts, giving the MCP server deterministic behaviour even if the database misbehaves.
+
+Because bare names resolve through `search_path`, the guard also asks the server, right before the query, whether any bare function or operator it uses has a definition outside `pg_catalog` in a schema the session can see, and refuses the query if so. This matches on name only, so a visible `public.length(integer)` refuses `length('abc')` even though PostgreSQL would pick the catalog function; the error says to qualify the call as `pg_catalog.length(...)` or list the function. Resolving overloads client-side would mean reimplementing PostgreSQL's function resolution, so the guard stays conservative. The guard is still a filter, not a privilege boundary. It cannot see inside views, user-defined types or casts that already exist in the database, and it does not reduce what the configured login is allowed to do. Log in with a role that can only read (for PostgreSQL 14+, `pg_read_all_data`); a superuser login stays a superuser login.
 
 See [READ_ONLY_ENFORCEMENT_MATRIX.md](READ_ONLY_ENFORCEMENT_MATRIX.md) for a statement-by-statement view of every write-capable command and the tests that enforce it.
 
@@ -166,6 +169,21 @@ To allow a connection to access multiple databases, add an explicit allowlist:
 ```
 
 If you only set `db`, that single database is implicitly the allowlist.
+
+PostgreSQL connections refuse function calls outside the built-in allow-list. If a query legitimately needs another function, list it under `allowed_functions`, spelled as the catalog spells it. A `schema.name` entry permits both `schema.name(...)` and the bare `name(...)`, and pins the bare call to that schema: if another visible schema also defines the name, the query is refused. A bare entry permits only the bare call and trusts whatever it resolves to:
+
+```yaml
+- connection_name: analytics
+  type: postgresql
+  servers:
+    - "analytics.example.com:5432"
+  db: analytics
+  username: analyst
+  password: change_me
+  allowed_functions:
+    - public.customer_segment
+    - st_distance
+```
 
 ### 4. Validate and Test Connections
 
