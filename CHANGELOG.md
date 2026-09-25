@@ -14,10 +14,13 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
   query, and such a profile refuses them (`Cannot modify '<setting>' setting
   in readonly mode`; clickhouse-connect refuses them client-side as
   `Setting <name> is readonly`), so every query failed for exactly the logins
-  the README recommends. The connectors now retry once without client-side
-  settings, since the profile is stricter than the client, and log that they
-  did. Other `READONLY` errors are not retried. Fixture users `readonly_user`
-  and `readonly2_user` cover both profile values.
+  the README recommends. Each connector now finds out once, with a probe that
+  does not involve the caller's statement, which settings the login accepts,
+  drops only the refused ones, logs that, and remembers the answer. A
+  statement is never re-run with weaker settings: its own `SETTINGS` clause
+  produces the same refusal text, and re-running it without `readonly=1`
+  would run it unguarded. Fixture users `readonly_user` and `readonly2_user`
+  cover both profile values.
 - The clickhouse-client connector no longer drops a last row that renders
   empty (an empty string in the only column). It held back each line until
   the next arrived and discarded the final one when it was empty.

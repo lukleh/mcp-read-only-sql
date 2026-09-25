@@ -176,3 +176,5 @@ GRANT SELECT ON *.* TO readonly_user;
 GRANT URL, CREATE TEMPORARY TABLE ON *.* TO readonly_user;
 CREATE USER IF NOT EXISTS readonly2_user IDENTIFIED WITH plaintext_password BY 'readonly2pass' SETTINGS readonly = 2;
 GRANT SELECT ON *.* TO readonly2_user;
+-- INSERT is granted so that only the profile's readonly refuses a write.
+GRANT INSERT ON testdb.* TO readonly_user, readonly2_user;

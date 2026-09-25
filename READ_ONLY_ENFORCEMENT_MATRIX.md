@@ -117,14 +117,19 @@ read.
   'max_execution_time': query_timeout})`. Requests are executed via HTTP/HTTPS
   (or tunneled) and ClickHouse enforces read-only semantics.
 - Both: a login whose profile already sets `readonly` (1 or 2) refuses these
-  client-side settings (`Cannot modify '<setting>' setting in readonly mode`,
-  or clickhouse-connect's `Setting <name> is readonly`). The connectors retry
-  once without client-side settings; the profile is the stricter layer and
-  the connector's hard timeout still applies. Any other `READONLY` error is
-  not retried. Covered by `tests/test_clickhouse_readonly_profiles.py`
-  against fixture users `readonly_user` (readonly=1, with the `URL` and
-  `CREATE TEMPORARY TABLE` grants so the profile alone is what refuses
-  `url()`) and `readonly2_user`.
+  client-side settings by name (`Cannot modify '<setting>' setting in
+  readonly mode`, or clickhouse-connect's `Setting <name> is readonly`).
+  Each connector probes once per connector instance, without the caller's
+  statement (`SELECT 1` for the CLI, the client construction for
+  clickhouse-connect), drops only the refused setting and remembers the
+  result. A statement is never re-run with weaker settings: its own
+  `SETTINGS` clause produces the same refusal text, and re-running it
+  without `readonly=1` would run it unguarded. Covered by
+  `tests/test_clickhouse_readonly_profiles.py` against fixture users
+  `readonly_user` (readonly=1, with the `URL`, `CREATE TEMPORARY TABLE` and
+  `INSERT` grants so the profile alone is what refuses `url()` and writes)
+  and `readonly2_user`, plus a write with a `SETTINGS` clause on the
+  full-privilege login.
 
 ### Data Manipulation & Mutations
 

@@ -12,6 +12,7 @@ from tests.test_clickhouse_readonly_profiles import _Process
 @pytest.mark.anyio
 async def test_cli_keeps_trailing_empty_line(clickhouse_config, monkeypatch):
     async def fake_exec(*cmd, **kwargs):
+        # Served to the settings probe and to the query alike.
         return _Process(["x\n", "a\n", "\n"])
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)

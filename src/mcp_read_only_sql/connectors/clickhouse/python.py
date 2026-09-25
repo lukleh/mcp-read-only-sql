@@ -9,18 +9,25 @@ import clickhouse_connect
 from clickhouse_connect.driver.client import Client
 from clickhouse_connect.driver.exceptions import ClickHouseError
 
+from ...config import Connection
 from ...errors import ConnectorError
 from ...utils.sql_guard import sanitize_read_only_sql
 from ...utils.ssh_tunnel_cli import CLISSHTunnel
 from ...utils.tsv_formatter import format_tsv_line
 from ..base import BaseConnector
-from .settings import client_settings, refuses_client_settings
+from .settings import client_settings, without_refused
 
 logger = logging.getLogger(__name__)
 
 
 class ClickHousePythonConnector(BaseConnector):
     """ClickHouse connector using clickhouse-connect (supports both HTTP and native protocols)"""
+
+    def __init__(self, connection: Connection):
+        super().__init__(connection)
+        # Client-side settings this login accepted when the first client was
+        # created; None until then (see _open_client).
+        self._accepted_settings: dict[str, object] | None = None
 
     def _get_default_port(self) -> int:
         return 8123  # HTTP port (clickhouse-connect default)
@@ -239,39 +246,46 @@ class ClickHousePythonConnector(BaseConnector):
         original_port: int | None,
         is_ssh_tunnel: bool,
     ) -> tuple[Client, dict[str, object] | None]:
-        """Create the client with readonly=1 and the query timeout as settings.
+        """Create the client with the settings this login accepts.
 
-        A login whose profile already enforces ``readonly`` refuses those
-        settings (clickhouse-connect checks them against ``system.settings``
-        before sending). The profile is stricter than the client, so the
-        client is then created without settings. Returns the client and the
-        settings to send with each query, ``None`` after the fallback.
+        clickhouse-connect validates client-side settings against
+        ``system.settings`` for this login when the client is created, so the
+        decision never involves a statement. A profile that already sets
+        ``readonly`` refuses settings by name; each refused one is dropped and
+        the result is remembered for the connector's lifetime. Returns the
+        client and the settings to send with each query, ``None`` when the
+        login accepts none of them.
         """
+        settings = self._accepted_settings
+        if settings is not None:
+            client = self._create_client(
+                host, port, database, original_port, is_ssh_tunnel,
+                settings=settings or None,
+            )
+            return client, settings or None
+
         settings = client_settings(self.query_timeout)
-        try:
-            return (
-                self._create_client(
+        while True:
+            try:
+                client = self._create_client(
                     host, port, database, original_port, is_ssh_tunnel,
-                    settings=settings,
-                ),
-                settings,
-            )
-        except ClickHouseError as exc:
-            if not refuses_client_settings(str(exc)):
-                raise
-            logger.warning(
-                "ClickHouse: the profile of user %s already enforces read-only "
-                "and refuses client-side settings; continuing without readonly=1 "
-                "and max_execution_time (%s)",
-                self.username,
-                exc,
-            )
-            return (
-                self._create_client(
-                    host, port, database, original_port, is_ssh_tunnel
-                ),
-                None,
-            )
+                    settings=settings or None,
+                )
+            except ClickHouseError as exc:
+                reduced = without_refused(settings, str(exc))
+                if reduced is None:
+                    raise
+                logger.warning(
+                    "ClickHouse: the profile of user %s refuses the client-side "
+                    "%s setting; continuing without it (%s)",
+                    self.username,
+                    set(settings) - set(reduced),
+                    exc,
+                )
+                settings = reduced
+                continue
+            self._accepted_settings = settings
+            return client, settings or None
 
     def _execute_sync_query(
         self,
