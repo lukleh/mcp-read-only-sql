@@ -7,6 +7,32 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- README describes the actual enforcement layers (client-side statement
+  policy, database-level read-only, timeouts) and no longer counts result
+  files as one. The implementation matrix says that the Python PostgreSQL
+  path does not stream: psycopg2 loads the result before it is written.
+- CI also runs weekly, so drift in unpinned dependencies surfaces without a
+  push, and the uv cache key hashes `pyproject.toml` instead of the
+  gitignored `uv.lock`.
+
+### Removed
+
+- Dead code: the `json_serializer` module, `format_as_tsv`,
+  `HardTimeoutMixin` and the `hard_timeout` decorator,
+  `ConnectionTimeoutError`, the connectors' unused `_get_default_port`
+  hooks, `ConfigParser.save_config`, two write-only DBeaver importer
+  attributes, and two `list_connections` fields that were computed but never
+  rendered. None of it was reachable from the server or the CLI.
+- Test leftovers: the root `conftest.py` re-export shim (tests import
+  `tests.conftest` directly), `tests/conftest_new.py`, the never-registered
+  `tests/pytest_plugins.py`, `tests/KNOWN_ISSUES.md` (it described anyio
+  teardown errors the suite no longer produces, and the plugin written to
+  suppress them), and stale references to a `test_concurrent_queries.py`
+  that no longer exists. The test README's Docker instructions name the
+  `test` profile, without which no service starts.
+
 ## [0.5.1] - 2026-09-25
 
 ### Changed

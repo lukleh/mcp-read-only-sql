@@ -2,8 +2,6 @@
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable
-from functools import wraps
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -63,83 +61,3 @@ async def with_hard_timeout(
         # Let other exceptions propagate
         raise
 
-
-def hard_timeout(timeout_seconds: float = 30.0):
-    """
-    Decorator to add hard timeout to async methods.
-
-    Usage:
-        @hard_timeout(60.0)
-        async def execute_query(self, query):
-            ...
-    """
-
-    def decorator(func: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
-        @wraps(func)
-        async def wrapper(*args, **kwargs):
-            # Try to get operation name from function
-            operation_name = getattr(func, "__name__", "operation")
-
-            # Create the coroutine
-            coro = func(*args, **kwargs)
-
-            # Execute with hard timeout
-            try:
-                return await with_hard_timeout(coro, timeout_seconds, operation_name)
-            except HardTimeoutError as e:
-                # Return error response in the expected format
-                return {
-                    "success": False,
-                    "error": str(e),
-                    "rows": [],
-                    "columns": [],
-                    "row_count": 0,
-                }
-
-        return wrapper
-
-    return decorator
-
-
-class HardTimeoutMixin:
-    """
-    Mixin class to add hard timeout capability to connectors.
-
-    This should be mixed into the base connector class to ensure
-    ALL database operations have hard timeout protection.
-    """
-
-    # Default hard timeout for all operations (can be overridden)
-    DEFAULT_HARD_TIMEOUT = 30.0  # 30 seconds absolute maximum
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        # Get hard timeout from config or use default
-        config = getattr(self, "config", None)
-        if isinstance(config, dict):
-            self.hard_timeout = float(
-                config.get("hard_timeout", self.DEFAULT_HARD_TIMEOUT)
-            )
-            return
-        self.hard_timeout = self.DEFAULT_HARD_TIMEOUT
-
-    async def execute_with_timeout(
-        self, coro, operation_name: str = "query"
-    ) -> dict[str, Any]:
-        """
-        Execute a coroutine with hard timeout protection.
-
-        This method wraps any database operation with an absolute timeout
-        to prevent the MCP server from hanging.
-        """
-        try:
-            return await with_hard_timeout(coro, self.hard_timeout, operation_name)
-        except HardTimeoutError as e:
-            logger.error(f"Hard timeout in connector: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "rows": [],
-                "columns": [],
-                "row_count": 0,
-            }

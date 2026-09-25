@@ -32,7 +32,7 @@ jobs:
         path: |
           ~/.cache/uv
           .venv
-        key: ${{ runner.os }}-uv-publish-py${{ matrix.python-version }}-${{ hashFiles('uv.lock') }}
+        key: ${{ runner.os }}-uv-publish-py${{ matrix.python-version }}-${{ hashFiles('pyproject.toml') }}
         restore-keys: |
           ${{ runner.os }}-uv-publish-py${{ matrix.python-version }}-
 

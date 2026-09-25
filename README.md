@@ -13,13 +13,13 @@ A secure MCP (Model Context Protocol) server that provides **read-only** SQL acc
 
 ## Security
 
-The server implements a **three-layer security model**:
+Read-only access is enforced in three independent layers:
 
-1. **Database-level read-only** - Sessions forced to read-only mode
-2. **Timeout protection** - Connection and query timeouts are configurable per connection
-3. **Managed result files** - Successful query results are written to `state_dir/results` with `0600` permissions
+1. **Client-side statement policy** - PostgreSQL queries are parsed with PostgreSQL's own grammar and checked against an allow-list before anything is sent; every connector forwards a single statement only
+2. **Database-level read-only** - PostgreSQL sessions run in a read-only transaction, ClickHouse sessions run with `readonly=1`
+3. **Timeout protection** - Connection and query timeouts are configurable per connection, with a hard timeout around the whole call
 
-All write operations (INSERT, UPDATE, DELETE, etc.) are blocked at the database level.
+All write operations (INSERT, UPDATE, DELETE, etc.) are blocked at the database level. Successful query results are written to `state_dir/results` with `0600` permissions instead of being returned inline.
 
 ### How Read-Only Is Enforced
 
@@ -278,7 +278,7 @@ reflect the endpoints the agent should reference.
 | **SSH Key Auth** | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
 | **SSH Password Auth** | ✅ Yes (requires `sshpass`) | ✅ Yes (Paramiko) | ✅ Yes (requires `sshpass`) | ✅ Yes (Paramiko) |
 | **Timeout Control** | ✅ Via SQL | ✅ Driver-level | ✅ CLI flags | ✅ Driver-level |
-| **Result Streaming** | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
+| **Result Streaming** | ✅ Yes | ⚠️ No (psycopg2 loads the result before it is written) | ✅ Yes | ✅ Yes |
 | **Binary Required** | `psql` | None | `clickhouse-client` | None |
 
 ### ClickHouse Port Compatibility

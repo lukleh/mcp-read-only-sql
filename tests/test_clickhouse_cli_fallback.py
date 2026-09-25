@@ -1,12 +1,13 @@
 import pytest
 
+from tests.conftest import make_connection
+
 
 @pytest.mark.anyio
 async def test_clickhouse_python_falls_back_to_cli(monkeypatch):
     from types import SimpleNamespace
 
     from mcp_read_only_sql.connectors.clickhouse.python import ClickHousePythonConnector
-    from tests.conftest import make_connection
 
     config = make_connection(
         {

@@ -9,6 +9,7 @@ from mcp_read_only_sql.connectors.clickhouse.python import ClickHousePythonConne
 from mcp_read_only_sql.connectors.postgresql.cli import PostgreSQLCLIConnector
 from mcp_read_only_sql.connectors.postgresql.python import PostgreSQLPythonConnector
 from mcp_read_only_sql.utils.sql_guard import ReadOnlyQueryError
+from tests.conftest import make_connection
 from tests.docker_test_config import docker_test_server
 from tests.sql_statement_lists import (
     CLICKHOUSE_ALLOWED_LITERAL_QUERIES,
@@ -58,7 +59,6 @@ async def _verify_connection(connector, vendor: str):
 
 
 def _build_postgres_connector(implementation: str):
-    from conftest import make_connection
 
     config = make_connection(POSTGRES_BASE_CONFIG.copy())
     if implementation == "cli":
@@ -69,7 +69,6 @@ def _build_postgres_connector(implementation: str):
 
 
 def _build_clickhouse_connector(implementation: str):
-    from conftest import make_connection
 
     config = make_connection(CLICKHOUSE_BASE_CONFIG.copy())
     if implementation == "cli":
@@ -196,7 +195,6 @@ async def test_postgres_real_qualified_allowance_pins_bare_call_to_its_schema(
     implementation,
 ):
     """testuser's search_path is (shadow, public); review_helper() exists in both."""
-    from conftest import make_connection
 
     def build(allowed):
         config = make_connection({**POSTGRES_BASE_CONFIG, "allowed_functions": allowed})

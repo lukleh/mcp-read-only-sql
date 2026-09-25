@@ -8,6 +8,7 @@ import pytest
 
 from mcp_read_only_sql.connectors.clickhouse.cli import ClickHouseCLIConnector
 from mcp_read_only_sql.connectors.postgresql.cli import PostgreSQLCLIConnector
+from tests.conftest import make_connection
 from tests.docker_test_config import docker_test_server, docker_test_ssh_tunnel
 
 
@@ -27,7 +28,6 @@ class TestCLISystemSSH:
 
     async def test_postgresql_cli_with_system_ssh(self):
         """Test PostgreSQL CLI connector through system SSH tunnel"""
-        from conftest import make_connection
 
         config = make_connection(
             {
@@ -55,7 +55,6 @@ class TestCLISystemSSH:
 
     async def test_clickhouse_cli_with_system_ssh(self):
         """Test ClickHouse CLI connector through system SSH tunnel"""
-        from conftest import make_connection
 
         config = make_connection(
             {
@@ -85,7 +84,6 @@ class TestCLISystemSSH:
 
     async def test_system_ssh_without_private_key(self):
         """SSH config without private_key/password is allowed (ssh-agent fallback)."""
-        from conftest import make_connection
 
         config = make_connection(
             {
@@ -104,7 +102,6 @@ class TestCLISystemSSH:
 
     async def test_system_ssh_disabled(self):
         """Test CLI connectors work normally when SSH is disabled"""
-        from conftest import make_connection
 
         config = make_connection(
             {
@@ -132,7 +129,6 @@ class TestCLISystemSSH:
 
     async def test_system_ssh_multiple_queries(self):
         """Test multiple queries through system SSH tunnel"""
-        from conftest import make_connection
 
         config = make_connection(
             {
