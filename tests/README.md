@@ -39,16 +39,18 @@ This test suite is organized by functionality to clearly test the core security 
 ## Running Tests
 
 ```bash
-# Run all tests
-just test
+# Run all tests: starts the Docker fixtures, runs pytest, tears them down
+./run_tests.sh          # or: just test
 
 # Run specific test categories
 pytest tests/test_security_*.py  # All security tests
 pytest tests/test_mcp_*.py       # All MCP protocol tests
 
-# Run with Docker containers
-docker compose up -d
-pytest -m docker                 # Tests requiring Docker
+# Keep the Docker fixtures running between pytest invocations
+docker-compose --profile test up -d   # every service sits behind the "test" profile
+docker cp mcp-ssh-bastion:/tmp/test_key /tmp/docker_test_key && chmod 600 /tmp/docker_test_key
+pytest -m docker                      # Tests requiring Docker
+docker-compose --profile test down
 
 # Override the Docker-exposed host/ports when localhost is not correct
 TEST_DOCKER_HOST=your-db-host TEST_SSH_HOST=your-ssh-host pytest -m docker

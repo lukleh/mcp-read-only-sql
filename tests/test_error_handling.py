@@ -11,13 +11,13 @@ from mcp_read_only_sql.connectors.postgresql.cli import PostgreSQLCLIConnector
 from mcp_read_only_sql.connectors.postgresql.python import PostgreSQLPythonConnector
 from mcp_read_only_sql.errors import ConnectorError
 from mcp_read_only_sql.utils.sql_guard import ReadOnlyQueryError
+from tests.conftest import make_connection
 from tests.docker_test_config import docker_test_host, docker_test_server
 
 
 @pytest.fixture
 def postgres_python_conn():
     """PostgreSQL Python connector with valid config"""
-    from tests.conftest import make_connection
 
     config = make_connection(
         {
@@ -36,7 +36,6 @@ def postgres_python_conn():
 @pytest.fixture
 def postgres_cli_conn():
     """PostgreSQL CLI connector with valid config"""
-    from tests.conftest import make_connection
 
     config = make_connection(
         {
@@ -55,7 +54,6 @@ def postgres_cli_conn():
 @pytest.fixture
 def clickhouse_python_conn():
     """ClickHouse Python connector with valid config"""
-    from tests.conftest import make_connection
 
     config = make_connection(
         {
@@ -73,7 +71,6 @@ def clickhouse_python_conn():
 @pytest.fixture
 def clickhouse_cli_conn():
     """ClickHouse CLI connector with valid config"""
-    from tests.conftest import make_connection
 
     config = make_connection(
         {
@@ -95,7 +92,6 @@ class TestConnectionErrors:
 
     async def test_wrong_host(self):
         """Test connection to non-existent host"""
-        from tests.conftest import make_connection
 
         config = make_connection(
             {
@@ -121,7 +117,6 @@ class TestConnectionErrors:
 
     async def test_wrong_port(self):
         """Test connection to wrong port"""
-        from tests.conftest import make_connection
 
         config = make_connection(
             {
@@ -144,7 +139,6 @@ class TestConnectionErrors:
 
     async def test_wrong_credentials(self):
         """Test connection with wrong credentials"""
-        from tests.conftest import make_connection
 
         config = make_connection(
             {

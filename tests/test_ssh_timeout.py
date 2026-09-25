@@ -9,6 +9,7 @@ import pytest
 from mcp_read_only_sql.connectors.postgresql.cli import PostgreSQLCLIConnector
 from mcp_read_only_sql.connectors.postgresql.python import PostgreSQLPythonConnector
 from mcp_read_only_sql.utils.ssh_tunnel_cli import CLISSHTunnel
+from tests.conftest import make_connection
 
 
 @pytest.mark.anyio
@@ -19,7 +20,6 @@ class TestSSHTimeout:
     @pytest.mark.timeout(10)  # Kill test after 10 seconds to prevent hanging
     async def test_ssh_timeout_with_unreachable_host(self):
         """Test that SSH times out properly with unreachable host"""
-        from tests.conftest import make_connection
 
         config = make_connection(
             {
@@ -58,7 +58,6 @@ class TestSSHTimeout:
     @pytest.mark.timeout(10)  # Kill test after 10 seconds
     async def test_cli_ssh_timeout_with_unreachable_host(self):
         """Test that CLI SSH times out properly with unreachable host"""
-        from tests.conftest import make_connection
 
         config = make_connection(
             {
@@ -98,7 +97,6 @@ class TestSSHTimeout:
     @pytest.mark.timeout(10)  # Kill test after 10 seconds
     async def test_python_default_ssh_timeout(self):
         """Test that Python SSH default timeout is 5 seconds"""
-        from tests.conftest import make_connection
 
         config = make_connection(
             {
@@ -135,7 +133,6 @@ class TestSSHTimeout:
 
     async def test_cli_default_ssh_timeout_budget_matches_tunnel(self):
         """CLI hard timeout budget should include the CLI tunnel startup default."""
-        from tests.conftest import make_connection
 
         config = make_connection(
             {

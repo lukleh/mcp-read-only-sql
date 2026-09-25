@@ -27,8 +27,11 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
   rendered. None of it was reachable from the server or the CLI.
 - Test leftovers: the root `conftest.py` re-export shim (tests import
   `tests.conftest` directly), `tests/conftest_new.py`, the never-registered
-  `tests/pytest_plugins.py`, and stale references to a
-  `test_concurrent_queries.py` that no longer exists.
+  `tests/pytest_plugins.py`, `tests/KNOWN_ISSUES.md` (it described anyio
+  teardown errors the suite no longer produces, and the plugin written to
+  suppress them), and stale references to a `test_concurrent_queries.py`
+  that no longer exists. The test README's Docker instructions name the
+  `test` profile, without which no service starts.
 
 ## [0.5.1] - 2026-09-25
 
