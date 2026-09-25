@@ -8,8 +8,8 @@ import logging
 import os
 import re
 import sys
-from collections.abc import Callable
-from contextlib import suppress
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager, suppress
 from datetime import UTC, datetime
 from hashlib import blake2b
 from importlib.resources import files
@@ -18,6 +18,8 @@ from typing import Any, TypeAlias
 from uuid import uuid4
 
 from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
+from mcp.shared.exceptions import MCPError
 
 from . import __version__
 from .config import Connection, dbeaver_import, load_connections_from_text
@@ -74,6 +76,25 @@ def _display_hosts_for_connector(connector: BaseConnector) -> list[str]:
             servers.append(display_host)
 
     return servers
+
+
+@contextmanager
+def _surface_tool_errors() -> Iterator[None]:
+    """Report a failing tool call to the caller with the underlying message.
+
+    Since mcp 2.x the SDK treats any exception other than ``ToolError`` (or a
+    protocol-level ``MCPError``) as a crash and replaces its text with the
+    generic ``Error executing tool <name>``. Every failure this server raises
+    from a tool body is anticipated and actionable for the caller (an unknown
+    connection or server, a rejected statement, an unreachable host), so it is
+    re-raised as ``ToolError`` to keep the original text in the tool result.
+    """
+    try:
+        yield
+    except (ToolError, MCPError):
+        raise
+    except Exception as exc:
+        raise ToolError(str(exc) or type(exc).__name__) from exc
 
 
 class ReadOnlySQLServer:
@@ -244,26 +265,27 @@ class ReadOnlySQLServer:
                 directory for this server instance. Successful query results
                 are retained there until removed by the operator.
             """
-            self._reload_connections_if_needed()
-            if connection_name not in self.connections:
-                raise ValueError(
-                    f"Connection '{connection_name}' not found. Available connections: {', '.join(self.connections.keys())}"
-                )
+            with _surface_tool_errors():
+                self._reload_connections_if_needed()
+                if connection_name not in self.connections:
+                    raise ValueError(
+                        f"Connection '{connection_name}' not found. Available connections: {', '.join(self.connections.keys())}"
+                    )
 
-            connector = self.connections[connection_name]
-            output_path = self._create_result_file(connection_name)
-            try:
-                await connector.execute_query_to_file_with_timeout(
-                    query,
-                    output_path,
-                    database=database,
-                    server=server,
-                )
-            except Exception:
-                with suppress(FileNotFoundError):
-                    output_path.unlink()
-                raise
-            return str(output_path.resolve())
+                connector = self.connections[connection_name]
+                output_path = self._create_result_file(connection_name)
+                try:
+                    await connector.execute_query_to_file_with_timeout(
+                        query,
+                        output_path,
+                        database=database,
+                        server=server,
+                    )
+                except Exception:
+                    with suppress(FileNotFoundError):
+                        output_path.unlink()
+                    raise
+                return str(output_path.resolve())
 
         @self.mcp.tool()
         async def list_connections() -> str:
@@ -276,7 +298,8 @@ class ReadOnlySQLServer:
                 hosts for each connection, while ``database`` and ``databases``
                 describe the default database and allowed database list.
             """
-            self._reload_connections_if_needed()
+            with _surface_tool_errors():
+                self._reload_connections_if_needed()
             conn_list: list[dict[str, Any]] = []
 
             for conn_name, connector in self.connections.items():

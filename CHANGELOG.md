@@ -7,6 +7,15 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Tool errors reach the caller again. Since mcp SDK 2.x, any exception other
+  than `ToolError` raised inside a tool is treated as a crash and reported as
+  the generic `Error executing tool <name>`, hiding the actual reason (unknown
+  connection, unreachable host, rejected statement). Both tools now re-raise
+  such failures as `ToolError`, so the result carries the underlying message
+  after the SDK prefix.
+
 ### Changed
 
 - Dev tooling: pinned `ruff>=0.16,<0.17` in the dev extra (uv.lock is
