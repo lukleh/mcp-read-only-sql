@@ -7,6 +7,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-25
+
 ### Security
 
 - PostgreSQL queries are now parsed with PostgreSQL's own grammar (`pglast`)
