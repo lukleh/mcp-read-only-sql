@@ -47,8 +47,8 @@ matching privilege (a superuser has all of them), `COPY ... TO PROGRAM`,
 all succeed inside `SET TRANSACTION READ ONLY`. The AST guard refuses each of
 them before execution (`tests/test_sql_guard_postgresql.py`). The guard is a
 filter, not a privilege boundary: it cannot see inside views, user-defined
-functions, operators or types that already exist in the database, and it does
-not reduce what the configured login may do. Log in with a role that can only
+types or casts that already exist in the database, and it does not reduce what
+the configured login may do. Log in with a role that can only
 read.
 
 ### Data Manipulation Language (DML)
@@ -90,6 +90,7 @@ read.
 | Session and transaction state: `set_config`, `txid_current`, `pg_current_xact_id`, `pg_export_snapshot`, advisory locks, `nextval`/`setval`, `pg_notify` | Same (`txid_current`/`pg_current_xact_id` are `STABLE` and excluded by hand) | Same | Same |
 | SQL-executing helpers: `query_to_xml*`, `cursor_to_xml*`, `ts_rewrite(tsquery, text)`, `ts_stat`, `dblink*` | Same (`ts_rewrite` is excluded by hand; `dblink` lives outside `pg_catalog`) | Same | Same |
 | User-defined and extension functions (`public.f()`, `f()` not in `pg_catalog`) | Refused unless listed in the connection's `allowed_functions` | Same | Covered by `test_allowed_functions_extend_the_policy_per_connection` |
+| Shadowing through `search_path`: a `public.length(text)` or `public.@@@` planted by another database user, invoked as the bare `length(...)` / `1 @@@ 2` | `postgresql_shadow_query` lists the query's bare names; a `DO` block in the psql transaction asks `pg_proc`/`pg_operator` for non-`pg_catalog` definitions visible via `current_schemas(true)` and raises before the query runs | Same check as a plain `SELECT` before the query | Covered by `test_shadow_query_*`, `test_postgresql_cli_runs_shadow_guard_and_surfaces_it`, and `test_postgres_real_refuses_names_shadowed_on_search_path` against planted fixtures |
 
 ### Additional Notes
 

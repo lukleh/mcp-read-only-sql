@@ -273,6 +273,10 @@ async def test_postgresql_cli_surfaces_server_readonly_error(
         "mcp_read_only_sql.connectors.postgresql.cli.sanitize_postgresql_read_only_sql",
         lambda query, allowed_functions=(): query.strip(),
     )
+    monkeypatch.setattr(
+        "mcp_read_only_sql.connectors.postgresql.cli.postgresql_shadow_query",
+        lambda query, allowed_functions=(): None,
+    )
     connector = PostgreSQLCLIConnector(postgres_config)
     called = {"value": False}
 
@@ -288,6 +292,35 @@ async def test_postgresql_cli_surfaces_server_readonly_error(
     assert called["value"], "psql was not invoked"
     assert str(exc_info.value).startswith("psql:")
     _assert_readonly_error(exc_info, "PostgreSQL CLI")
+
+
+@pytest.mark.anyio
+async def test_postgresql_cli_runs_shadow_guard_and_surfaces_it(
+    postgres_config, monkeypatch
+):
+    """Bare names add a DO guard to the psql script; its RAISE becomes ReadOnlyQueryError."""
+
+    captured = {}
+
+    async def fake_create_subprocess_exec(*cmd, **kwargs):
+        captured["cmd"] = list(cmd)
+        return _FakeProcess(
+            "ERROR:  Read-only guard: public.md5(text) shadow pg_catalog names on the search path\n"
+            "CONTEXT:  PL/pgSQL function inline_code_block line 1 at RAISE\n"
+        )
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    connector = PostgreSQLCLIConnector(postgres_config)
+
+    with pytest.raises(ReadOnlyQueryError) as exc_info:
+        await connector.execute_query("SELECT md5('x')")
+
+    script = captured["cmd"][-1]
+    assert "DO $readonly_guard$" in script
+    assert script.index("$readonly_guard$") < script.index("SELECT md5('x')")
+    assert str(exc_info.value) == (
+        "Read-only guard: public.md5(text) shadow pg_catalog names on the search path"
+    )
 
 
 @pytest.mark.anyio

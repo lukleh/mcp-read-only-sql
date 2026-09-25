@@ -1,4 +1,5 @@
 import asyncio
+import functools
 import logging
 from pathlib import Path
 
@@ -6,7 +7,12 @@ import psycopg2
 from psycopg2 import errors as psycopg_errors
 from psycopg2.extras import RealDictCursor
 
-from ...utils.sql_guard import sanitize_postgresql_read_only_sql
+from ...utils.sql_guard import (
+    SHADOW_GUARD_PREFIX,
+    ReadOnlyQueryError,
+    postgresql_shadow_query,
+    sanitize_postgresql_read_only_sql,
+)
 from ...utils.tsv_formatter import format_tsv_line, write_tsv_text_line
 from ..base import BaseConnector
 
@@ -56,6 +62,9 @@ class PostgreSQLPythonConnector(BaseConnector):
         sanitized_query = sanitize_postgresql_read_only_sql(
             query, self.connection.allowed_functions
         )
+        shadow_query = postgresql_shadow_query(
+            query, self.connection.allowed_functions
+        )
         selected_server = self._select_server(server)
 
         try:
@@ -77,9 +86,12 @@ class PostgreSQLPythonConnector(BaseConnector):
                 worker_args = [host, port, db_name, sanitized_query]
                 if output_path is not None:
                     worker_args.append(output_path)
+                job = functools.partial(
+                    worker, *worker_args, shadow_query=shadow_query
+                )
 
                 return await asyncio.wait_for(
-                    loop.run_in_executor(None, worker, *worker_args),
+                    loop.run_in_executor(None, job),
                     timeout=total_timeout,
                 )
 
@@ -110,10 +122,14 @@ class PostgreSQLPythonConnector(BaseConnector):
         database: str,
         query: str,
         output_path: str | None = None,
+        *,
+        shadow_query: str | None = None,
     ) -> str:
         """Execute query synchronously and return TSV output."""
         if output_path is not None:
-            self._execute_sync_query_to_file(host, port, database, query, output_path)
+            self._execute_sync_query_to_file(
+                host, port, database, query, output_path, shadow_query=shadow_query
+            )
             return ""
 
         conn = None
@@ -137,6 +153,7 @@ class PostgreSQLPythonConnector(BaseConnector):
             cursor.execute(
                 f"SET statement_timeout = {self.query_timeout * 1000}"
             )  # Convert to milliseconds
+            self._reject_shadowed_names(cursor, shadow_query)
 
             # Execute the actual query
             cursor.execute(query)
@@ -172,6 +189,19 @@ class PostgreSQLPythonConnector(BaseConnector):
             if conn:
                 conn.close()
 
+    @staticmethod
+    def _reject_shadowed_names(cursor, shadow_query: str | None) -> None:
+        """Refuse the query if a bare name resolves outside pg_catalog."""
+        if shadow_query is None:
+            return
+        cursor.execute(shadow_query)
+        shadows = [next(iter(row.values())) for row in cursor.fetchall()]
+        if shadows:
+            raise ReadOnlyQueryError(
+                f"{SHADOW_GUARD_PREFIX} {', '.join(shadows)} shadow pg_catalog "
+                "names on the search path"
+            )
+
     def _execute_sync_query_to_file(
         self,
         host: str,
@@ -179,6 +209,8 @@ class PostgreSQLPythonConnector(BaseConnector):
         database: str,
         query: str,
         output_path: str,
+        *,
+        shadow_query: str | None = None,
     ) -> None:
         """Execute query synchronously and stream TSV output to a file."""
         conn = None
@@ -198,6 +230,7 @@ class PostgreSQLPythonConnector(BaseConnector):
 
             cursor = conn.cursor(cursor_factory=RealDictCursor)
             cursor.execute(f"SET statement_timeout = {self.query_timeout * 1000}")
+            self._reject_shadowed_names(cursor, shadow_query)
             cursor.execute(query)
 
             columns = (

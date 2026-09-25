@@ -31,7 +31,7 @@ All write operations (INSERT, UPDATE, DELETE, etc.) are blocked at the database 
 
 The shared connector base also applies hard timeouts, giving the MCP server deterministic behaviour even if the database misbehaves.
 
-The query guard is a filter, not a privilege boundary. It cannot see inside views, user-defined functions, operators or types that already exist in the database, and it does not reduce what the configured login is allowed to do. Log in with a role that can only read (for PostgreSQL 14+, `pg_read_all_data`); a superuser login stays a superuser login.
+Because bare names resolve through `search_path`, the guard also asks the server, right before the query, whether any bare function or operator it uses has a definition outside `pg_catalog` in a schema the session can see, and refuses the query if so. The guard is still a filter, not a privilege boundary. It cannot see inside views, user-defined types or casts that already exist in the database, and it does not reduce what the configured login is allowed to do. Log in with a role that can only read (for PostgreSQL 14+, `pg_read_all_data`); a superuser login stays a superuser login.
 
 See [READ_ONLY_ENFORCEMENT_MATRIX.md](READ_ONLY_ENFORCEMENT_MATRIX.md) for a statement-by-statement view of every write-capable command and the tests that enforce it.
 

@@ -4,7 +4,10 @@ import pytest
 
 from mcp_read_only_sql.utils.sql_guard import (
     PG_CATALOG_ALLOWED_FUNCTIONS,
+    SHADOW_GUARD_PREFIX,
     ReadOnlyQueryError,
+    postgresql_shadow_guard_block,
+    postgresql_shadow_query,
     sanitize_postgresql_read_only_sql,
 )
 from tests.sql_statement_lists import (
@@ -233,3 +236,47 @@ def test_side_effecting_catalog_functions_are_absent_from_the_allow_list():
         assert name not in PG_CATALOG_ALLOWED_FUNCTIONS, name
     for name in ("length", "count", "now", "current_setting", "pg_relation_size"):
         assert name in PG_CATALOG_ALLOWED_FUNCTIONS, name
+
+
+@pytest.mark.security
+def test_shadow_query_is_skipped_when_nothing_resolves_through_search_path():
+    assert postgresql_shadow_query("SELECT 1") is None
+    assert postgresql_shadow_query("SELECT pg_catalog.length('x')") is None
+    assert postgresql_shadow_query("SELECT 1 OPERATOR(pg_catalog.+) 2") is None
+    assert postgresql_shadow_query("SELECT * FROM t WHERE a BETWEEN 1 AND 2") is None
+
+
+@pytest.mark.security
+def test_shadow_query_lists_bare_functions_and_operators():
+    sql = postgresql_shadow_query(
+        "SELECT length(a), count(*) FROM t WHERE 1 @@@ 2 AND a ~~ 'x' "
+        "ORDER BY a USING <<<"
+    )
+    assert sql is not None
+    assert "ARRAY['count', 'length']::pg_catalog.name[]" in sql
+    assert "ARRAY['<<<', '@@@', '~~']::pg_catalog.name[]" in sql
+    assert "pg_catalog.current_schemas(true)" in sql
+    # The check itself must not depend on search_path resolution.
+    assert " = " not in sql
+    assert "OPERATOR(pg_catalog.=)" in sql
+
+
+@pytest.mark.security
+def test_shadow_query_exempts_allowed_functions_and_quotes_names():
+    sql = postgresql_shadow_query(
+        "SELECT my_helper(1), length('x')", ["public.my_helper"]
+    )
+    assert sql is not None
+    assert "'my_helper'" not in sql
+    assert "'length'" in sql
+    sql = postgresql_shadow_query("SELECT \"it's\"(1)", ["it's"])
+    assert sql is None
+    sql = postgresql_shadow_query("SELECT length(1) AS x, \"o'k\"(1)", ["o'k", "zzz"])
+    assert sql is not None and "'length'" in sql and "o''k" not in sql
+
+
+@pytest.mark.security
+def test_shadow_guard_block_raises_with_the_marker():
+    block = postgresql_shadow_guard_block("SELECT 'x' AS shadow")
+    assert block.startswith("DO $readonly_guard$")
+    assert f"RAISE EXCEPTION '{SHADOW_GUARD_PREFIX} %" in block

@@ -113,6 +113,10 @@ async def test_postgres_real_server_rejects_mutations_without_client_guard(
         f"{module}.sanitize_postgresql_read_only_sql",
         lambda query, allowed_functions=(): query.strip(),
     )
+    monkeypatch.setattr(
+        f"{module}.postgresql_shadow_query",
+        lambda query, allowed_functions=(): None,
+    )
 
     with pytest.raises(RuntimeError) as exc_info:
         await connector.execute_query(statement)
@@ -133,6 +137,33 @@ async def test_postgres_real_allows_selects_with_keywords(implementation, query)
 
     result = await connector.execute_query(query)
     assert "INSERT" in result, "Keyword inside literal should be preserved"
+
+
+@pytest.mark.anyio
+@pytest.mark.security
+@pytest.mark.docker
+@pytest.mark.parametrize("implementation", ["python", "cli"])
+@pytest.mark.parametrize(
+    "query,shadow",
+    [
+        ("SELECT md5('x')", "public.md5(text)"),
+        ("SELECT 1 @@@ 2", "@@@(integer,integer)"),
+    ],
+)
+async def test_postgres_real_refuses_names_shadowed_on_search_path(
+    implementation, query, shadow
+):
+    """docker/postgres/init/03_shadows.sql plants public.md5 and public.@@@."""
+    connector = _build_postgres_connector(implementation)
+    await _verify_connection(connector, "PostgreSQL")
+
+    with pytest.raises(ReadOnlyQueryError) as exc_info:
+        await connector.execute_query(query)
+    assert shadow in str(exc_info.value)
+
+    # The catalog-qualified spelling cannot be shadowed and still works.
+    result = await connector.execute_query("SELECT pg_catalog.md5('x') AS h")
+    assert "shadowed" not in result
 
 
 @pytest.mark.anyio

@@ -12,9 +12,11 @@ Two layers live here:
 The AST policy is a client-side filter, not a privilege boundary. A read-only
 transaction still lets a sufficiently privileged role run server-side
 programs, write server files, or signal other backends through ordinary
-function calls; this layer refuses the plain forms of those. It cannot see
-inside views, user-defined functions, operators, or types that already exist
-in the database.
+function calls; this layer refuses the plain forms of those. Because bare
+names resolve through ``search_path``, ``postgresql_shadow_query`` adds a
+server-side check that no bare function or operator the query uses has a
+non-``pg_catalog`` definition visible to the session. Neither layer can see
+inside views, user-defined types, or casts that already exist in the database.
 """
 
 from __future__ import annotations
@@ -27,10 +29,17 @@ from pglast import ast, parser, visitors
 from .pg_catalog_functions import PG_CATALOG_NON_VOLATILE_FUNCTIONS
 
 __all__ = [
+    "SHADOW_GUARD_PREFIX",
     "ReadOnlyQueryError",
+    "postgresql_shadow_guard_block",
+    "postgresql_shadow_query",
     "sanitize_postgresql_read_only_sql",
     "sanitize_read_only_sql",
 ]
+
+# Leads the server-side error raised when a bare name in the query resolves
+# to something outside pg_catalog; the CLI connector recognizes it in stderr.
+SHADOW_GUARD_PREFIX = "Read-only guard:"
 
 
 class ReadOnlyQueryError(ValueError):
@@ -111,6 +120,8 @@ PG_CATALOG_ALLOWED_FUNCTIONS: frozenset[str] = (
 
 _ALLOWED_TABLESAMPLE_METHODS = frozenset({"system", "bernoulli"})
 
+_OPERATOR_NAME = re.compile(r"^[-+*/<>=~!@#%^&|`?]+$")
+
 _STATEMENT_LABELS = {
     "CallStmt": "CALL",
     "CopyStmt": "COPY",
@@ -156,6 +167,68 @@ def sanitize_postgresql_read_only_sql(
     (``public.my_helper``).
     """
 
+    return _analyze(query, allowed_functions)[0]
+
+
+def postgresql_shadow_query(
+    query: str, allowed_functions: Iterable[str] = ()
+) -> str | None:
+    """Return SQL listing non-pg_catalog definitions of the query's bare names.
+
+    Bare function and operator names resolve through ``search_path``, so a
+    function or operator planted in a schema such as ``public`` can shadow the
+    catalog one the allow-list vouched for. The returned statement yields one
+    row per such definition visible to the session (``current_schemas``), and
+    the connectors refuse the query when it yields anything. It returns None
+    when the query uses no bare names. Names listed in ``allowed_functions``
+    are exempt: they are expected to live outside pg_catalog.
+    """
+
+    _, policy = _analyze(query, allowed_functions)
+    if not policy.bare_functions and not policy.bare_operators:
+        return None
+    parts = []
+    if policy.bare_functions:
+        parts.append(
+            "SELECT p.oid::pg_catalog.regprocedure::pg_catalog.text AS shadow "
+            "FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n "
+            "ON n.oid OPERATOR(pg_catalog.=) p.pronamespace "
+            f"WHERE p.proname OPERATOR(pg_catalog.=) ANY ({_name_array(policy.bare_functions)}) "
+            "AND n.nspname OPERATOR(pg_catalog.<>) 'pg_catalog' "
+            "AND n.nspname OPERATOR(pg_catalog.=) ANY (pg_catalog.current_schemas(true))"
+        )
+    if policy.bare_operators:
+        parts.append(
+            "SELECT o.oid::pg_catalog.regoperator::pg_catalog.text AS shadow "
+            "FROM pg_catalog.pg_operator o JOIN pg_catalog.pg_namespace n "
+            "ON n.oid OPERATOR(pg_catalog.=) o.oprnamespace "
+            f"WHERE o.oprname OPERATOR(pg_catalog.=) ANY ({_name_array(policy.bare_operators)}) "
+            "AND n.nspname OPERATOR(pg_catalog.<>) 'pg_catalog' "
+            "AND n.nspname OPERATOR(pg_catalog.=) ANY (pg_catalog.current_schemas(true))"
+        )
+    return " UNION ALL ".join(parts)
+
+
+def postgresql_shadow_guard_block(shadow_query: str) -> str:
+    """Wrap a shadow query in a DO block that raises when it yields rows.
+
+    Used by the CLI connector, where the check must run inside the same psql
+    transaction as the query and abort it with a readable error.
+    """
+
+    return (
+        "DO $readonly_guard$ DECLARE shadows pg_catalog.text; BEGIN "
+        "SELECT pg_catalog.string_agg(shadow, ', ') INTO shadows "
+        f"FROM ({shadow_query}) s; "
+        "IF shadows IS NOT NULL THEN RAISE EXCEPTION "
+        f"'{SHADOW_GUARD_PREFIX} % shadow pg_catalog names on the search path', shadows; "
+        "END IF; END $readonly_guard$"
+    )
+
+
+def _analyze(
+    query: str, allowed_functions: Iterable[str]
+) -> tuple[str, _ReadOnlyPolicy]:
     stripped = sanitize_read_only_sql(query)
     try:
         statements = parser.parse_sql(stripped)
@@ -167,8 +240,14 @@ def sanitize_postgresql_read_only_sql(
         raise ReadOnlyQueryError(
             "Multiple SQL statements are not allowed in read-only mode"
         )
-    _ReadOnlyPolicy(frozenset(allowed_functions))(statements[0].stmt)
-    return stripped
+    policy = _ReadOnlyPolicy(frozenset(allowed_functions))
+    policy(statements[0].stmt)
+    return stripped, policy
+
+
+def _name_array(names: set[str]) -> str:
+    quoted = ", ".join("'" + name.replace("'", "''") + "'" for name in sorted(names))
+    return f"ARRAY[{quoted}]::pg_catalog.name[]"
 
 
 class _ReadOnlyPolicy(visitors.Visitor):
@@ -182,6 +261,9 @@ class _ReadOnlyPolicy(visitors.Visitor):
         # and ``pg_catalog.name``.
         self._extra_qualified = frozenset(f for f in extra_functions if "." in f)
         self._extra_bare = frozenset(f.rsplit(".", 1)[-1] for f in extra_functions)
+        # Unqualified names the query relies on resolving to pg_catalog.
+        self.bare_functions: set[str] = set()
+        self.bare_operators: set[str] = set()
 
     def visit(self, ancestors, node):
         if isinstance(node, ast.Node) and type(node).__name__.endswith("Stmt"):
@@ -205,14 +287,24 @@ class _ReadOnlyPolicy(visitors.Visitor):
             raise ReadOnlyQueryError(_function_message(qualified))
         if name not in PG_CATALOG_ALLOWED_FUNCTIONS and name not in self._extra_bare:
             raise ReadOnlyQueryError(_function_message(qualified))
+        if len(parts) == 1 and name not in self._extra_bare:
+            self.bare_functions.add(name)
 
     def visit_A_Expr(self, ancestors, node):
-        _check_operator([str(part.sval) for part in node.name or ()])
+        self._check_operator([str(part.sval) for part in node.name or ()])
 
     def visit_SortBy(self, ancestors, node):
         # ORDER BY ... USING <op> sorts through the operator's btree opclass,
         # whose support function is user code for a user-defined operator.
-        _check_operator([str(part.sval) for part in node.useOp or ()])
+        self._check_operator([str(part.sval) for part in node.useOp or ()])
+
+    def _check_operator(self, parts: list[str]) -> None:
+        if len(parts) > 1 and parts[0] != "pg_catalog":
+            raise ReadOnlyQueryError(
+                f"Operator {'.'.join(parts)} outside pg_catalog is not allowed in read-only mode"
+            )
+        if len(parts) == 1 and _OPERATOR_NAME.match(parts[0]):
+            self.bare_operators.add(parts[0])
 
     def visit_RangeTableSample(self, ancestors, node):
         parts = [str(part.sval) for part in node.method]
@@ -241,13 +333,6 @@ def _strip_pg_catalog(parts: list[str]) -> str | None:
     if len(parts) == 2 and parts[0] == "pg_catalog":
         return parts[1]
     return None
-
-
-def _check_operator(parts: list[str]) -> None:
-    if len(parts) > 1 and parts[0] != "pg_catalog":
-        raise ReadOnlyQueryError(
-            f"Operator {'.'.join(parts)} outside pg_catalog is not allowed in read-only mode"
-        )
 
 
 def _function_message(qualified: str) -> str:

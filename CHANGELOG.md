@@ -19,8 +19,15 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
   `lo_export()` or `set_config()`; with a superuser login those reach the
   host. Rejections happen client-side with a message naming the function or
   statement. Both implementations share the guard; ClickHouse is unchanged.
+- Bare function and operator names resolve through `search_path`, so a
+  `public.length(text)` or `public.@@@` planted by another database user
+  would run in place of the catalog one. Before each PostgreSQL query the
+  connectors now ask the server whether any bare name the query uses has a
+  non-`pg_catalog` definition visible to the session, and refuse the query
+  if so.
 - New per-connection `allowed_functions` list (PostgreSQL only) extends the
-  allow-list with bare or schema-qualified function names.
+  allow-list with bare or schema-qualified function names. A `schema.name`
+  entry also permits the bare call and exempts it from the shadow check.
 - The enforcement matrix no longer claims `COPY ... PROGRAM` was blocked by
   the read-only session; it is blocked by the new guard.
 
