@@ -16,10 +16,11 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
   `ssh_tunnel.host_key_checking` field takes the OpenSSH values and defaults
   to `accept-new`: a bastion is recorded on first use and refused if its key
   changes. `yes` refuses unrecorded bastions; `no` restores the previous
-  behaviour. Keys live in `~/.ssh/known_hosts` unless
-  `ssh_tunnel.known_hosts_file` says otherwise; the Paramiko tunnel appends
-  new keys in OpenSSH's line format so `ssh` and both implementations share
-  one record.
+  behaviour and records nothing. Known keys are read from
+  `/etc/ssh/ssh_known_hosts` and `~/.ssh/known_hosts`, and new ones recorded
+  in the latter, unless `ssh_tunnel.known_hosts_file` names another file;
+  the Paramiko tunnel appends new keys in OpenSSH's line format so `ssh` and
+  both implementations share one record.
 
 ### Changed
 

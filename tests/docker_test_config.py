@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import tempfile
 from copy import deepcopy
 from typing import Any
 
@@ -61,18 +62,17 @@ def docker_test_servers(db_type: str, count: int, port: int | None = None) -> li
     return [docker_test_server_string(db_type, port=port) for _ in range(count)]
 
 
-DEFAULT_TEST_KNOWN_HOSTS = "/tmp/docker_test_known_hosts"
-
-
 def docker_test_known_hosts() -> str:
     """known_hosts file the tunnels record the bastion in during a test run.
 
-    The bastion image generates its host keys at build time, so a rebuilt
-    image would look like a changed key to a file kept from an earlier run.
-    run_tests.sh and the session fixture in conftest remove the default file
-    before the run starts.
+    The bastion image generates its host keys at build time, so a file kept
+    from an earlier run would make a rebuilt image look like a changed key.
+    The session fixture in conftest points TEST_SSH_KNOWN_HOSTS at a fresh
+    pytest temp directory; outside pytest a per-process path is used.
     """
-    return os.environ.get("TEST_SSH_KNOWN_HOSTS", DEFAULT_TEST_KNOWN_HOSTS)
+    return os.environ.get("TEST_SSH_KNOWN_HOSTS") or os.path.join(
+        tempfile.gettempdir(), f"mcp-read-only-sql-test-known-hosts-{os.getpid()}"
+    )
 
 
 def docker_test_ssh_tunnel(

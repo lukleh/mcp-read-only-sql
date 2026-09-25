@@ -1,7 +1,10 @@
 """Unit tests for Docker-backed test host override helpers."""
 
+import os
+
 from tests.docker_test_config import (
     apply_docker_test_overrides,
+    docker_test_known_hosts,
     docker_test_server,
     docker_test_server_string,
     docker_test_servers,
@@ -26,9 +29,10 @@ def test_docker_test_helpers_default_to_localhost(monkeypatch):
         "host": "localhost",
         "port": 2222,
         "user": "tunnel",
-        "known_hosts_file": "/tmp/docker_test_known_hosts",
+        "known_hosts_file": docker_test_known_hosts(),
         "password": "secret",
     }
+    assert docker_test_known_hosts().endswith(f"-{os.getpid()}")
 
 
 def test_docker_test_helpers_honor_env_overrides(monkeypatch):

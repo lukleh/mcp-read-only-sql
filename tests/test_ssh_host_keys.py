@@ -121,8 +121,12 @@ class TestCLIOptions:
         assert _option(args, "StrictHostKeyChecking") == "yes"
 
     @pytest.mark.anyio
-    async def test_no_keeps_the_legacy_record_nothing_behaviour(self, monkeypatch):
-        args = await _cli_ssh_args(monkeypatch, _config(host_key_checking="no"))
+    @pytest.mark.parametrize("known_hosts_file", [None, "/tmp/kh"])
+    async def test_no_records_nothing_whatever_file_is_configured(
+        self, monkeypatch, known_hosts_file
+    ):
+        config = _config(host_key_checking="no", known_hosts_file=known_hosts_file)
+        args = await _cli_ssh_args(monkeypatch, config)
         assert _option(args, "StrictHostKeyChecking") == "no"
         assert _option(args, "UserKnownHostsFile") == "/dev/null"
 
@@ -149,6 +153,24 @@ class TestParamikoPolicy:
         assert stat.S_IMODE(known_hosts.stat().st_mode) == 0o600
         assert client.host_keys.lookup("[bastion.example.com]:2222")["ssh-rsa"] == key
 
+    def test_accept_new_does_not_record_a_key_twice(self, tmp_path):
+        """Two tunnels racing on a fresh bastion append one line, not two."""
+        known_hosts = tmp_path / "known_hosts"
+        key = paramiko.RSAKey.generate(1024)
+        policy = AcceptNewHostKeyPolicy(str(known_hosts))
+
+        class FakeClient:
+            def __init__(self):
+                self.host_keys = paramiko.HostKeys()
+
+            def get_host_keys(self):
+                return self.host_keys
+
+        policy.missing_host_key(FakeClient(), "bastion.example.com", key)
+        policy.missing_host_key(FakeClient(), "bastion.example.com", key)
+
+        assert known_hosts.read_text().count("\n") == 1
+
     @pytest.mark.parametrize(
         ("checking", "policy_type", "loads_known_hosts"),
         [
@@ -166,7 +188,7 @@ class TestParamikoPolicy:
 
         class FakeSSHClient:
             def load_system_host_keys(self, filename=None):
-                seen["loaded"] = filename
+                seen.setdefault("loaded", []).append(filename)
 
             def set_missing_host_key_policy(self, policy):
                 seen["policy"] = policy
@@ -186,7 +208,8 @@ class TestParamikoPolicy:
         assert isinstance(seen["policy"], policy_type)
         assert ("loaded" in seen) is loads_known_hosts
         if loads_known_hosts:
-            assert seen["loaded"] == str(known_hosts)
+            # The same two files ssh reads, global first.
+            assert seen["loaded"] == ["/etc/ssh/ssh_known_hosts", str(known_hosts)]
 
 
 def _bastion_name() -> str:

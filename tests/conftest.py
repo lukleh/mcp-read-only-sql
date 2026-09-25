@@ -3,7 +3,6 @@ Shared test fixtures for MCP SQL Server tests
 Uses the minimal_client.py pattern for real MCP protocol testing
 """
 
-import contextlib
 import os
 import subprocess
 from pathlib import Path
@@ -144,17 +143,20 @@ async def mcp_client(test_config_file):
 
 
 @pytest.fixture(scope="session", autouse=True)
-def _fresh_docker_known_hosts():
-    """Drop the default per-run known_hosts file so a rebuilt bastion image
-    (new host keys) is not mistaken for a changed key."""
-    from tests.docker_test_config import (
-        DEFAULT_TEST_KNOWN_HOSTS,
-        docker_test_known_hosts,
-    )
+def _docker_known_hosts(tmp_path_factory):
+    """Record the test bastion in a fresh per-session known_hosts file.
 
-    if docker_test_known_hosts() == DEFAULT_TEST_KNOWN_HOSTS:
-        with contextlib.suppress(FileNotFoundError):
-            os.remove(DEFAULT_TEST_KNOWN_HOSTS)
+    The bastion image generates its host keys at build time, so a file kept
+    from an earlier run would make a rebuilt image look like a changed key.
+    An explicit TEST_SSH_KNOWN_HOSTS is left alone.
+    """
+    if os.environ.get("TEST_SSH_KNOWN_HOSTS"):
+        yield
+        return
+    path = tmp_path_factory.mktemp("ssh") / "known_hosts"
+    os.environ["TEST_SSH_KNOWN_HOSTS"] = str(path)
+    yield
+    os.environ.pop("TEST_SSH_KNOWN_HOSTS", None)
 
 
 # Docker-based fixtures for integration tests

@@ -75,10 +75,12 @@ class CLISSHTunnel:
         # the way ssh itself does: accept-new (the default) records a bastion
         # on first use and refuses it if its key changes.
         host_key_checking = self.ssh_config.host_key_checking
-        known_hosts_file = self.ssh_config.known_hosts_file
-        if known_hosts_file is None and host_key_checking == "no":
-            # Legacy mode: trust everything and record nothing.
-            known_hosts_file = "/dev/null"
+        if host_key_checking == "no":
+            # Legacy mode: trust everything and record nothing, whatever file
+            # is configured, matching the Paramiko tunnel.
+            known_hosts_file: str | None = "/dev/null"
+        else:
+            known_hosts_file = self.ssh_config.known_hosts_file
 
         ssh_options = [
             "-N",  # No command execution

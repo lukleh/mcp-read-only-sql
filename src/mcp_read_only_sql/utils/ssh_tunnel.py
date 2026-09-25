@@ -13,6 +13,18 @@ from ..errors import ConnectorError
 logger = logging.getLogger(__name__)
 
 DEFAULT_KNOWN_HOSTS_FILE = "~/.ssh/known_hosts"
+# Read as well, never written: the file ssh consults before the user's.
+GLOBAL_KNOWN_HOSTS_FILE = "/etc/ssh/ssh_known_hosts"
+# Tunnels start on executor threads; serialise appends to one known_hosts file.
+_KNOWN_HOSTS_WRITE_LOCK = threading.Lock()
+
+
+def _has_line(path: str, line: str) -> bool:
+    try:
+        with open(path, encoding="utf-8") as handle:
+            return any(existing.strip() == line for existing in handle)
+    except FileNotFoundError:
+        return False
 
 
 class AcceptNewHostKeyPolicy(paramiko.MissingHostKeyPolicy):
@@ -29,11 +41,15 @@ class AcceptNewHostKeyPolicy(paramiko.MissingHostKeyPolicy):
 
     def missing_host_key(self, client, hostname, key):
         client.get_host_keys().add(hostname, key.get_name(), key)
+        line = f"{hostname} {key.get_name()} {key.get_base64()}"
         path = os.path.abspath(self.known_hosts_file)
-        os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
-        with os.fdopen(fd, "a", encoding="utf-8") as handle:
-            handle.write(f"{hostname} {key.get_name()} {key.get_base64()}\n")
+        with _KNOWN_HOSTS_WRITE_LOCK:
+            if _has_line(path, line):
+                return  # another tunnel recorded it meanwhile
+            os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+            with os.fdopen(fd, "a", encoding="utf-8") as handle:
+                handle.write(line + "\n")
         logger.info(
             "SSH: recorded new %s host key for %s in %s", key.get_name(), hostname, path
         )
@@ -106,8 +122,12 @@ class SSHTunnel:
                     # Legacy mode: trust everything and record nothing.
                     policy: paramiko.MissingHostKeyPolicy = paramiko.AutoAddPolicy()
                 else:
-                    with contextlib.suppress(OSError):
-                        self.ssh_client.load_system_host_keys(known_hosts_file)
+                    # The same files ssh consults: the global one, then the
+                    # user's. Both are read-only here; new keys go to the
+                    # user's file through the policy below.
+                    for known in (GLOBAL_KNOWN_HOSTS_FILE, known_hosts_file):
+                        with contextlib.suppress(OSError):
+                            self.ssh_client.load_system_host_keys(known)
                     if host_key_checking == "yes":
                         policy = paramiko.RejectPolicy()
                     else:

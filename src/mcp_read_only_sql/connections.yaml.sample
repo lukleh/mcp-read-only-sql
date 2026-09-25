@@ -120,9 +120,9 @@
     # Host-key verification, as OpenSSH StrictHostKeyChecking:
     #   accept-new (default) records the bastion on first use, refuses a changed key
     #   yes        refuses bastions not already in the known_hosts file
-    #   no         trusts every key (previous behaviour)
+    #   no         trusts every key and records nothing (previous behaviour)
     # host_key_checking: accept-new
-    # known_hosts_file: ~/.ssh/known_hosts  # default; shared with ssh
+    # known_hosts_file: ~/.ssh/known_hosts  # default; read with /etc/ssh/ssh_known_hosts, shared with ssh
 
 # SSH tunnel with password authentication
 - connection_name: remote_clickhouse_ssh
