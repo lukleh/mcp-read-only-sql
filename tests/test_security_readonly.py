@@ -305,7 +305,7 @@ async def test_postgresql_cli_runs_shadow_guard_and_surfaces_it(
     async def fake_create_subprocess_exec(*cmd, **kwargs):
         captured["cmd"] = list(cmd)
         return _FakeProcess(
-            "ERROR:  Read-only guard: public.md5(text) shadow pg_catalog names on the search path\n"
+            "ERROR:  Read-only guard: public.md5(text) shadow a name this query uses\n"
             "CONTEXT:  PL/pgSQL function inline_code_block line 1 at RAISE\n"
         )
 
@@ -319,7 +319,7 @@ async def test_postgresql_cli_runs_shadow_guard_and_surfaces_it(
     assert "DO $readonly_guard$" in script
     assert script.index("$readonly_guard$") < script.index("SELECT md5('x')")
     assert str(exc_info.value) == (
-        "Read-only guard: public.md5(text) shadow pg_catalog names on the search path"
+        "Read-only guard: public.md5(text) shadow a name this query uses"
     )
 
 

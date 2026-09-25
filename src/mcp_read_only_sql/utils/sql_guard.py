@@ -30,6 +30,7 @@ from .pg_catalog_functions import PG_CATALOG_NON_VOLATILE_FUNCTIONS
 
 __all__ = [
     "SHADOW_GUARD_PREFIX",
+    "SHADOW_GUARD_SUFFIX",
     "ReadOnlyQueryError",
     "postgresql_shadow_guard_block",
     "postgresql_shadow_query",
@@ -40,6 +41,10 @@ __all__ = [
 # Leads the server-side error raised when a bare name in the query resolves
 # to something outside pg_catalog; the CLI connector recognizes it in stderr.
 SHADOW_GUARD_PREFIX = "Read-only guard:"
+SHADOW_GUARD_SUFFIX = (
+    "shadow a name this query uses through search_path; qualify the call as "
+    "pg_catalog.<name>(...) or list the function in allowed_functions"
+)
 
 
 class ReadOnlyQueryError(ValueError):
@@ -180,8 +185,18 @@ def postgresql_shadow_query(
     catalog one the allow-list vouched for. The returned statement yields one
     row per such definition visible to the session (``current_schemas``), and
     the connectors refuse the query when it yields anything. It returns None
-    when the query uses no bare names. Names listed in ``allowed_functions``
-    are exempt: they are expected to live outside pg_catalog.
+    when the query uses no bare names.
+
+    The check matches on name only: any visible non-catalog overload of a
+    bare name refuses the query, even one PostgreSQL would not pick for the
+    given argument types. That is deliberate; resolving overloads client-side
+    would mean reimplementing PostgreSQL's function resolution. The error
+    says how to proceed (qualify the call, or list the function).
+
+    ``allowed_functions`` entries are treated by spelling. A bare entry means
+    "whatever this name resolves to" and is exempt. A ``schema.name`` entry
+    pins the bare call to that schema: a definition in any other visible
+    non-catalog schema still refuses the query.
     """
 
     _, policy = _analyze(query, allowed_functions)
@@ -189,17 +204,29 @@ def postgresql_shadow_query(
         return None
     parts = []
     if policy.bare_functions:
+        pinned = " ".join(
+            "AND NOT (p.proname OPERATOR(pg_catalog.=) "
+            f"{_literal(name)} AND n.nspname OPERATOR(pg_catalog.=) {_literal(schema)})"
+            for name, schema in sorted(policy.pinned_schemas)
+        )
         parts.append(
-            "SELECT p.oid::pg_catalog.regprocedure::pg_catalog.text AS shadow "
+            "SELECT pg_catalog.quote_ident(n.nspname) OPERATOR(pg_catalog.||) '.' "
+            "OPERATOR(pg_catalog.||) pg_catalog.quote_ident(p.proname) OPERATOR(pg_catalog.||) '(' "
+            "OPERATOR(pg_catalog.||) pg_catalog.pg_get_function_identity_arguments(p.oid) "
+            "OPERATOR(pg_catalog.||) ')' AS shadow "
             "FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n "
             "ON n.oid OPERATOR(pg_catalog.=) p.pronamespace "
             f"WHERE p.proname OPERATOR(pg_catalog.=) ANY ({_name_array(policy.bare_functions)}) "
             "AND n.nspname OPERATOR(pg_catalog.<>) 'pg_catalog' "
             "AND n.nspname OPERATOR(pg_catalog.=) ANY (pg_catalog.current_schemas(true))"
+            + (" " + pinned if pinned else "")
         )
     if policy.bare_operators:
         parts.append(
-            "SELECT o.oid::pg_catalog.regoperator::pg_catalog.text AS shadow "
+            "SELECT pg_catalog.quote_ident(n.nspname) OPERATOR(pg_catalog.||) '.' "
+            "OPERATOR(pg_catalog.||) o.oprname OPERATOR(pg_catalog.||) '(' "
+            "OPERATOR(pg_catalog.||) pg_catalog.format_type(o.oprleft, NULL) OPERATOR(pg_catalog.||) ',' "
+            "OPERATOR(pg_catalog.||) pg_catalog.format_type(o.oprright, NULL) OPERATOR(pg_catalog.||) ')' AS shadow "
             "FROM pg_catalog.pg_operator o JOIN pg_catalog.pg_namespace n "
             "ON n.oid OPERATOR(pg_catalog.=) o.oprnamespace "
             f"WHERE o.oprname OPERATOR(pg_catalog.=) ANY ({_name_array(policy.bare_operators)}) "
@@ -221,7 +248,7 @@ def postgresql_shadow_guard_block(shadow_query: str) -> str:
         "SELECT pg_catalog.string_agg(shadow, ', ') INTO shadows "
         f"FROM ({shadow_query}) s; "
         "IF shadows IS NOT NULL THEN RAISE EXCEPTION "
-        f"'{SHADOW_GUARD_PREFIX} % shadow pg_catalog names on the search path', shadows; "
+        f"'{SHADOW_GUARD_PREFIX} % {SHADOW_GUARD_SUFFIX}', shadows; "
         "END IF; END $readonly_guard$"
     )
 
@@ -245,8 +272,12 @@ def _analyze(
     return stripped, policy
 
 
+def _literal(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
 def _name_array(names: set[str]) -> str:
-    quoted = ", ".join("'" + name.replace("'", "''") + "'" for name in sorted(names))
+    quoted = ", ".join(_literal(name) for name in sorted(names))
     return f"ARRAY[{quoted}]::pg_catalog.name[]"
 
 
@@ -257,13 +288,20 @@ class _ReadOnlyPolicy(visitors.Visitor):
         super().__init__()
         # A configured ``schema.name`` permits both the qualified call and the
         # bare ``name(...)``, which is how such a function is normally invoked
-        # with its schema on search_path. A bare entry permits the bare call
-        # and ``pg_catalog.name``.
+        # with its schema on search_path; the shadow check then pins the bare
+        # call to that schema. A bare entry permits the bare call and
+        # ``pg_catalog.name`` and trusts whatever it resolves to.
         self._extra_qualified = frozenset(f for f in extra_functions if "." in f)
-        self._extra_bare = frozenset(f.rsplit(".", 1)[-1] for f in extra_functions)
-        # Unqualified names the query relies on resolving to pg_catalog.
+        self._extra_bare = frozenset(f for f in extra_functions if "." not in f)
+        self._pinned: dict[str, set[str]] = {}
+        for entry in self._extra_qualified:
+            schema, name = entry.rsplit(".", 1)
+            self._pinned.setdefault(name, set()).add(schema)
+        # Unqualified names the query relies on search_path to resolve, and
+        # the (name, schema) pairs allowed_functions pins them to.
         self.bare_functions: set[str] = set()
         self.bare_operators: set[str] = set()
+        self.pinned_schemas: set[tuple[str, str]] = set()
 
     def visit(self, ancestors, node):
         if isinstance(node, ast.Node) and type(node).__name__.endswith("Stmt"):
@@ -285,10 +323,14 @@ class _ReadOnlyPolicy(visitors.Visitor):
         name = _strip_pg_catalog(parts)
         if name is None:
             raise ReadOnlyQueryError(_function_message(qualified))
-        if name not in PG_CATALOG_ALLOWED_FUNCTIONS and name not in self._extra_bare:
+        if name in self._extra_bare:
+            return
+        if name not in PG_CATALOG_ALLOWED_FUNCTIONS and name not in self._pinned:
             raise ReadOnlyQueryError(_function_message(qualified))
-        if len(parts) == 1 and name not in self._extra_bare:
+        if len(parts) == 1:
             self.bare_functions.add(name)
+            for schema in self._pinned.get(name, ()):
+                self.pinned_schemas.add((name, schema))
 
     def visit_A_Expr(self, ancestors, node):
         self._check_operator([str(part.sval) for part in node.name or ()])

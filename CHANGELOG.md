@@ -24,10 +24,13 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
   would run in place of the catalog one. Before each PostgreSQL query the
   connectors now ask the server whether any bare name the query uses has a
   non-`pg_catalog` definition visible to the session, and refuse the query
-  if so.
+  if so. The check is by name, so a visible overload such as
+  `public.length(integer)` refuses `length('abc')` too; the error says to
+  qualify the call or list the function.
 - New per-connection `allowed_functions` list (PostgreSQL only) extends the
   allow-list with bare or schema-qualified function names. A `schema.name`
-  entry also permits the bare call and exempts it from the shadow check.
+  entry also permits the bare call, pinned to that schema by the shadow
+  check; a bare entry trusts whatever the name resolves to.
 - The enforcement matrix no longer claims `COPY ... PROGRAM` was blocked by
   the read-only session; it is blocked by the new guard.
 

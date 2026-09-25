@@ -9,6 +9,7 @@ from psycopg2.extras import RealDictCursor
 
 from ...utils.sql_guard import (
     SHADOW_GUARD_PREFIX,
+    SHADOW_GUARD_SUFFIX,
     ReadOnlyQueryError,
     postgresql_shadow_query,
     sanitize_postgresql_read_only_sql,
@@ -198,8 +199,7 @@ class PostgreSQLPythonConnector(BaseConnector):
         shadows = [next(iter(row.values())) for row in cursor.fetchall()]
         if shadows:
             raise ReadOnlyQueryError(
-                f"{SHADOW_GUARD_PREFIX} {', '.join(shadows)} shadow pg_catalog "
-                "names on the search path"
+                f"{SHADOW_GUARD_PREFIX} {', '.join(shadows)} {SHADOW_GUARD_SUFFIX}"
             )
 
     def _execute_sync_query_to_file(

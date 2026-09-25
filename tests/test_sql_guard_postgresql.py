@@ -262,17 +262,29 @@ def test_shadow_query_lists_bare_functions_and_operators():
 
 
 @pytest.mark.security
-def test_shadow_query_exempts_allowed_functions_and_quotes_names():
-    sql = postgresql_shadow_query(
-        "SELECT my_helper(1), length('x')", ["public.my_helper"]
-    )
+def test_shadow_query_pins_qualified_allowances_and_exempts_bare_ones():
+    # A bare entry trusts whatever the name resolves to.
+    assert postgresql_shadow_query("SELECT my_helper(1)", ["my_helper"]) is None
+    # A schema.name entry keeps the bare call in the check, pinned to that schema.
+    sql = postgresql_shadow_query("SELECT my_helper(1)", ["public.my_helper"])
     assert sql is not None
-    assert "'my_helper'" not in sql
-    assert "'length'" in sql
+    assert "ARRAY['my_helper']::pg_catalog.name[]" in sql
+    assert (
+        "AND NOT (p.proname OPERATOR(pg_catalog.=) 'my_helper' "
+        "AND n.nspname OPERATOR(pg_catalog.=) 'public')"
+    ) in sql
+    # The qualified call itself never goes through search_path.
+    assert postgresql_shadow_query("SELECT public.my_helper(1)", ["public.my_helper"]) is None
+
+
+@pytest.mark.security
+def test_shadow_query_quotes_names():
     sql = postgresql_shadow_query("SELECT \"it's\"(1)", ["it's"])
     assert sql is None
     sql = postgresql_shadow_query("SELECT length(1) AS x, \"o'k\"(1)", ["o'k", "zzz"])
     assert sql is not None and "'length'" in sql and "o''k" not in sql
+    sql = postgresql_shadow_query("SELECT \"o'k\"(1)", ["my schema.o'k"])
+    assert sql is not None and "'o''k'" in sql and "'my schema'" in sql
 
 
 @pytest.mark.security
