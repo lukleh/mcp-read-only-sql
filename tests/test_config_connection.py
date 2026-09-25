@@ -201,6 +201,37 @@ class TestConnection:
         assert conn.database == "db2"
         assert conn.allowed_databases == ["db1", "db2"]
 
+    def test_connection_description_must_be_string(self):
+        """A non-string description is rejected at load time, not at list time."""
+        with pytest.raises(ValueError, match="Field 'description' must be a string"):
+            Connection(
+                {
+                    "connection_name": "test",
+                    "type": "postgresql",
+                    "servers": [{"host": "localhost", "port": 5432}],
+                    "db": "testdb",
+                    "username": "testuser",
+                    "password": "testpass",
+                    "description": 42,
+                }
+            )
+
+    def test_connection_empty_description_normalized(self):
+        """A bare ``description:`` key (YAML null) reads back as an empty string."""
+        conn = Connection(
+            {
+                "connection_name": "test",
+                "type": "postgresql",
+                "servers": [{"host": "localhost", "port": 5432}],
+                "db": "testdb",
+                "username": "testuser",
+                "password": "testpass",
+                "description": None,
+            }
+        )
+
+        assert conn.description == ""
+
     def test_connection_rejects_invalid_query_timeout_type(self):
         """Runtime loading should reject non-numeric timeout values."""
         with pytest.raises(ValueError, match="query_timeout"):

@@ -17,9 +17,9 @@ from pathlib import Path
 from typing import Any, TypeAlias
 from uuid import uuid4
 
+from mcp import MCPError
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
-from mcp.shared.exceptions import MCPError
 
 from . import __version__
 from .config import Connection, dbeaver_import, load_connections_from_text
@@ -39,6 +39,7 @@ from .runtime_paths import (
     resolve_runtime_paths,
 )
 from .tools import test_connection, test_ssh_tunnel, validate_config
+from .utils.timeout_wrapper import HardTimeoutError
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -49,6 +50,17 @@ SAMPLE_CONNECTIONS_YAML = (
     files("mcp_read_only_sql")
     .joinpath("connections.yaml.sample")
     .read_text(encoding="utf-8")
+)
+# Exception types the connectors and this module raise for operational failures
+# the caller can act on: an unknown connection or server, a rejected statement,
+# a database/SSH error or timeout, an unreachable host, a result-file problem.
+# The connectors wrap driver errors into these and let programming errors through.
+ANTICIPATED_TOOL_ERRORS: tuple[type[Exception], ...] = (
+    ValueError,
+    RuntimeError,
+    TimeoutError,
+    OSError,
+    HardTimeoutError,
 )
 SUBCOMMAND_HANDLERS: dict[str, Callable[[], None]] = {
     "import-dbeaver": dbeaver_import.main,
@@ -80,20 +92,20 @@ def _display_hosts_for_connector(connector: BaseConnector) -> list[str]:
 
 @contextmanager
 def _surface_tool_errors() -> Iterator[None]:
-    """Report a failing tool call to the caller with the underlying message.
+    """Report an anticipated tool failure to the caller with its message.
 
     Since mcp 2.x the SDK treats any exception other than ``ToolError`` (or a
     protocol-level ``MCPError``) as a crash and replaces its text with the
-    generic ``Error executing tool <name>``. Every failure this server raises
-    from a tool body is anticipated and actionable for the caller (an unknown
-    connection or server, a rejected statement, an unreachable host), so it is
-    re-raised as ``ToolError`` to keep the original text in the tool result.
+    generic ``Error executing tool <name>``. The operational failures listed in
+    ``ANTICIPATED_TOOL_ERRORS`` are re-raised as ``ToolError`` so the caller
+    sees the reason. Anything else is a bug and keeps the SDK's crash handling:
+    the text stays on the server, logged with its traceback.
     """
     try:
         yield
     except (ToolError, MCPError):
         raise
-    except Exception as exc:
+    except ANTICIPATED_TOOL_ERRORS as exc:
         raise ToolError(str(exc) or type(exc).__name__) from exc
 
 
@@ -281,7 +293,8 @@ class ReadOnlySQLServer:
                         database=database,
                         server=server,
                     )
-                except Exception:
+                except BaseException:
+                    # BaseException so a cancelled call also removes the empty file.
                     with suppress(FileNotFoundError):
                         output_path.unlink()
                     raise

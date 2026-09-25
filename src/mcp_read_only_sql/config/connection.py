@@ -294,7 +294,12 @@ class Connection:
             config.get("connection_timeout", DEFAULT_CONNECTION_TIMEOUT),
             "connection_timeout",
         )
-        self._description = config.get("description", "")
+        description = config.get("description")
+        if description is None:
+            description = ""
+        if not isinstance(description, str):
+            raise ValueError("Field 'description' must be a string")
+        self._description = description
 
     @property
     def name(self) -> str:

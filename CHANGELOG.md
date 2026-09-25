@@ -12,9 +12,15 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 - Tool errors reach the caller again. Since mcp SDK 2.x, any exception other
   than `ToolError` raised inside a tool is treated as a crash and reported as
   the generic `Error executing tool <name>`, hiding the actual reason (unknown
-  connection, unreachable host, rejected statement). Both tools now re-raise
-  such failures as `ToolError`, so the result carries the underlying message
-  after the SDK prefix.
+  connection, unreachable host, rejected statement). The operational failure
+  types the connectors raise (`ValueError`, `RuntimeError`, `TimeoutError`,
+  `OSError`, `HardTimeoutError`) are now re-raised as `ToolError`, so the
+  result carries the underlying message after the SDK prefix. Programming
+  errors keep the SDK's crash handling: generic text to the caller, traceback
+  in the server log.
+- A non-string `description` in `connections.yaml` is rejected when the config
+  loads, with the connection named, instead of failing `list_connections` with
+  a generic error.
 
 ### Changed
 
