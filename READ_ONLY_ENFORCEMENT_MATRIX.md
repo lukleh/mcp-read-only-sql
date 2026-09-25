@@ -24,19 +24,39 @@ Legend:
 
 **Connector recap**
 
-- CLI: input sanitizer enforces a single statement, blocks transaction-control
-  keywords, and wraps the query in `BEGIN; SET TRANSACTION READ ONLY; ...
-  COMMIT;`. `psql` always runs with `--single-transaction`, `-v ON_ERROR_STOP=1`,
-  and `PGOPTIONS=-c default_transaction_read_only=on`.
+- Both: `sanitize_postgresql_read_only_sql` parses the query with PostgreSQL's
+  own grammar (`pglast`) before anything is sent. Every statement node in the
+  tree must be `SELECT`, `EXPLAIN` or `SHOW`; every function call must be on
+  the allow-list of `pg_catalog` functions PostgreSQL declares `IMMUTABLE` or
+  `STABLE` (plus a short reviewed list of read-only volatile ones, minus
+  `txid_current`, `pg_current_xact_id` and `ts_rewrite`), extended per
+  connection by `allowed_functions`. Operators and `TABLESAMPLE` methods
+  outside `pg_catalog` are refused too. This is the layer that stops what a
+  read-only transaction does not.
+- CLI: the sanitized single statement is wrapped in `BEGIN; SET TRANSACTION
+  READ ONLY; ... COMMIT;`. `psql` always runs with `--single-transaction`,
+  `-v ON_ERROR_STOP=1`, and `PGOPTIONS=-c default_transaction_read_only=on`.
 - Python: `psycopg2.connect(..., options='-c default_transaction_read_only=on')`
   plus `conn.set_session(readonly=True, autocommit=True)` create a database
   session that refuses writes at the protocol level.
+
+**What the read-only transaction alone does not stop.** For a role with the
+matching privilege (a superuser has all of them), `COPY ... TO PROGRAM`,
+`COPY ... TO '/path'`, `lo_export()`, `pg_read_file()`, `pg_terminate_backend()`,
+`pg_reload_conf()`, `set_config()`, replication-slot functions and `DO` blocks
+all succeed inside `SET TRANSACTION READ ONLY`. The AST guard refuses each of
+them before execution (`tests/test_sql_guard_postgresql.py`). The guard is a
+filter, not a privilege boundary: it cannot see inside views, user-defined
+functions, operators or types that already exist in the database, and it does
+not reduce what the configured login may do. Log in with a role that can only
+read.
 
 ### Data Manipulation Language (DML)
 
 | Statements | CLI enforcement | Python enforcement | Tests |
 |------------|-----------------|--------------------|-------|
-| `INSERT`, `INSERT ... RETURNING`, `INSERT ... ON CONFLICT`, `INSERT ... SELECT`, `MERGE`, `UPDATE`, `DELETE`, `TRUNCATE`, `SELECT INTO`, `COPY table FROM`, `COPY table TO` (mutates target table), `COPY ... PROGRAM`, `COPY ... STDIN/STDOUT` | Sanitizer allows single statement only; read-only transaction and `PGOPTIONS` cause PostgreSQL to raise SQLSTATE 25006; `COPY` blocked because server session is read-only | Read-only session at server level (transaction flag + session setting) rejects all writes and copy-in/out to tables | Covered by `test_postgresql_cli_blocks_write_statements` and `test_postgresql_python_blocks_write_statements` |
+| `INSERT`, `INSERT ... RETURNING`, `INSERT ... ON CONFLICT`, `INSERT ... SELECT`, `MERGE`, `UPDATE`, `DELETE`, `TRUNCATE`, `SELECT INTO`, data-modifying CTEs | AST guard refuses every statement class except `SELECT`/`EXPLAIN`/`SHOW` before execution; the read-only transaction and `PGOPTIONS` remain as the second layer (SQLSTATE 25006) | Same guard; read-only session at server level as the second layer | Covered by `test_sql_guard_postgresql.py`, `test_postgresql_cli_blocks_write_statements`, `test_postgresql_python_blocks_write_statements`, and `test_postgres_real_server_rejects_mutations_without_client_guard` for the server layer alone |
+| `COPY` in every form: `FROM`, `TO STDOUT`, `TO '/path'`, `TO PROGRAM`, `FROM PROGRAM` | AST guard refuses `COPY` outright. Note: a read-only transaction does **not** block `COPY ... TO PROGRAM` or `COPY ... TO '/path'` for a role holding `pg_execute_server_program` / `pg_write_server_files` (or a superuser) | Same | Covered by `test_sql_guard_postgresql.py` |
 
 ### Transaction Control & Session State
 
@@ -59,16 +79,29 @@ Legend:
 | Statements | CLI enforcement | Python enforcement | Tests |
 |------------|-----------------|--------------------|-------|
 | `ANALYZE`, `VACUUM`, `VACUUM FULL`, `CLUSTER`, `REINDEX`, `REFRESH MATERIALIZED VIEW`, `REFRESH MATERIALIZED VIEW CONCURRENTLY`, `CHECKPOINT`, `DISCARD`, `LOAD`, `COMMENT`, `SECURITY LABEL`, `GRANT`, `REVOKE`, `GRANT ... WITH ADMIN OPTION`, `REASSIGN OWNED`, `IMPORT FOREIGN SCHEMA`, `NOTIFY` (writes to WAL) | Read-only transaction / `default_transaction_read_only=on` rejects maintenance that writes catalog or data; configuration-changing `SET` commands restricted by read-only transaction (only safe `SET` allowed) | Same | Covered by `test_postgresql_cli_blocks_maintenance_statements` and `test_postgresql_python_blocks_write_statements` |
-| `DO`, `CALL`, `EXECUTE` (prepared statement), `PERFORM` (plpgsql) | Sanitizer restricts to single statement; read-only transaction ensures any embedded writes fail | Same | Covered by `test_postgresql_cli_blocks_procedural_statements` and `test_postgresql_python_blocks_write_statements` |
-| `COPY` to/from file without table (`COPY (SELECT ...) TO STDOUT`) | Allowed because read-only (no mutation) but still constrained by sanitiser; no write risk | Allowed | **Optional** |
+| `DO`, `CALL`, `EXECUTE`, `PREPARE`, `DECLARE`/`FETCH`, `LISTEN`, `LOAD`, `SET`, `RESET` | AST guard refuses by statement class; `DO` in particular can run `COPY ... TO PROGRAM` inside a read-only transaction and is never sent | Same | Covered by `test_sql_guard_postgresql.py` and `test_postgresql_cli_blocks_procedural_statements` |
+
+### Function Calls Inside SELECT
+
+| Functions | CLI enforcement | Python enforcement | Tests |
+|-----------|-----------------|--------------------|-------|
+| Signal and admin: `pg_terminate_backend`, `pg_cancel_backend`, `pg_reload_conf`, `pg_rotate_logfile`, `pg_promote`, `pg_switch_wal`, `pg_stat_reset*` | Not on the allow-list (PostgreSQL marks them `VOLATILE`); refused before execution | Same | Covered by `test_sql_guard_postgresql.py` |
+| Server files and large objects: `pg_read_file`, `pg_read_binary_file`, `pg_ls_dir`, `pg_stat_file`, `lo_export`, `lo_import` | Same | Same | Same |
+| Session and transaction state: `set_config`, `txid_current`, `pg_current_xact_id`, `pg_export_snapshot`, advisory locks, `nextval`/`setval`, `pg_notify` | Same (`txid_current`/`pg_current_xact_id` are `STABLE` and excluded by hand) | Same | Same |
+| SQL-executing helpers: `query_to_xml*`, `cursor_to_xml*`, `ts_rewrite(tsquery, text)`, `ts_stat`, `dblink*` | Same (`ts_rewrite` is excluded by hand; `dblink` lives outside `pg_catalog`) | Same | Same |
+| User-defined and extension functions (`public.f()`, `f()` not in `pg_catalog`) | Refused unless listed in the connection's `allowed_functions` | Same | Covered by `test_allowed_functions_extend_the_policy_per_connection` |
 
 ### Additional Notes
 
 - Stored procedures declared `VOLATILE` may attempt writes; both connectors rely on
   PostgreSQL’s read-only transaction enforcement to reject such actions.
-- `SET SESSION AUTHORIZATION`, `SET ROLE`, and `SET` commands that only adjust
-  session state are permitted if PostgreSQL allows them within read-only
-  transactions; the sanitizer only blocks transaction-control keywords.
+- `SET`, `SET ROLE` and `SET SESSION AUTHORIZATION` are refused by statement
+  class. They would be pointless as a single statement anyway, and
+  `set_config()` is off the function allow-list for the same reason.
+- `EXPLAIN ANALYZE` is accepted: it executes only the (already validated)
+  statement it wraps.
+- Queries the PostgreSQL 18 grammar bundled with `pglast` cannot parse are
+  refused client-side; the error carries the parser's position.
 
 ---
 
@@ -117,9 +150,11 @@ Legend:
 - Mutations queued via `ALTER TABLE ... UPDATE/DELETE` never start because the
   server rejects the initial statement; no background processing occurs.
 - Advanced PostgreSQL attack patterns such as multi-statement payloads (`COMMIT; INSERT ...`),
-  `COPY ... PROGRAM`, `MERGE`, procedural `DO`/`CALL`, and transaction
-  manipulation (`PREPARE TRANSACTION`, `ROLLBACK PREPARED`) are enumerated in
-  the tables above and asserted by `test_postgresql_cli_blocks_write_statements`,
+  `COPY ... PROGRAM`, `MERGE`, procedural `DO`/`CALL`, transaction
+  manipulation (`PREPARE TRANSACTION`, `ROLLBACK PREPARED`), and
+  side-effecting function calls inside a plain `SELECT` are enumerated in
+  the tables above and asserted by `tests/test_sql_guard_postgresql.py`,
+  `test_postgresql_cli_blocks_write_statements`,
   `test_postgresql_cli_blocks_transaction_control`, and
   `test_postgresql_cli_blocks_procedural_statements` (with matching Python
   connector tests and live Docker coverage). Similar high-impact ClickHouse
@@ -130,6 +165,6 @@ Legend:
 
 ## Test Coverage Summary
 
-- PostgreSQL coverage is provided by shared parameterized suites (`test_postgresql_cli_blocks_*` and `test_postgresql_python_blocks_write_statements`), exercising every mutating statement listed above plus transaction-control and procedure-based attempts.
+- PostgreSQL coverage is provided by `tests/test_sql_guard_postgresql.py` (the AST policy: allowed shapes, every enumerated write statement, read-only-transaction escapes, `allowed_functions`) and the shared parameterized connector suites (`test_postgresql_cli_blocks_*` and `test_postgresql_python_blocks_write_statements`). `test_postgres_real_server_rejects_mutations_without_client_guard` bypasses the guard against Docker PostgreSQL to prove the read-only transaction still holds on its own.
 - ClickHouse coverage mirrors this approach through `test_clickhouse_cli_blocks_*` and `test_clickhouse_python_blocks_mutations`, asserting the `readonly=1` guard across DML, DDL, and `SYSTEM`/`KILL` commands.
 - Integration tests with live databases remain valuable for end-to-end validation, but unit tests now ensure each statement category is wired to fail fast in read-only mode.

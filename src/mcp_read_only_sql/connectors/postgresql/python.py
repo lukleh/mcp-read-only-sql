@@ -6,7 +6,7 @@ import psycopg2
 from psycopg2 import errors as psycopg_errors
 from psycopg2.extras import RealDictCursor
 
-from ...utils.sql_guard import sanitize_read_only_sql
+from ...utils.sql_guard import sanitize_postgresql_read_only_sql
 from ...utils.tsv_formatter import format_tsv_line, write_tsv_text_line
 from ..base import BaseConnector
 
@@ -53,7 +53,9 @@ class PostgreSQLPythonConnector(BaseConnector):
         output_path: str | None = None,
     ):
         """Resolve connection settings and run a synchronous worker in the executor."""
-        sanitized_query = sanitize_read_only_sql(query)
+        sanitized_query = sanitize_postgresql_read_only_sql(
+            query, self.connection.allowed_functions
+        )
         selected_server = self._select_server(server)
 
         try:

@@ -88,12 +88,38 @@ async def test_postgres_real_blocks_mutations(implementation, statement):
     connector = _build_postgres_connector(implementation)
     await _verify_connection(connector, "PostgreSQL")
 
-    with pytest.raises(RuntimeError) as exc_info:
+    with pytest.raises(ReadOnlyQueryError) as exc_info:
         await connector.execute_query(statement)
 
     assert _is_readonly_error(
         str(exc_info.value)
     ), f"Expected read-only error for {statement}"
+
+
+@pytest.mark.anyio
+@pytest.mark.security
+@pytest.mark.docker
+@pytest.mark.parametrize("implementation", ["python", "cli"])
+@pytest.mark.parametrize("statement", POSTGRESQL_INTEGRATION_BLOCKED_STATEMENTS)
+async def test_postgres_real_server_rejects_mutations_without_client_guard(
+    implementation, statement, monkeypatch
+):
+    """The read-only transaction still holds when the AST guard is bypassed."""
+    connector = _build_postgres_connector(implementation)
+    await _verify_connection(connector, "PostgreSQL")
+
+    module = "mcp_read_only_sql.connectors.postgresql." + implementation
+    monkeypatch.setattr(
+        f"{module}.sanitize_postgresql_read_only_sql",
+        lambda query, allowed_functions=(): query.strip(),
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:
+        await connector.execute_query(statement)
+
+    assert _is_readonly_error(
+        str(exc_info.value)
+    ), f"Expected server-side read-only error for {statement}"
 
 
 @pytest.mark.anyio

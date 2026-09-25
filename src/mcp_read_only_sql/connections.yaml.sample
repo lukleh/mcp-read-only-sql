@@ -46,6 +46,26 @@
   password: change_me
 
 # ============================================================================
+# EXTRA FUNCTIONS (PostgreSQL only)
+# ============================================================================
+
+# PostgreSQL queries may only call functions on the built-in read-only
+# allow-list (pg_catalog functions PostgreSQL declares side-effect free).
+# List additional functions per connection, bare or schema-qualified, exactly
+# as the catalog spells them. Only add functions you know change nothing.
+- connection_name: analytics_with_helpers
+  description: PostgreSQL with extra read-only helper functions
+  type: postgresql
+  servers:
+    - "analytics.example.com:5432"
+  db: analytics
+  username: analyst
+  password: change_me
+  allowed_functions:
+    - public.customer_segment
+    - st_distance
+
+# ============================================================================
 # CLUSTER CONFIGURATIONS (Multiple Servers)
 # ============================================================================
 

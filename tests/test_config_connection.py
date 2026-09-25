@@ -201,6 +201,59 @@ class TestConnection:
         assert conn.database == "db2"
         assert conn.allowed_databases == ["db1", "db2"]
 
+    def test_connection_with_allowed_functions(self):
+        """allowed_functions is normalized to a deduplicated list of names"""
+        conn = Connection(
+            {
+                "connection_name": "test",
+                "type": "postgresql",
+                "servers": [{"host": "localhost", "port": 5432}],
+                "db": "testdb",
+                "username": "testuser",
+                "password": "testpass",
+                "allowed_functions": [" public.my_helper ", "st_distance", "st_distance"],
+            }
+        )
+
+        assert conn.allowed_functions == ["public.my_helper", "st_distance"]
+
+    def test_connection_allowed_functions_defaults_to_empty(self):
+        conn = Connection(
+            {
+                "connection_name": "test",
+                "type": "postgresql",
+                "servers": [{"host": "localhost", "port": 5432}],
+                "db": "testdb",
+                "username": "testuser",
+                "password": "testpass",
+            }
+        )
+
+        assert conn.allowed_functions == []
+
+    @pytest.mark.parametrize(
+        "db_type,value",
+        [
+            ("clickhouse", ["length"]),
+            ("postgresql", "length"),
+            ("postgresql", ["length", ""]),
+            ("postgresql", [1]),
+        ],
+    )
+    def test_connection_rejects_invalid_allowed_functions(self, db_type, value):
+        with pytest.raises(ValueError, match="allowed_functions"):
+            Connection(
+                {
+                    "connection_name": "test",
+                    "type": db_type,
+                    "servers": [{"host": "localhost", "port": 5432}],
+                    "db": "testdb",
+                    "username": "testuser",
+                    "password": "testpass",
+                    "allowed_functions": value,
+                }
+            )
+
     def test_connection_rejects_invalid_query_timeout_type(self):
         """Runtime loading should reject non-numeric timeout values."""
         with pytest.raises(ValueError, match="query_timeout"):

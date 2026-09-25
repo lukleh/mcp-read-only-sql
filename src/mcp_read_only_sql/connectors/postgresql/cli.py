@@ -5,7 +5,7 @@ from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
 
-from ...utils.sql_guard import ReadOnlyQueryError, sanitize_read_only_sql
+from ...utils.sql_guard import ReadOnlyQueryError, sanitize_postgresql_read_only_sql
 from ...utils.tsv_formatter import write_tsv_text_line
 from ..base_cli import BaseCLIConnector
 
@@ -50,7 +50,9 @@ class PostgreSQLCLIConnector(BaseCLIConnector):
         output_path: Path | None = None,
     ) -> str | None:
         """Run the psql command and optionally stream output to a managed file."""
-        sanitized_query = sanitize_read_only_sql(query)
+        sanitized_query = sanitize_postgresql_read_only_sql(
+            query, self.connection.allowed_functions
+        )
         selected_server = self._select_server(server)
 
         async with self._get_ssh_tunnel(server) as local_port:

@@ -7,6 +7,23 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Security
+
+- PostgreSQL queries are now parsed with PostgreSQL's own grammar (`pglast`)
+  and checked against an allow-list before execution: only `SELECT`, `EXPLAIN`
+  and `SHOW` statement shapes are accepted, `COPY` is refused in every form,
+  and every function call must be a `pg_catalog` function PostgreSQL declares
+  `IMMUTABLE` or `STABLE` (plus a short reviewed list of read-only volatile
+  ones). A read-only transaction alone does not stop `COPY ... TO PROGRAM`,
+  `DO` blocks, or calls such as `pg_terminate_backend()`, `pg_read_file()`,
+  `lo_export()` or `set_config()`; with a superuser login those reach the
+  host. Rejections happen client-side with a message naming the function or
+  statement. Both implementations share the guard; ClickHouse is unchanged.
+- New per-connection `allowed_functions` list (PostgreSQL only) extends the
+  allow-list with bare or schema-qualified function names.
+- The enforcement matrix no longer claims `COPY ... PROGRAM` was blocked by
+  the read-only session; it is blocked by the new guard.
+
 ### Changed
 
 - Dev tooling: pinned `ruff>=0.16,<0.17` in the dev extra (uv.lock is
