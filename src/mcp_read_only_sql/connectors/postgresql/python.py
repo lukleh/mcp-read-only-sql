@@ -7,6 +7,7 @@ import psycopg2
 from psycopg2 import errors as psycopg_errors
 from psycopg2.extras import RealDictCursor
 
+from ...errors import ConnectorError
 from ...utils.sql_guard import (
     SHADOW_GUARD_PREFIX,
     SHADOW_GUARD_SUFFIX,
@@ -113,7 +114,7 @@ class PostgreSQLPythonConnector(BaseConnector):
                 raise TimeoutError(f"PostgreSQL: {e}")
             # Database-specific errors get prefixed
             logger.error(f"PostgreSQL database error: {e}")
-            raise RuntimeError(f"PostgreSQL: {e}")
+            raise ConnectorError(f"PostgreSQL: {e}")
         # Let other exceptions (programming errors) propagate unchanged
 
     def _execute_sync_query(

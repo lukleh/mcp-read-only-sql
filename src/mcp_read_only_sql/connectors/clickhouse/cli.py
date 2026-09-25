@@ -5,6 +5,7 @@ from collections.abc import Callable
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
+from ...errors import ConnectorError
 from ...utils.sql_guard import ReadOnlyQueryError, sanitize_read_only_sql
 from ...utils.ssh_tunnel_cli import CLISSHTunnel
 from ...utils.tsv_formatter import write_tsv_text_line
@@ -168,7 +169,7 @@ class ClickHouseCLIConnector(BaseCLIConnector):
                 elif self.password:
                     process.kill()
                     await process.wait()
-                    raise RuntimeError(
+                    raise ConnectorError(
                         "clickhouse-client: failed to create subprocess stdin pipe"
                     )
 
@@ -177,7 +178,7 @@ class ClickHouseCLIConnector(BaseCLIConnector):
                 if stdout is None or stderr_stream is None:
                     process.kill()
                     await process.wait()
-                    raise RuntimeError(
+                    raise ConnectorError(
                         "clickhouse-client: failed to create subprocess pipes"
                     )
 
@@ -253,7 +254,7 @@ class ClickHouseCLIConnector(BaseCLIConnector):
                     if returncode not in (0, None):
                         error_msg = stderr.decode() if stderr else "Unknown error"
                         logger.error(f"clickhouse-client error: {error_msg}")
-                        raise RuntimeError(f"clickhouse-client: {error_msg}")
+                        raise ConnectorError(f"clickhouse-client: {error_msg}")
 
                     if pending_line not in (None, ""):
                         emit_line(pending_line)
@@ -286,9 +287,7 @@ class ClickHouseCLIConnector(BaseCLIConnector):
             except TimeoutError as exc:
                 logger.error(f"Query execution error: {exc}")
                 raise
-            except Exception as e:
+            except OSError as e:
+                # Spawning or talking to the clickhouse-client process failed
                 logger.error(f"Query execution error: {e}")
-                # Re-raise with clickhouse-client prefix if not already prefixed
-                if not str(e).startswith("clickhouse-client:"):
-                    raise RuntimeError(f"clickhouse-client: {e}")
-                raise
+                raise ConnectorError(f"clickhouse-client: {e}") from e

@@ -11,6 +11,8 @@ import signal
 import socket
 from contextlib import closing
 
+from ..errors import ConnectorError
+
 logger = logging.getLogger(__name__)
 
 
@@ -96,7 +98,7 @@ class CLISSHTunnel:
         # Prefer key auth when both credentials are provided to avoid ambiguity
         if self.ssh_password and not self.ssh_key:
             if shutil.which("sshpass") is None:
-                raise RuntimeError(
+                raise ConnectorError(
                     "SSH: sshpass utility not found. Install sshpass or use key-based SSH authentication."
                 )
             env["SSHPASS"] = self.ssh_password
@@ -145,7 +147,7 @@ class CLISSHTunnel:
                     error_msg = (
                         stderr.decode() if stderr else "SSH tunnel failed to start"
                     )
-                    raise RuntimeError(f"SSH: {error_msg}")
+                    raise ConnectorError(f"SSH: {error_msg}")
                 try:
                     _reader, writer = await asyncio.wait_for(
                         asyncio.open_connection("127.0.0.1", self.local_port),
@@ -161,13 +163,14 @@ class CLISSHTunnel:
             logger.info(f"SSH tunnel established on local port {self.local_port}")
             return self.local_port
 
-        except Exception as e:
-            # Clean up on error
+        except OSError as e:
+            # ssh binary missing or the local socket could not be opened
             await self.stop()
             logger.error(f"Failed to establish SSH tunnel: {e}")
-            # Re-raise with SSH prefix if not already prefixed
-            if not str(e).startswith("SSH:"):
-                raise RuntimeError(f"SSH: {e}")
+            raise ConnectorError(f"SSH: {e}") from e
+        except Exception:
+            # Clean up, then let ConnectorError and unexpected errors propagate
+            await self.stop()
             raise
 
     async def stop(self):
