@@ -7,6 +7,14 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Narrowed the SDK dependency from `mcp>=2.0.0,<3` to `mcp>=2.2.0,<2.3`.
+  Installs resolve the newest version allowed, so mcp 2.1.0 reached users
+  untested and hid tool error messages until 0.5.0. The cap now admits only
+  the minor the test suite runs against; raise it deliberately after
+  testing the next one.
+
 ## [0.5.0] - 2026-09-25
 
 ### Security
