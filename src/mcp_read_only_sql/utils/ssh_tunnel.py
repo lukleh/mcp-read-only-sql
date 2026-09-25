@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import logging
+import os
 import select
 import socket
 import threading
@@ -10,6 +11,32 @@ import paramiko
 from ..errors import ConnectorError
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_KNOWN_HOSTS_FILE = "~/.ssh/known_hosts"
+
+
+class AcceptNewHostKeyPolicy(paramiko.MissingHostKeyPolicy):
+    """Trust a host key on first use and record it, like OpenSSH accept-new.
+
+    Only unknown hosts reach a missing-host-key policy: a host whose recorded
+    key differs makes ``SSHClient.connect`` raise ``BadHostKeyException``
+    first. New keys are appended to the known_hosts file in OpenSSH's own
+    line format, so ``ssh`` and this tunnel share one record.
+    """
+
+    def __init__(self, known_hosts_file: str):
+        self.known_hosts_file = known_hosts_file
+
+    def missing_host_key(self, client, hostname, key):
+        client.get_host_keys().add(hostname, key.get_name(), key)
+        path = os.path.abspath(self.known_hosts_file)
+        os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        with os.fdopen(fd, "a", encoding="utf-8") as handle:
+            handle.write(f"{hostname} {key.get_name()} {key.get_base64()}\n")
+        logger.info(
+            "SSH: recorded new %s host key for %s in %s", key.get_name(), hostname, path
+        )
 
 
 class SSHTunnel:
@@ -66,9 +93,26 @@ class SSHTunnel:
                 remote_host = self.remote_host
                 remote_port = self.remote_port
 
-                # Create SSH client
+                # Create SSH client and decide how to treat the bastion's host
+                # key, mirroring OpenSSH StrictHostKeyChecking. A recorded key
+                # that no longer matches raises BadHostKeyException in
+                # connect() regardless of the policy.
                 self.ssh_client = paramiko.SSHClient()
-                self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                host_key_checking = self.ssh_config.host_key_checking
+                known_hosts_file = self.ssh_config.known_hosts_file or os.path.expanduser(
+                    DEFAULT_KNOWN_HOSTS_FILE
+                )
+                if host_key_checking == "no":
+                    # Legacy mode: trust everything and record nothing.
+                    policy: paramiko.MissingHostKeyPolicy = paramiko.AutoAddPolicy()
+                else:
+                    with contextlib.suppress(OSError):
+                        self.ssh_client.load_system_host_keys(known_hosts_file)
+                    if host_key_checking == "yes":
+                        policy = paramiko.RejectPolicy()
+                    else:
+                        policy = AcceptNewHostKeyPolicy(known_hosts_file)
+                self.ssh_client.set_missing_host_key_policy(policy)
 
                 # Authentication
                 connect_kwargs = {

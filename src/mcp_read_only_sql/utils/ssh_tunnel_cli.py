@@ -71,15 +71,21 @@ class CLISSHTunnel:
         # Find a free local port
         self.local_port = self._find_free_port()
 
-        # Build SSH options common to all auth modes
+        # Build SSH options common to all auth modes. Host keys are verified
+        # the way ssh itself does: accept-new (the default) records a bastion
+        # on first use and refuses it if its key changes.
+        host_key_checking = self.ssh_config.host_key_checking
+        known_hosts_file = self.ssh_config.known_hosts_file
+        if known_hosts_file is None and host_key_checking == "no":
+            # Legacy mode: trust everything and record nothing.
+            known_hosts_file = "/dev/null"
+
         ssh_options = [
             "-N",  # No command execution
             "-L",
             f"{self.local_port}:{self.remote_host}:{self.remote_port}",
             "-o",
-            "StrictHostKeyChecking=no",  # Avoid interactive prompts
-            "-o",
-            "UserKnownHostsFile=/dev/null",  # Don't update known_hosts
+            f"StrictHostKeyChecking={host_key_checking}",
             "-o",
             "LogLevel=ERROR",  # Reduce noise
             "-o",
@@ -91,6 +97,8 @@ class CLISSHTunnel:
             "-p",
             str(self.ssh_port),
         ]
+        if known_hosts_file is not None:
+            ssh_options.extend(["-o", f"UserKnownHostsFile={known_hosts_file}"])
 
         env = os.environ.copy()
         ssh_base_cmd = ["ssh"]

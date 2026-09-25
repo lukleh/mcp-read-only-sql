@@ -9,6 +9,9 @@ DEFAULT_IMPLEMENTATION = "cli"
 DEFAULT_SSH_PORT = 22
 DEFAULT_QUERY_TIMEOUT = 120
 DEFAULT_CONNECTION_TIMEOUT = 10
+# OpenSSH StrictHostKeyChecking values accepted for ssh_tunnel.host_key_checking
+HOST_KEY_CHECKING_VALUES = ("accept-new", "yes", "no")
+DEFAULT_HOST_KEY_CHECKING = "accept-new"
 
 
 def _normalize_positive_timeout(value: Any, field_name: str) -> float:
@@ -118,6 +121,13 @@ class SSHTunnelConfig:
     private_key: str | None = None
     password: str | None = None
     ssh_timeout: int | None = None
+    # OpenSSH StrictHostKeyChecking value applied by both implementations:
+    # accept-new records a bastion's key on first use and refuses a changed
+    # one, yes refuses unknown keys, no trusts everything (legacy behaviour).
+    host_key_checking: str = DEFAULT_HOST_KEY_CHECKING
+    # Where known keys are read from and new ones recorded. None means the
+    # SSH default, ~/.ssh/known_hosts.
+    known_hosts_file: str | None = None
 
     def __post_init__(self):
         """Validate SSH tunnel configuration."""
@@ -126,6 +136,11 @@ class SSHTunnelConfig:
         # short-lived certs live only in ssh-agent.
         if self.ssh_timeout is not None and self.ssh_timeout <= 0:
             raise ValueError("SSH tunnel timeout must be a positive integer")
+        if self.host_key_checking not in HOST_KEY_CHECKING_VALUES:
+            raise ValueError(
+                "SSH tunnel 'host_key_checking' must be one of "
+                + ", ".join(HOST_KEY_CHECKING_VALUES)
+            )
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Optional["SSHTunnelConfig"]:
@@ -159,6 +174,21 @@ class SSHTunnelConfig:
             except (TypeError, ValueError):
                 raise ValueError("SSH tunnel timeout must be an integer value")
 
+        host_key_checking = data.get("host_key_checking", DEFAULT_HOST_KEY_CHECKING)
+        if not isinstance(host_key_checking, str):
+            raise ValueError(
+                "SSH tunnel 'host_key_checking' must be one of "
+                + ", ".join(HOST_KEY_CHECKING_VALUES)
+            )
+
+        known_hosts_file = data.get("known_hosts_file")
+        if known_hosts_file is not None:
+            if not isinstance(known_hosts_file, str) or not known_hosts_file.strip():
+                raise ValueError(
+                    "SSH tunnel 'known_hosts_file' must be a non-empty path"
+                )
+            known_hosts_file = os.path.expanduser(known_hosts_file)
+
         return cls(
             host=data["host"],
             port=data.get("port", DEFAULT_SSH_PORT),
@@ -166,6 +196,8 @@ class SSHTunnelConfig:
             private_key=private_key,
             password=password,
             ssh_timeout=ssh_timeout,
+            host_key_checking=host_key_checking,
+            known_hosts_file=known_hosts_file,
         )
 
 

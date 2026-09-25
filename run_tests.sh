@@ -158,7 +158,7 @@ echo "Using Docker context: ${DOCKER_CONTEXT}"
 echo "Using Docker DB host: ${TEST_DOCKER_HOST}"
 echo "Using SSH host: ${TEST_SSH_HOST}"
 echo "Waiting for databases and SSH infrastructure to be ready..."
-rm -f /tmp/docker_test_key
+rm -f /tmp/docker_test_key /tmp/docker_test_known_hosts
 
 if ! wait_for "PostgreSQL container" "${SETUP_TIMEOUT_SECONDS}" "${WAIT_INTERVAL_SECONDS}" docker exec mcp-postgres-test pg_isready -U testuser -d testdb; then
     show_setup_logs

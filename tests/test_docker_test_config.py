@@ -15,6 +15,7 @@ def test_docker_test_helpers_default_to_localhost(monkeypatch):
     monkeypatch.delenv("TEST_POSTGRES_PORT", raising=False)
     monkeypatch.delenv("TEST_CLICKHOUSE_PORT", raising=False)
     monkeypatch.delenv("TEST_SSH_PORT", raising=False)
+    monkeypatch.delenv("TEST_SSH_KNOWN_HOSTS", raising=False)
 
     assert docker_test_server("postgresql") == {"host": "localhost", "port": 5432}
     assert docker_test_server("clickhouse") == {"host": "localhost", "port": 9000}
@@ -25,6 +26,7 @@ def test_docker_test_helpers_default_to_localhost(monkeypatch):
         "host": "localhost",
         "port": 2222,
         "user": "tunnel",
+        "known_hosts_file": "/tmp/docker_test_known_hosts",
         "password": "secret",
     }
 
@@ -35,6 +37,7 @@ def test_docker_test_helpers_honor_env_overrides(monkeypatch):
     monkeypatch.setenv("TEST_POSTGRES_PORT", "15432")
     monkeypatch.setenv("TEST_CLICKHOUSE_PORT", "19000")
     monkeypatch.setenv("TEST_SSH_PORT", "3222")
+    monkeypatch.setenv("TEST_SSH_KNOWN_HOSTS", "/tmp/known_hosts.test")
 
     assert docker_test_server("postgresql") == {"host": "db.test", "port": 15432}
     assert docker_test_server("clickhouse") == {"host": "db.test", "port": 19000}
@@ -44,6 +47,7 @@ def test_docker_test_helpers_honor_env_overrides(monkeypatch):
         "host": "ssh.test",
         "port": 3222,
         "user": "tunnel",
+        "known_hosts_file": "/tmp/known_hosts.test",
         "private_key": "/tmp/key",
     }
 

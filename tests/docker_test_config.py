@@ -61,12 +61,27 @@ def docker_test_servers(db_type: str, count: int, port: int | None = None) -> li
     return [docker_test_server_string(db_type, port=port) for _ in range(count)]
 
 
+DEFAULT_TEST_KNOWN_HOSTS = "/tmp/docker_test_known_hosts"
+
+
+def docker_test_known_hosts() -> str:
+    """known_hosts file the tunnels record the bastion in during a test run.
+
+    The bastion image generates its host keys at build time, so a rebuilt
+    image would look like a changed key to a file kept from an earlier run.
+    run_tests.sh and the session fixture in conftest remove the default file
+    before the run starts.
+    """
+    return os.environ.get("TEST_SSH_KNOWN_HOSTS", DEFAULT_TEST_KNOWN_HOSTS)
+
+
 def docker_test_ssh_tunnel(
     *,
     enabled: bool = True,
     user: str = "tunnel",
     private_key: str | None = None,
     password: str | None = None,
+    known_hosts_file: str | None = None,
 ) -> dict[str, Any]:
     """Build a Docker-backed SSH tunnel configuration."""
     config: dict[str, Any] = {
@@ -74,6 +89,7 @@ def docker_test_ssh_tunnel(
         "host": docker_test_ssh_host(),
         "port": docker_test_ssh_port(),
         "user": user,
+        "known_hosts_file": known_hosts_file or docker_test_known_hosts(),
     }
     if private_key is not None:
         config["private_key"] = private_key

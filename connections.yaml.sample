@@ -117,6 +117,12 @@
     private_key: ~/.ssh/id_rsa  # Path to private key
     remote_host: 10.0.1.50  # Optional, defaults to localhost
     remote_port: 5432  # Optional, defaults to server port
+    # Host-key verification, as OpenSSH StrictHostKeyChecking:
+    #   accept-new (default) records the bastion on first use, refuses a changed key
+    #   yes        refuses bastions not already in the known_hosts file
+    #   no         trusts every key (previous behaviour)
+    # host_key_checking: accept-new
+    # known_hosts_file: ~/.ssh/known_hosts  # default; shared with ssh
 
 # SSH tunnel with password authentication
 - connection_name: remote_clickhouse_ssh
