@@ -1,9 +1,12 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager, closing
+from io import IOBase
 from pathlib import Path
+from typing import cast
 
 import clickhouse_connect
+from clickhouse_connect.driver.client import Client
 from clickhouse_connect.driver.exceptions import ClickHouseError
 
 from ...errors import ConnectorError
@@ -11,6 +14,7 @@ from ...utils.sql_guard import sanitize_read_only_sql
 from ...utils.ssh_tunnel_cli import CLISSHTunnel
 from ...utils.tsv_formatter import format_tsv_line
 from ..base import BaseConnector
+from .settings import client_settings, refuses_client_settings
 
 logger = logging.getLogger(__name__)
 
@@ -208,6 +212,8 @@ class ClickHousePythonConnector(BaseConnector):
         database: str,
         original_port: int | None,
         is_ssh_tunnel: bool,
+        *,
+        settings: dict[str, object] | None = None,
     ):
         """Create a configured clickhouse-connect client for this endpoint."""
         interface, resolved_port = self._resolve_client_endpoint(
@@ -222,11 +228,50 @@ class ClickHousePythonConnector(BaseConnector):
             password=self.password,
             connect_timeout=self.connection_timeout,
             query_limit=0,  # No limit on query result size (we handle it ourselves)
-            settings={
-                "readonly": 1,  # ClickHouse read-only mode
-                "max_execution_time": self.query_timeout,
-            },
+            settings=settings,
         )
+
+    def _open_client(
+        self,
+        host: str,
+        port: int,
+        database: str,
+        original_port: int | None,
+        is_ssh_tunnel: bool,
+    ) -> tuple[Client, dict[str, object] | None]:
+        """Create the client with readonly=1 and the query timeout as settings.
+
+        A login whose profile already enforces ``readonly`` refuses those
+        settings (clickhouse-connect checks them against ``system.settings``
+        before sending). The profile is stricter than the client, so the
+        client is then created without settings. Returns the client and the
+        settings to send with each query, ``None`` after the fallback.
+        """
+        settings = client_settings(self.query_timeout)
+        try:
+            return (
+                self._create_client(
+                    host, port, database, original_port, is_ssh_tunnel,
+                    settings=settings,
+                ),
+                settings,
+            )
+        except ClickHouseError as exc:
+            if not refuses_client_settings(str(exc)):
+                raise
+            logger.warning(
+                "ClickHouse: the profile of user %s already enforces read-only "
+                "and refuses client-side settings; continuing without readonly=1 "
+                "and max_execution_time (%s)",
+                self.username,
+                exc,
+            )
+            return (
+                self._create_client(
+                    host, port, database, original_port, is_ssh_tunnel
+                ),
+                None,
+            )
 
     def _execute_sync_query(
         self,
@@ -247,19 +292,17 @@ class ClickHousePythonConnector(BaseConnector):
 
         client = None
         try:
-            client = self._create_client(
-                host,
-                port,
-                database,
-                original_port,
-                is_ssh_tunnel,
+            client, _settings = self._open_client(
+                host, port, database, original_port, is_ssh_tunnel
             )
 
             # Execute query and get result
             result = client.query(query, column_oriented=False)
 
             # Get column names and data
-            columns = result.column_names if hasattr(result, "column_names") else []
+            columns = (
+                list(result.column_names) if hasattr(result, "column_names") else []
+            )
             data = result.result_rows if hasattr(result, "result_rows") else []
 
             lines = []
@@ -301,24 +344,18 @@ class ClickHousePythonConnector(BaseConnector):
         """Execute query synchronously and stream raw TSV output to a file."""
         client = None
         try:
-            client = self._create_client(
-                host,
-                port,
-                database,
-                original_port,
-                is_ssh_tunnel,
+            client, settings = self._open_client(
+                host, port, database, original_port, is_ssh_tunnel
             )
 
-            with Path(output_path).open("wb") as handle, closing(
+            # The HTTP client returns a file-like response; cast for closing().
+            raw_stream = cast(
+                IOBase,
                 client.raw_stream(
-                    query,
-                    fmt="TabSeparatedWithNames",
-                    settings={
-                        "readonly": 1,
-                        "max_execution_time": self.query_timeout,
-                    },
-                )
-            ) as stream:
+                    query, fmt="TabSeparatedWithNames", settings=settings
+                ),
+            )
+            with Path(output_path).open("wb") as handle, closing(raw_stream) as stream:
                 while True:
                     chunk = stream.read(64 * 1024)
                     if not chunk:

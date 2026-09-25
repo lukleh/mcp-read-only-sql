@@ -7,6 +7,23 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- ClickHouse logins whose profile already enforces `readonly` work again.
+  Both connectors send `readonly=1` and `max_execution_time` with every
+  query, and such a profile refuses them (`Cannot modify '<setting>' setting
+  in readonly mode`; clickhouse-connect refuses them client-side as
+  `Setting <name> is readonly`), so every query failed for exactly the logins
+  the README recommends. The connectors now retry once without client-side
+  settings, since the profile is stricter than the client, and log that they
+  did. Other `READONLY` errors are not retried. Fixture users `readonly_user`
+  and `readonly2_user` cover both profile values.
+- The clickhouse-client connector no longer drops a last row that renders
+  empty (an empty string in the only column). It held back each line until
+  the next arrived and discarded the final one when it was empty.
+- clickhouse-client errors no longer start with the `Password for user (x):`
+  prompt that `--ask-password` prints to stderr.
+
 ## [0.5.1] - 2026-09-25
 
 ### Changed

@@ -116,6 +116,15 @@ read.
 - Python: uses `clickhouse_connect.get_client(..., settings={'readonly': 1,
   'max_execution_time': query_timeout})`. Requests are executed via HTTP/HTTPS
   (or tunneled) and ClickHouse enforces read-only semantics.
+- Both: a login whose profile already sets `readonly` (1 or 2) refuses these
+  client-side settings (`Cannot modify '<setting>' setting in readonly mode`,
+  or clickhouse-connect's `Setting <name> is readonly`). The connectors retry
+  once without client-side settings; the profile is the stricter layer and
+  the connector's hard timeout still applies. Any other `READONLY` error is
+  not retried. Covered by `tests/test_clickhouse_readonly_profiles.py`
+  against fixture users `readonly_user` (readonly=1, with the `URL` and
+  `CREATE TEMPORARY TABLE` grants so the profile alone is what refuses
+  `url()`) and `readonly2_user`.
 
 ### Data Manipulation & Mutations
 
