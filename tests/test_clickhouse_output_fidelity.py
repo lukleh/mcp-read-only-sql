@@ -35,7 +35,9 @@ async def test_real_trailing_empty_row_is_kept(implementation, clickhouse_config
         else ClickHousePythonConnector(clickhouse_config)
     )
 
-    result = await connector.execute_query("SELECT 'a' AS x UNION ALL SELECT ''")
+    result = await connector.execute_query(
+        "SELECT x FROM (SELECT 'a' AS x UNION ALL SELECT '') ORDER BY x DESC"
+    )
 
     lines = result.split("\n")
     assert lines[:2] == ["x", "a"]

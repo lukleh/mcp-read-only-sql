@@ -26,9 +26,10 @@ class ClickHouseCLIConnector(BaseCLIConnector):
 
     def __init__(self, connection: Connection):
         super().__init__(connection)
-        # Client-side settings this login accepted when first probed; None
-        # until the first query (see _probe_settings).
-        self._accepted_settings: dict[str, object] | None = None
+        # Client-side settings each server accepted when it was probed, keyed
+        # by the selected server. A profile is per server, and one server's
+        # answer says nothing about another (see _probe_settings).
+        self._accepted_settings: dict[tuple[str, int], dict[str, object]] = {}
 
     async def _probe_settings(
         self, probe: Callable[[dict[str, object]], Awaitable[None]]
@@ -299,18 +300,37 @@ class ClickHouseCLIConnector(BaseCLIConnector):
             def discard(_line: str) -> None:
                 return None
 
+            server_key = (selected_server.host, selected_server.port)
+
             try:
-                if self._accepted_settings is None:
-                    self._accepted_settings = await self._probe_settings(
-                        lambda settings: run_client(
-                            build_command("SELECT 1", settings), discard
+                settings = self._accepted_settings.get(server_key)
+                if settings is None or "readonly" not in settings:
+                    # Unknown, or known to run without readonly=1. The latter
+                    # is only safe while this server's profile stays
+                    # read-only, so it is asked again before every statement.
+                    settings = await self._probe_settings(
+                        lambda candidate: run_client(
+                            build_command("SELECT 1", candidate), discard
                         )
                     )
-                cmd = build_command(sanitized_query, self._accepted_settings)
+                    self._accepted_settings[server_key] = settings
+                cmd = build_command(sanitized_query, settings)
+
+                async def run_statement(emit_line: Callable[[str], None]) -> None:
+                    try:
+                        await run_client(cmd, emit_line)
+                    except ConnectorError as exc:
+                        if without_refused(settings, str(exc)) is not None:
+                            # The server refuses a setting it accepted at the
+                            # probe: a profile change, or the statement's own
+                            # SETTINGS clause naming one of ours. Forget the
+                            # answer so the next statement probes again.
+                            self._accepted_settings.pop(server_key, None)
+                        raise
 
                 if output_path is None:
                     lines: list[str] = []
-                    await run_client(cmd, lines.append)
+                    await run_statement(lines.append)
                     return "\n".join(lines)
 
                 wrote_content = False
@@ -322,7 +342,7 @@ class ClickHouseCLIConnector(BaseCLIConnector):
                 with Path(output_path).open(  # noqa: ASYNC230 -- local file writes are fast; async file IO would add a dependency for no benefit
                     "w", encoding="utf-8", newline=""
                 ) as handle:
-                    await run_client(cmd, emit_file_line)
+                    await run_statement(emit_file_line)
                 return None
 
             except FileNotFoundError:

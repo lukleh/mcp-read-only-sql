@@ -188,6 +188,81 @@ class TestCLIProbe:
         assert "--max_execution_time" in commands[2]
 
     @pytest.mark.anyio
+    async def test_running_without_readonly_is_probed_before_every_statement(
+        self, clickhouse_config, monkeypatch
+    ):
+        """Only a read-only profile makes dropping readonly=1 safe, and a
+        profile can change, so that answer is never trusted across statements."""
+        commands = _fake_clickhouse_client(
+            monkeypatch,
+            [
+                _fail(READONLY2_REFUSAL), _ok(), _ok("col\n", "1\n"),  # first
+                _ok(), _ok("col\n", "2\n"),  # second: profile now accepts readonly
+            ],
+        )
+        connector = ClickHouseCLIConnector(clickhouse_config)
+
+        await connector.execute_query("SELECT 1 + 1")
+        await connector.execute_query("SELECT 2 + 2")
+
+        assert [_query_of(cmd) for cmd in commands] == [
+            "SELECT 1", "SELECT 1", "SELECT 1 + 1", "SELECT 1", "SELECT 2 + 2"
+        ]
+        assert "--readonly" in commands[4], "the statement runs with readonly again"
+
+    @pytest.mark.anyio
+    async def test_settings_are_remembered_per_server(self, monkeypatch):
+        """A read-only profile on one server says nothing about another."""
+        connection = make_connection(
+            {
+                "connection_name": "two_servers",
+                "type": "clickhouse",
+                "servers": ["a.example.com:9000", "b.example.com:9000"],
+                "db": "testdb",
+                "username": "u",
+                "password": "p",
+                "implementation": "cli",
+            }
+        )
+        commands = _fake_clickhouse_client(
+            monkeypatch,
+            [
+                _fail(PROFILE_REFUSAL), _ok(), _ok("col\n", "1\n"),  # a: drops timeout
+                _ok(), _ok("col\n", "1\n"),  # b: probed on its own, keeps everything
+                _ok("col\n", "1\n"),  # a again: remembered
+            ],
+        )
+        connector = ClickHouseCLIConnector(connection)
+
+        await connector.execute_query("SELECT 1 + 1", server="a.example.com")
+        await connector.execute_query("SELECT 1 + 1", server="b.example.com")
+        await connector.execute_query("SELECT 1 + 1", server="a.example.com")
+
+        hosts = [cmd[cmd.index("--host") + 1] for cmd in commands]
+        assert hosts == ["a.example.com"] * 3 + ["b.example.com"] * 2 + ["a.example.com"]
+        assert "--max_execution_time" in commands[4], "b keeps the timeout"
+        assert "--max_execution_time" not in commands[5], "a stays without it"
+
+    @pytest.mark.anyio
+    async def test_refusal_of_an_accepted_setting_forgets_the_answer(
+        self, clickhouse_config, monkeypatch
+    ):
+        """After the probe a profile may still change; the next statement probes again."""
+        commands = _fake_clickhouse_client(
+            monkeypatch,
+            [_ok(), _fail(READONLY2_REFUSAL), _fail(READONLY2_REFUSAL), _ok(), _ok("col\n", "1\n")],
+        )
+        connector = ClickHouseCLIConnector(clickhouse_config)
+
+        with pytest.raises(ConnectorError, match="readonly"):
+            await connector.execute_query("SELECT 1 + 1")
+        await connector.execute_query("SELECT 2 + 2")
+
+        assert [_query_of(cmd) for cmd in commands] == [
+            "SELECT 1", "SELECT 1 + 1", "SELECT 1", "SELECT 1", "SELECT 2 + 2"
+        ]
+
+    @pytest.mark.anyio
     async def test_statement_refusal_never_reruns_without_readonly(
         self, clickhouse_config, monkeypatch
     ):
@@ -309,12 +384,63 @@ class TestPythonProbe:
     ):
         captured = {}
         _fake_get_client(monkeypatch, captured, refused="readonly")
+        connector = ClickHousePythonConnector(clickhouse_config)
 
-        await ClickHousePythonConnector(clickhouse_config).execute_query("SELECT 1")
+        await connector.execute_query("SELECT 1")
+        await connector.execute_query("SELECT 2")
 
-        assert captured["settings"][1] == {
-            "max_execution_time": clickhouse_config.query_timeout
-        }
+        timeout = clickhouse_config.query_timeout
+        assert captured["settings"] == [
+            {"readonly": 1, "max_execution_time": timeout},
+            {"max_execution_time": timeout},
+            # Without readonly the answer is not trusted across statements.
+            {"readonly": 1, "max_execution_time": timeout},
+            {"max_execution_time": timeout},
+        ]
+
+    @pytest.mark.anyio
+    async def test_settings_are_remembered_per_server(self, monkeypatch):
+        connection = make_connection(
+            {
+                "connection_name": "two_servers",
+                "type": "clickhouse",
+                "servers": ["a.example.com:8123", "b.example.com:8123"],
+                "db": "testdb",
+                "username": "u",
+                "password": "p",
+                "implementation": "python",
+            }
+        )
+        captured = {}
+        seen_hosts = []
+
+        def fake_get_client(**kwargs):
+            seen_hosts.append((kwargs["host"], kwargs.get("settings")))
+            if kwargs["host"] == "a.example.com" and kwargs.get("settings") and "max_execution_time" in kwargs["settings"]:
+                raise ProgrammingError("Setting max_execution_time is readonly")
+            return SimpleNamespace(
+                query=lambda q, column_oriented=False: SimpleNamespace(column_names=["c"], result_rows=[[1]]),
+                close=lambda: None,
+            )
+
+        monkeypatch.setattr(
+            "mcp_read_only_sql.connectors.clickhouse.python.clickhouse_connect.get_client",
+            fake_get_client,
+        )
+        connector = ClickHousePythonConnector(connection)
+        full = {"readonly": 1, "max_execution_time": connection.query_timeout}
+
+        await connector.execute_query("SELECT 1", server="a.example.com")
+        await connector.execute_query("SELECT 1", server="b.example.com")
+        await connector.execute_query("SELECT 1", server="a.example.com")
+
+        assert seen_hosts == [
+            ("a.example.com", full),
+            ("a.example.com", {"readonly": 1}),
+            ("b.example.com", full),
+            ("a.example.com", {"readonly": 1}),
+        ]
+        del captured
 
     @pytest.mark.anyio
     async def test_file_output_uses_the_accepted_settings(

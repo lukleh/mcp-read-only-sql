@@ -1,4 +1,5 @@
 import asyncio
+import functools
 import logging
 from contextlib import asynccontextmanager, closing
 from io import IOBase
@@ -25,9 +26,9 @@ class ClickHousePythonConnector(BaseConnector):
 
     def __init__(self, connection: Connection):
         super().__init__(connection)
-        # Client-side settings this login accepted when the first client was
-        # created; None until then (see _open_client).
-        self._accepted_settings: dict[str, object] | None = None
+        # Client-side settings each server accepted when a client was first
+        # created for it, keyed by the selected server (see _open_client).
+        self._accepted_settings: dict[tuple[str, int], dict[str, object]] = {}
 
     def _get_default_port(self) -> int:
         return 8123  # HTTP port (clickhouse-connect default)
@@ -157,12 +158,13 @@ class ClickHousePythonConnector(BaseConnector):
                 ]
                 if output_path is not None:
                     worker_args.append(output_path)
+                job = functools.partial(
+                    worker,
+                    *worker_args,
+                    server_key=(selected_server.host, selected_server.port),
+                )
                 return await asyncio.wait_for(
-                    loop.run_in_executor(
-                        None,
-                        worker,
-                        *worker_args,
-                    ),
+                    loop.run_in_executor(None, job),
                     timeout=total_timeout,
                 )
 
@@ -245,24 +247,27 @@ class ClickHousePythonConnector(BaseConnector):
         database: str,
         original_port: int | None,
         is_ssh_tunnel: bool,
-    ) -> tuple[Client, dict[str, object] | None]:
-        """Create the client with the settings this login accepts.
+        server_key: tuple[str, int] | None,
+    ) -> tuple[Client, dict[str, object]]:
+        """Create the client with the settings this login accepts on this server.
 
         clickhouse-connect validates client-side settings against
         ``system.settings`` for this login when the client is created, so the
         decision never involves a statement. A profile that already sets
         ``readonly`` refuses settings by name; each refused one is dropped and
-        the result is remembered for the connector's lifetime. Returns the
-        client and the settings to send with each query, ``None`` when the
-        login accepts none of them.
+        the result is remembered per server. An answer without ``readonly``
+        is only safe while that server's profile stays read-only, so it is
+        not reused: the settings are negotiated again for every statement.
+        Returns the client and the settings it was created with (possibly
+        empty).
         """
-        settings = self._accepted_settings
-        if settings is not None:
+        settings = self._accepted_settings.get(server_key)
+        if settings is not None and "readonly" in settings:
             client = self._create_client(
                 host, port, database, original_port, is_ssh_tunnel,
-                settings=settings or None,
+                settings=settings,
             )
-            return client, settings or None
+            return client, settings
 
         settings = client_settings(self.query_timeout)
         while True:
@@ -284,8 +289,19 @@ class ClickHousePythonConnector(BaseConnector):
                 )
                 settings = reduced
                 continue
-            self._accepted_settings = settings
-            return client, settings or None
+            if server_key is not None:
+                self._accepted_settings[server_key] = settings
+            return client, settings
+
+    def _forget_if_refused(
+        self,
+        server_key: tuple[str, int] | None,
+        settings: dict[str, object],
+        exc: ClickHouseError,
+    ) -> None:
+        """Drop the remembered answer when the server refuses a setting it accepted."""
+        if without_refused(settings, str(exc)) is not None:
+            self._accepted_settings.pop(server_key, None)
 
     def _execute_sync_query(
         self,
@@ -296,22 +312,35 @@ class ClickHousePythonConnector(BaseConnector):
         original_port: int | None = None,
         is_ssh_tunnel: bool = False,
         output_path: str | None = None,
+        *,
+        server_key: tuple[str, int] | None = None,
     ) -> str:
         """Execute query synchronously and return TSV output."""
         if output_path is not None:
             self._execute_sync_query_to_file(
-                host, port, database, query, original_port, is_ssh_tunnel, output_path
+                host,
+                port,
+                database,
+                query,
+                original_port,
+                is_ssh_tunnel,
+                output_path,
+                server_key=server_key,
             )
             return ""
 
         client = None
         try:
-            client, _settings = self._open_client(
-                host, port, database, original_port, is_ssh_tunnel
+            client, settings = self._open_client(
+                host, port, database, original_port, is_ssh_tunnel, server_key
             )
 
             # Execute query and get result
-            result = client.query(query, column_oriented=False)
+            try:
+                result = client.query(query, column_oriented=False)
+            except ClickHouseError as exc:
+                self._forget_if_refused(server_key, settings, exc)
+                raise
 
             # Get column names and data
             columns = (
@@ -354,21 +383,27 @@ class ClickHousePythonConnector(BaseConnector):
         original_port: int | None = None,
         is_ssh_tunnel: bool = False,
         output_path: str = "",
+        *,
+        server_key: tuple[str, int] | None = None,
     ) -> None:
         """Execute query synchronously and stream raw TSV output to a file."""
         client = None
         try:
             client, settings = self._open_client(
-                host, port, database, original_port, is_ssh_tunnel
+                host, port, database, original_port, is_ssh_tunnel, server_key
             )
 
             # The HTTP client returns a file-like response; cast for closing().
-            raw_stream = cast(
-                IOBase,
-                client.raw_stream(
-                    query, fmt="TabSeparatedWithNames", settings=settings
-                ),
-            )
+            try:
+                raw_stream = cast(
+                    IOBase,
+                    client.raw_stream(
+                        query, fmt="TabSeparatedWithNames", settings=settings or None
+                    ),
+                )
+            except ClickHouseError as exc:
+                self._forget_if_refused(server_key, settings, exc)
+                raise
             with Path(output_path).open("wb") as handle, closing(raw_stream) as stream:
                 while True:
                     chunk = stream.read(64 * 1024)
