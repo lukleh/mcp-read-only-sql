@@ -37,6 +37,61 @@ def make_connection(config_dict: dict[str, Any]) -> Connection:
     return Connection(config_dict)
 
 
+class FakeCLIStdin:
+    """Records what a connector writes to a fake client's stdin."""
+
+    def __init__(self):
+        self.writes: list[bytes] = []
+        self.drained = False
+        self.closed = False
+
+    def write(self, data: bytes) -> None:
+        self.writes.append(data)
+
+    async def drain(self) -> None:
+        self.drained = True
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _FakeCLIStdout:
+    def __init__(self, lines):
+        self._lines = [line.encode() for line in lines]
+
+    async def readline(self) -> bytes:
+        return self._lines.pop(0) if self._lines else b""
+
+
+class _FakeCLIStderr:
+    def __init__(self, text: str):
+        self._text = text.encode()
+
+    async def read(self) -> bytes:
+        text, self._text = self._text, b""
+        return text
+
+
+class FakeCLIProcess:
+    """Stand-in for the asyncio subprocess that runs psql or clickhouse-client.
+
+    ``stdout_lines`` are served one per ``readline`` call, newline included
+    when the test wants one; ``stderr_text`` is returned once by ``read``.
+    """
+
+    def __init__(self, stdout_lines=(), stderr_text: str = "", returncode: int = 0):
+        self.stdout = _FakeCLIStdout(stdout_lines)
+        self.stderr = _FakeCLIStderr(stderr_text)
+        self.stdin = FakeCLIStdin()
+        self.returncode = returncode
+
+    async def wait(self) -> int:
+        return self.returncode
+
+    def kill(self) -> None:
+        self.returncode = -9
+
+
 class RecordingConnector(BaseConnector):
     """In-memory connector that records selected servers for assertions."""
 

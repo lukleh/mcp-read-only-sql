@@ -37,7 +37,8 @@ Legend:
   string starts with `SET TRANSACTION READ ONLY;` before the sanitized single
   statement. `psql` always runs with `-v ON_ERROR_STOP=1` and
   `PGOPTIONS=-c default_transaction_read_only=on`. Output is read with `-q`
-  and `footer=off`, so stdout carries only the header and the rows and no
+  and `--csv` (tab separator), so stdout carries only the header and the
+  rows, fields containing a tab, a quote or a line break are quoted, and no
   line is filtered client-side.
 - Python: `psycopg2.connect(..., options='-c default_transaction_read_only=on')`
   plus `conn.set_session(readonly=True, autocommit=True)` create a database

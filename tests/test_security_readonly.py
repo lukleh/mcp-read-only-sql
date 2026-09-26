@@ -16,6 +16,7 @@ from mcp_read_only_sql.connectors.clickhouse.python import ClickHousePythonConne
 from mcp_read_only_sql.connectors.postgresql.cli import PostgreSQLCLIConnector
 from mcp_read_only_sql.connectors.postgresql.python import PostgreSQLPythonConnector
 from mcp_read_only_sql.utils.sql_guard import ReadOnlyQueryError, sanitize_read_only_sql
+from tests.conftest import FakeCLIProcess
 from tests.sql_statement_lists import (
     CLICKHOUSE_DDL_STATEMENTS,
     CLICKHOUSE_DML_STATEMENTS,
@@ -49,48 +50,6 @@ CLICKHOUSE_PYTHON_BLOCKED_STATEMENTS = (
     + CLICKHOUSE_SYSTEM_STATEMENTS
     + CLICKHOUSE_KILL_STATEMENTS
 )
-
-
-class _FakeStdout:
-    """Minimal stdout stream for mocked subprocesses."""
-
-    def __init__(self, lines=None):
-        self._lines = [line.encode() for line in (lines or [])]
-
-    async def readline(self):
-        if self._lines:
-            return self._lines.pop(0)
-        return b""
-
-
-class _FakeStderr:
-    """Minimal stderr stream returning a single payload once."""
-
-    def __init__(self, message: str):
-        self._message = message.encode()
-        self._sent = False
-
-    async def read(self):
-        if self._sent:
-            return b""
-        self._sent = True
-        return self._message
-
-
-class _FakeProcess:
-    """Subprocess stub tailored for CLI connector tests."""
-
-    def __init__(self, stderr_message: str, stdout_lines=None, returncode: int = 1):
-        self.stdout = _FakeStdout(stdout_lines)
-        self.stderr = _FakeStderr(stderr_message)
-        self.stdin = None
-        self.returncode = returncode
-
-    async def wait(self):
-        return self.returncode
-
-    def kill(self):
-        self.returncode = -9
 
 
 def _assert_readonly_error(exc_info, connector_name: str):
@@ -197,35 +156,10 @@ async def test_postgresql_cli_includes_readonly_flags(postgres_config, monkeypat
 
     captured = {}
 
-    class DummyStdout:
-        def __init__(self, lines):
-            self._lines = [line.encode() for line in lines]
-
-        async def readline(self):
-            if self._lines:
-                return self._lines.pop(0)
-            return b""
-
-    class DummyStderr:
-        async def read(self):
-            return b""
-
-    class DummyProcess:
-        def __init__(self):
-            self.stdout = DummyStdout(["col\n"])
-            self.stderr = DummyStderr()
-            self.returncode = 0
-
-        async def wait(self):
-            return 0
-
-        def kill(self):
-            self.returncode = -9
-
     async def fake_create_subprocess_exec(*cmd, **kwargs):
         captured["cmd"] = list(cmd)
         captured["env"] = kwargs.get("env", {})
-        process = DummyProcess()
+        process = FakeCLIProcess(["col\n"])
         captured["process"] = process
         return process
 
@@ -238,7 +172,7 @@ async def test_postgresql_cli_includes_readonly_flags(postgres_config, monkeypat
     cmd = captured["cmd"]
     assert "--single-transaction" in cmd
     assert "-v" in cmd and "ON_ERROR_STOP=1" in cmd
-    assert "-q" in cmd and "footer=off" in cmd
+    assert "-q" in cmd and "--csv" in cmd and "csv_fieldsep=\t" in cmd
     command_string = cmd[cmd.index("-c") + 1]
     assert "SELECT 1 as test" in command_string
     assert command_string.lstrip().startswith("SET TRANSACTION READ ONLY;")
@@ -286,7 +220,7 @@ async def test_postgresql_cli_surfaces_server_readonly_error(
 
     async def fake_create_subprocess_exec(*cmd, **kwargs):
         called["value"] = True
-        return _FakeProcess("ERROR: cannot execute INSERT in a read-only transaction")
+        return FakeCLIProcess(stderr_text="ERROR: cannot execute INSERT in a read-only transaction", returncode=1)
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
 
@@ -308,9 +242,12 @@ async def test_postgresql_cli_runs_shadow_guard_and_surfaces_it(
 
     async def fake_create_subprocess_exec(*cmd, **kwargs):
         captured["cmd"] = list(cmd)
-        return _FakeProcess(
-            "ERROR:  Read-only guard: public.md5(text) shadow a name this query uses\n"
-            "CONTEXT:  PL/pgSQL function inline_code_block line 1 at RAISE\n"
+        return FakeCLIProcess(
+            stderr_text=(
+                "ERROR:  Read-only guard: public.md5(text) shadow a name this query uses\n"
+                "CONTEXT:  PL/pgSQL function inline_code_block line 1 at RAISE\n"
+            ),
+            returncode=1,
         )
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
@@ -441,51 +378,10 @@ async def test_clickhouse_cli_includes_readonly_flag(clickhouse_config, monkeypa
 
     captured = {}
 
-    class DummyStdout:
-        def __init__(self, lines):
-            self._lines = [line.encode() for line in lines]
-
-        async def readline(self):
-            if self._lines:
-                return self._lines.pop(0)
-            return b""
-
-    class DummyStderr:
-        async def read(self):
-            return b""
-
-    class DummyStdin:
-        def __init__(self):
-            self.writes = []
-            self.closed = False
-            self.drained = False
-
-        def write(self, data):
-            self.writes.append(data)
-
-        async def drain(self):
-            self.drained = True
-
-        def close(self):
-            self.closed = True
-
-    class DummyProcess:
-        def __init__(self):
-            self.stdout = DummyStdout(["col\n"])
-            self.stderr = DummyStderr()
-            self.stdin = DummyStdin()
-            self.returncode = 0
-
-        async def wait(self):
-            return 0
-
-        def kill(self):
-            self.returncode = -9
-
     async def fake_create_subprocess_exec(*cmd, **kwargs):
         captured["cmd"] = list(cmd)
         captured["env"] = kwargs.get("env", {})
-        process = DummyProcess()
+        process = FakeCLIProcess(["col\n"])
         captured["process"] = process
         return process
 
@@ -519,7 +415,7 @@ async def test_clickhouse_cli_blocks_mutations(
     connector = ClickHouseCLIConnector(clickhouse_config)
 
     async def fake_create_subprocess_exec(*cmd, **kwargs):
-        return _FakeProcess(f"READONLY: {statement}")
+        return FakeCLIProcess(stderr_text=f"READONLY: {statement}", returncode=1)
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
 
@@ -537,7 +433,7 @@ async def test_clickhouse_cli_blocks_ddl(statement, clickhouse_config, monkeypat
     connector = ClickHouseCLIConnector(clickhouse_config)
 
     async def fake_create_subprocess_exec(*cmd, **kwargs):
-        return _FakeProcess(f"READONLY: {statement}")
+        return FakeCLIProcess(stderr_text=f"READONLY: {statement}", returncode=1)
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
 
@@ -555,7 +451,7 @@ async def test_clickhouse_cli_blocks_system_commands(
     connector = ClickHouseCLIConnector(clickhouse_config)
 
     async def fake_create_subprocess_exec(*cmd, **kwargs):
-        return _FakeProcess(f"READONLY: {statement}")
+        return FakeCLIProcess(stderr_text=f"READONLY: {statement}", returncode=1)
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
 
@@ -573,7 +469,7 @@ async def test_clickhouse_cli_blocks_kill_statements(
     connector = ClickHouseCLIConnector(clickhouse_config)
 
     async def fake_create_subprocess_exec(*cmd, **kwargs):
-        return _FakeProcess(f"READONLY: {statement}")
+        return FakeCLIProcess(stderr_text=f"READONLY: {statement}", returncode=1)
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
 

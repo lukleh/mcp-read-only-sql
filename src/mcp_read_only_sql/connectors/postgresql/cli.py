@@ -85,7 +85,7 @@ class PostgreSQLCLIConnector(BaseCLIConnector):
             # makes it read-only before the statement runs.
             wrapped_query = f"""
                 SET TRANSACTION READ ONLY;
-                SET LOCAL statement_timeout = {self.query_timeout * 1000};
+                SET LOCAL statement_timeout = {int(self.query_timeout * 1000)};
                 {shadow_guard}
                 {sanitized_query};
             """
@@ -93,9 +93,11 @@ class PostgreSQLCLIConnector(BaseCLIConnector):
             # Build psql command with individual parameters.
             # Resolve the client binary explicitly so installs that are not on
             # PATH (e.g. Homebrew keg-only libpq on macOS) still work.
-            # -q and footer=off keep command tags ("SET", "DO") and the
-            # "(N rows)" footer out of stdout, so every line psql prints is
-            # either the header or a data row and nothing has to be filtered.
+            # -q keeps command tags ("SET", "DO") off stdout and CSV mode
+            # prints no footer, so every line psql prints belongs to the
+            # header or to a row and nothing has to be filtered. With a tab as
+            # the CSV separator the output is TSV whose fields are quoted only
+            # when they contain a tab, a quote or a line break (psql 12+).
             cmd = [
                 self._resolve_binary("psql"),
                 "--single-transaction",
@@ -110,11 +112,9 @@ class PostgreSQLCLIConnector(BaseCLIConnector):
                 db_name,  # Database
                 "-U",
                 self.username,  # Username
-                "-A",  # Unaligned output mode
-                "-F",
-                "\t",  # Use tab as field separator
+                "--csv",  # CSV quoting rules, no footer
                 "-P",
-                "footer=off",  # No "(N rows)" line
+                "csv_fieldsep=\t",  # Tab as the field separator
                 "-c",
                 wrapped_query,  # Query to execute
             ]
@@ -140,9 +140,11 @@ class PostgreSQLCLIConnector(BaseCLIConnector):
                 deadline = loop.time() + self.query_timeout
 
                 async def stream_output(emit_line: Callable[[str], None]) -> None:
-                    # Every stdout line is data: the header, then one line per
-                    # row. An empty line is a row whose only column is NULL or
-                    # empty, so it is emitted like any other.
+                    # Every stdout line is data: the header, then the rows. An
+                    # empty line is a row whose only column is NULL or empty,
+                    # and a quoted field may continue on the next line; only
+                    # the record terminator is removed, so joining the lines
+                    # with "\n" reproduces psql's output exactly.
                     async def read_line_with_timeout() -> bytes:
                         remaining = deadline - loop.time()
                         if remaining <= 0:
@@ -156,7 +158,9 @@ class PostgreSQLCLIConnector(BaseCLIConnector):
                             line_bytes = await read_line_with_timeout()
                             if not line_bytes:
                                 break
-                            emit_line(line_bytes.decode(errors="replace").rstrip("\r\n"))
+                            emit_line(
+                                line_bytes.decode(errors="replace").removesuffix("\n")
+                            )
                     except TimeoutError:
                         logger.warning("Query timeout - terminating psql process")
                         process.kill()

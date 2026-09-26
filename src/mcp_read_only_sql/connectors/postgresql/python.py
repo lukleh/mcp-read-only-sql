@@ -153,7 +153,7 @@ class PostgreSQLPythonConnector(BaseConnector):
             # names (SELECT 1 AS a, 2 AS a) into one value.
             cursor = conn.cursor()
             cursor.execute(
-                f"SET statement_timeout = {self.query_timeout * 1000}"
+                f"SET statement_timeout = {int(self.query_timeout * 1000)}"
             )  # Convert to milliseconds
             self._reject_shadowed_names(cursor, shadow_query)
 
@@ -222,7 +222,7 @@ class PostgreSQLPythonConnector(BaseConnector):
             conn.set_session(readonly=True, autocommit=True)
 
             cursor = conn.cursor()
-            cursor.execute(f"SET statement_timeout = {self.query_timeout * 1000}")
+            cursor.execute(f"SET statement_timeout = {int(self.query_timeout * 1000)}")
             self._reject_shadowed_names(cursor, shadow_query)
             cursor.execute(query)
 
