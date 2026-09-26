@@ -7,6 +7,33 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- The psql connector no longer drops rows. It parsed psql's output and
+  skipped any line equal to `BEGIN`, `SET`, `DO`, `COMMIT` or `ROLLBACK`,
+  any line shaped like `(N rows)`, and a trailing empty line, so a row with
+  one of those values disappeared and a single-column result whose last row
+  was NULL or empty lost that row. psql now runs with `-q` and `--csv` with
+  a tab separator, which keeps command tags and the row count off stdout, and
+  every line is returned as data. The command string no longer carries its
+  own `BEGIN`/`COMMIT` inside `--single-transaction`, which removed two
+  warnings per query. psql 12 or newer is required for the CSV mode.
+- PostgreSQL values containing a tab or a line break no longer corrupt the
+  result. psql's unaligned mode printed them raw, so a tab shifted the
+  following columns and a line break split the row; CSV mode quotes such
+  values, and the Python connector's formatter now follows the same rules
+  (NULL and the empty string are empty, a value containing a tab, a double
+  quote or a line break is double-quoted with inner quotes doubled), so both
+  implementations produce the same bytes for the same row. The connector
+  also strips only the record terminator, so a value ending in a carriage
+  return keeps it.
+- The Python PostgreSQL connector returns duplicate column names correctly.
+  It used a dict cursor, so `SELECT 1 AS a, 2 AS a` came back as `2 2`; it
+  now uses a plain tuple cursor like psql does.
+- `statement_timeout` is sent as an integer number of milliseconds. A
+  fractional `query_timeout` rendered as `2500.0`, which PostgreSQL 11 and
+  older reject.
+
 ## [0.5.1] - 2026-09-25
 
 ### Changed

@@ -80,25 +80,30 @@ class PostgreSQLCLIConnector(BaseCLIConnector):
             # Use specified database or configured database (validated)
             db_name = self._resolve_database(database)
 
-            # Build psql command with read-only enforcement
-            # Wrap the query in a read-only transaction
+            # Build psql command with read-only enforcement. psql's
+            # --single-transaction opens the transaction; the command string
+            # makes it read-only before the statement runs.
             wrapped_query = f"""
-                BEGIN;
                 SET TRANSACTION READ ONLY;
-                SET LOCAL statement_timeout = {self.query_timeout * 1000};
+                SET LOCAL statement_timeout = {int(self.query_timeout * 1000)};
                 {shadow_guard}
                 {sanitized_query};
-                COMMIT;
             """
 
             # Build psql command with individual parameters.
             # Resolve the client binary explicitly so installs that are not on
             # PATH (e.g. Homebrew keg-only libpq on macOS) still work.
+            # -q keeps command tags ("SET", "DO") off stdout and CSV mode
+            # prints no footer, so every line psql prints belongs to the
+            # header or to a row and nothing has to be filtered. With a tab as
+            # the CSV separator the output is TSV whose fields are quoted only
+            # when they contain a tab, a quote or a line break (psql 12+).
             cmd = [
                 self._resolve_binary("psql"),
                 "--single-transaction",
                 "-v",
                 "ON_ERROR_STOP=1",
+                "-q",  # No command tags on stdout
                 "-h",
                 host,  # Host
                 "-p",
@@ -107,9 +112,9 @@ class PostgreSQLCLIConnector(BaseCLIConnector):
                 db_name,  # Database
                 "-U",
                 self.username,  # Username
-                "-A",  # Unaligned output mode
-                "-F",
-                "\t",  # Use tab as field separator
+                "--csv",  # CSV quoting rules, no footer
+                "-P",
+                "csv_fieldsep=\t",  # Tab as the field separator
                 "-c",
                 wrapped_query,  # Query to execute
             ]
@@ -134,9 +139,12 @@ class PostgreSQLCLIConnector(BaseCLIConnector):
                 loop = asyncio.get_event_loop()
                 deadline = loop.time() + self.query_timeout
 
-                async def stream_output(emit_line: Callable[[str], None]) -> str | None:
-                    pending_line: str | None = None
-
+                async def stream_output(emit_line: Callable[[str], None]) -> None:
+                    # Every stdout line is data: the header, then the rows. An
+                    # empty line is a row whose only column is NULL or empty,
+                    # and a quoted field may continue on the next line; only
+                    # the record terminator is removed, so joining the lines
+                    # with "\n" reproduces psql's output exactly.
                     async def read_line_with_timeout() -> bytes:
                         remaining = deadline - loop.time()
                         if remaining <= 0:
@@ -150,21 +158,9 @@ class PostgreSQLCLIConnector(BaseCLIConnector):
                             line_bytes = await read_line_with_timeout()
                             if not line_bytes:
                                 break
-
-                            line = line_bytes.decode(errors="replace").rstrip("\r\n")
-
-                            if line in ("BEGIN", "SET", "DO", "COMMIT", "ROLLBACK"):
-                                continue
-                            if (
-                                line.startswith("(")
-                                and line.endswith(")")
-                                and " row" in line
-                            ):
-                                continue
-
-                            if pending_line is not None:
-                                emit_line(pending_line)
-                            pending_line = line
+                            emit_line(
+                                line_bytes.decode(errors="replace").removesuffix("\n")
+                            )
                     except TimeoutError:
                         logger.warning("Query timeout - terminating psql process")
                         process.kill()
@@ -176,11 +172,8 @@ class PostgreSQLCLIConnector(BaseCLIConnector):
                         raise TimeoutError(
                             f"psql: Query timeout after {self.query_timeout}s"
                         )
-                    return pending_line
 
-                async def finalize_process(
-                    emit_line: Callable[[str], None], pending_line: str | None
-                ) -> None:
+                async def finalize_process() -> None:
                     try:
                         await asyncio.wait_for(process.wait(), timeout=1.0)
                     except TimeoutError:
@@ -211,12 +204,9 @@ class PostgreSQLCLIConnector(BaseCLIConnector):
                         logger.error(f"psql error: {error_msg}")
                         raise ConnectorError(f"psql: {error_msg}")
 
-                    if pending_line not in (None, ""):
-                        emit_line(pending_line)
-
                 if output_path is None:
-                    pending_line = await stream_output(lines.append)
-                    await finalize_process(lines.append, pending_line)
+                    await stream_output(lines.append)
+                    await finalize_process()
                     return "\n".join(lines)
 
                 wrote_content = False
@@ -229,8 +219,8 @@ class PostgreSQLCLIConnector(BaseCLIConnector):
                 with Path(output_path).open(  # noqa: ASYNC230 -- local file writes are fast; async file IO would add a dependency for no benefit
                     "w", encoding="utf-8", newline=""
                 ) as handle:
-                    pending_line = await stream_output(emit_file_line)
-                    await finalize_process(emit_file_line, pending_line)
+                    await stream_output(emit_file_line)
+                    await finalize_process()
                 return None
 
             use_pgoptions = getattr(self.connection, "cli_requires_pgoptions", True)

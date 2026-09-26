@@ -47,7 +47,7 @@ See [READ_ONLY_ENFORCEMENT_MATRIX.md](READ_ONLY_ENFORCEMENT_MATRIX.md) for a sta
 ## Prerequisites
 
 - [uv](https://github.com/astral-sh/uv) for package installs and ephemeral `uvx` runs
-- `psql` if you want PostgreSQL connections with `implementation: cli`
+- `psql` 12 or newer if you want PostgreSQL connections with `implementation: cli` (its CSV output mode is used)
 - `clickhouse-client` if you want ClickHouse connections with `implementation: cli`
 - `sshpass` only if you want CLI-based SSH tunnels with password authentication
 - [just](https://github.com/casey/just) is optional and only needed for repo-local contributor workflows
@@ -250,6 +250,13 @@ Execute read-only SQL queries on configured databases.
 state directory, typically `~/.local/state/lukleh/mcp-read-only-sql/results/`.
 Successful query results are persisted with `0600` permissions and are no
 longer returned inline on success.
+
+The file holds a header line and one line per row, tab-separated. For
+PostgreSQL both implementations follow the quoting rules of `psql --csv`:
+NULL and the empty string are empty, and a value containing a tab, a double
+quote or a line break is enclosed in double quotes with inner quotes doubled,
+so such a row may span several lines. ClickHouse results use ClickHouse's own
+`TabSeparatedWithNames` escaping (`\N` for NULL, backslash escapes).
 
 Result files accumulate under `state_dir/results/` until you remove them.
 If you do not want to retain old query output, periodically clean

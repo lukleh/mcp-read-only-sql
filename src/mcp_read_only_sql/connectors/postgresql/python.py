@@ -5,7 +5,6 @@ from pathlib import Path
 
 import psycopg2
 from psycopg2 import errors as psycopg_errors
-from psycopg2.extras import RealDictCursor
 
 from ...errors import ConnectorError
 from ...utils.sql_guard import (
@@ -150,10 +149,11 @@ class PostgreSQLPythonConnector(BaseConnector):
             # Set session to read-only
             conn.set_session(readonly=True, autocommit=True)
 
-            # Set statement timeout
-            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            # Plain tuple cursor: a dict cursor collapses duplicate column
+            # names (SELECT 1 AS a, 2 AS a) into one value.
+            cursor = conn.cursor()
             cursor.execute(
-                f"SET statement_timeout = {self.query_timeout * 1000}"
+                f"SET statement_timeout = {int(self.query_timeout * 1000)}"
             )  # Convert to milliseconds
             self._reject_shadowed_names(cursor, shadow_query)
 
@@ -174,15 +174,7 @@ class PostgreSQLPythonConnector(BaseConnector):
                 if not batch:
                     break
                 for row in batch:
-                    if isinstance(row, dict):
-                        values = (
-                            [row.get(col) for col in columns]
-                            if columns
-                            else list(row.values())
-                        )
-                    else:
-                        values = list(row)
-                    lines.append(format_tsv_line(values))
+                    lines.append(format_tsv_line(list(row)))
 
             return "\n".join(lines)
         finally:
@@ -197,7 +189,7 @@ class PostgreSQLPythonConnector(BaseConnector):
         if shadow_query is None:
             return
         cursor.execute(shadow_query)
-        shadows = [next(iter(row.values())) for row in cursor.fetchall()]
+        shadows = [row[0] for row in cursor.fetchall()]
         if shadows:
             raise ReadOnlyQueryError(
                 f"{SHADOW_GUARD_PREFIX} {', '.join(shadows)} {SHADOW_GUARD_SUFFIX}"
@@ -229,8 +221,8 @@ class PostgreSQLPythonConnector(BaseConnector):
 
             conn.set_session(readonly=True, autocommit=True)
 
-            cursor = conn.cursor(cursor_factory=RealDictCursor)
-            cursor.execute(f"SET statement_timeout = {self.query_timeout * 1000}")
+            cursor = conn.cursor()
+            cursor.execute(f"SET statement_timeout = {int(self.query_timeout * 1000)}")
             self._reject_shadowed_names(cursor, shadow_query)
             cursor.execute(query)
 
@@ -251,16 +243,8 @@ class PostgreSQLPythonConnector(BaseConnector):
                     if not batch:
                         break
                     for row in batch:
-                        if isinstance(row, dict):
-                            values = (
-                                [row.get(col) for col in columns]
-                                if columns
-                                else list(row.values())
-                            )
-                        else:
-                            values = list(row)
                         wrote_content = write_tsv_text_line(
-                            handle, format_tsv_line(values), wrote_content
+                            handle, format_tsv_line(list(row)), wrote_content
                         )
         finally:
             if cursor:

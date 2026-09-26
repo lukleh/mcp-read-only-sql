@@ -3,41 +3,7 @@ import asyncio
 import pytest
 
 from mcp_read_only_sql.connectors.postgresql.cli import PostgreSQLCLIConnector
-
-
-class DummyStdout:
-    def __init__(self, lines):
-        self._lines = [line.encode() for line in lines]
-
-    async def readline(self):
-        if self._lines:
-            return self._lines.pop(0)
-        return b""
-
-
-class DummyStderr:
-    def __init__(self, data=b""):
-        self._data = data
-        self._read = False
-
-    async def read(self):
-        if self._read:
-            return b""
-        self._read = True
-        return self._data
-
-
-class DummyProcess:
-    def __init__(self, lines, returncode=0, stderr=b""):
-        self.stdout = DummyStdout(lines)
-        self.stderr = DummyStderr(stderr)
-        self.returncode = returncode
-
-    def kill(self):
-        pass
-
-    async def wait(self):
-        return self.returncode
+from tests.conftest import FakeCLIProcess
 
 
 @pytest.mark.anyio
@@ -66,7 +32,7 @@ async def test_postgres_cli_retries_without_pgoptions(monkeypatch):
             raise RuntimeError(
                 "psql: unsupported startup parameter in options: default_transaction_read_only"
             )
-        return DummyProcess(["column", "value"], returncode=0)
+        return FakeCLIProcess(["column", "value"])
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
 
