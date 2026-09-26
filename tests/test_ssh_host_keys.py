@@ -20,7 +20,13 @@ from mcp_read_only_sql.config.connection import SSHTunnelConfig
 from mcp_read_only_sql.connectors.postgresql.cli import PostgreSQLCLIConnector
 from mcp_read_only_sql.connectors.postgresql.python import PostgreSQLPythonConnector
 from mcp_read_only_sql.errors import ConnectorError
-from mcp_read_only_sql.utils.ssh_tunnel import AcceptNewHostKeyPolicy, SSHTunnel
+from mcp_read_only_sql.utils.ssh_tunnel import (
+    GLOBAL_KNOWN_HOSTS_FILE,
+    AcceptNewHostKeyPolicy,
+    KnownHosts,
+    SSHTunnel,
+    StrictHostKeyPolicy,
+)
 from mcp_read_only_sql.utils.ssh_tunnel_cli import CLISSHTunnel
 from tests.conftest import make_connection
 from tests.docker_test_config import (
@@ -131,6 +137,102 @@ class TestCLIOptions:
         assert _option(args, "UserKnownHostsFile") == "/dev/null"
 
 
+    @pytest.mark.anyio
+    async def test_creates_the_directory_ssh_records_into(self, monkeypatch, tmp_path):
+        """ssh only warns when it cannot record a key; the directory must exist."""
+        known_hosts = tmp_path / "missing" / "known_hosts"
+        await _cli_ssh_args(monkeypatch, _config(known_hosts_file=str(known_hosts)))
+        assert known_hosts.parent.is_dir()
+        assert stat.S_IMODE(known_hosts.parent.stat().st_mode) == 0o700
+
+
+class _FakeClient:
+    def __init__(self):
+        self.host_keys = paramiko.HostKeys()
+
+    def get_host_keys(self):
+        return self.host_keys
+
+
+def _known(tmp_path, text: str) -> KnownHosts:
+    path = tmp_path / "pins"
+    path.write_text(text)
+    known = KnownHosts()
+    known.load(str(path))
+    return known
+
+
+class TestKnownHostsEntries:
+    """The entries ssh matches that Paramiko's literal lookup does not."""
+
+    def test_wildcard_pin_accepts_the_matching_key(self, tmp_path):
+        key = paramiko.RSAKey.generate(1024)
+        known = _known(tmp_path, f"*.example.com ssh-rsa {key.get_base64()}\n")
+        record = tmp_path / "known_hosts"
+
+        AcceptNewHostKeyPolicy(str(record), known).missing_host_key(
+            _FakeClient(), "bastion.example.com", key
+        )
+        StrictHostKeyPolicy(known).missing_host_key(_FakeClient(), "bastion.example.com", key)
+
+        assert not record.exists(), "a pinned host is not recorded again"
+
+    def test_wildcard_pin_refuses_a_different_key(self, tmp_path):
+        pinned, other = paramiko.RSAKey.generate(1024), paramiko.RSAKey.generate(1024)
+        known = _known(tmp_path, f"*.example.com ssh-rsa {pinned.get_base64()}\n")
+
+        for policy in (AcceptNewHostKeyPolicy(str(tmp_path / "kh"), known), StrictHostKeyPolicy(known)):
+            with pytest.raises(paramiko.BadHostKeyException):
+                policy.missing_host_key(_FakeClient(), "bastion.example.com", other)
+
+    def test_negated_pattern_excludes_the_host(self, tmp_path):
+        key = paramiko.RSAKey.generate(1024)
+        known = _known(
+            tmp_path, f"!bastion.example.com,*.example.com ssh-rsa {key.get_base64()}\n"
+        )
+
+        assert known.pinned_key("bastion.example.com", "ssh-rsa") is None
+        assert known.pinned_key("other.example.com", "ssh-rsa") == key
+
+    def test_hashed_name_is_matched(self, tmp_path):
+        key = paramiko.RSAKey.generate(1024)
+        hashed = paramiko.HostKeys.hash_host("[bastion.example.com]:2222")
+        known = _known(tmp_path, f"{hashed} ssh-rsa {key.get_base64()}\n")
+        host_keys = paramiko.HostKeys()
+
+        known.apply_to(host_keys)
+
+        assert known.pinned_key("[bastion.example.com]:2222", "ssh-rsa") == key
+        assert host_keys.lookup("[bastion.example.com]:2222")["ssh-rsa"] == key
+
+    def test_revoked_key_is_refused(self, tmp_path):
+        key = paramiko.RSAKey.generate(1024)
+        known = _known(tmp_path, f"@revoked bastion.example.com ssh-rsa {key.get_base64()}\n")
+
+        for policy in (AcceptNewHostKeyPolicy(str(tmp_path / "kh"), known), StrictHostKeyPolicy(known)):
+            with pytest.raises(paramiko.SSHException, match="revoked"):
+                policy.missing_host_key(_FakeClient(), "bastion.example.com", key)
+        assert not (tmp_path / "kh").exists()
+
+    def test_cert_authority_and_bad_lines_are_skipped(self, tmp_path):
+        key = paramiko.RSAKey.generate(1024)
+        known = _known(
+            tmp_path,
+            "@cert-authority *.example.com ssh-rsa "
+            f"{paramiko.RSAKey.generate(1024).get_base64()}\n"
+            "this is not an entry\n"
+            f"bastion.example.com ssh-rsa {key.get_base64()}\n",
+        )
+
+        assert [entry.key for entry in known.entries] == [key]
+        assert known.revoked == []
+
+    def test_missing_file_is_tolerated(self, tmp_path):
+        known = KnownHosts()
+        known.load(str(tmp_path / "absent"))
+        assert known.entries == [] and known.files == [str(tmp_path / "absent")]
+
+
 class TestParamikoPolicy:
     def test_accept_new_records_the_key_in_openssh_format(self, tmp_path):
         known_hosts = tmp_path / "ssh" / "known_hosts"
@@ -175,7 +277,7 @@ class TestParamikoPolicy:
         ("checking", "policy_type", "loads_known_hosts"),
         [
             ("accept-new", AcceptNewHostKeyPolicy, True),
-            ("yes", paramiko.RejectPolicy, True),
+            ("yes", StrictHostKeyPolicy, True),
             ("no", paramiko.AutoAddPolicy, False),
         ],
     )
@@ -187,8 +289,10 @@ class TestParamikoPolicy:
         seen: dict[str, object] = {}
 
         class FakeSSHClient:
-            def load_system_host_keys(self, filename=None):
-                seen.setdefault("loaded", []).append(filename)
+            host_keys = paramiko.HostKeys()
+
+            def get_host_keys(self):
+                return self.host_keys
 
             def set_missing_host_key_policy(self, policy):
                 seen["policy"] = policy
@@ -205,11 +309,13 @@ class TestParamikoPolicy:
         with pytest.raises(ConnectorError, match="stop here"):
             SSHTunnel(config, "db.internal", 5432)._start_sync()
 
-        assert isinstance(seen["policy"], policy_type)
-        assert ("loaded" in seen) is loads_known_hosts
+        policy = seen["policy"]
+        assert isinstance(policy, policy_type)
         if loads_known_hosts:
             # The same two files ssh reads, global first.
-            assert seen["loaded"] == ["/etc/ssh/ssh_known_hosts", str(known_hosts)]
+            assert policy.known.files == [GLOBAL_KNOWN_HOSTS_FILE, str(known_hosts)]
+        else:
+            assert not hasattr(policy, "known")
 
 
 def _bastion_name() -> str:
@@ -257,8 +363,19 @@ class TestAgainstBastion:
         result = await connector.execute_query("SELECT 1 AS one")
 
         assert result.split("\n")[1] == "1"
-        recorded = [line.split()[0] for line in known_hosts.read_text().splitlines()]
-        assert _bastion_name() in recorded
+        # ssh may hash the name it records (HashKnownHosts), so look it up
+        # rather than reading the first field.
+        assert paramiko.HostKeys(str(known_hosts)).lookup(_bastion_name()) is not None
+
+    async def test_first_use_creates_the_directory(self, implementation, tmp_path):
+        known_hosts = tmp_path / "missing" / "known_hosts"
+        connector = _tunnelled_connector(
+            implementation, known_hosts_file=str(known_hosts)
+        )
+
+        await connector.execute_query("SELECT 1")
+
+        assert paramiko.HostKeys(str(known_hosts)).lookup(_bastion_name()) is not None
 
     async def test_changed_key_is_refused(self, implementation, tmp_path):
         known_hosts = tmp_path / "known_hosts"

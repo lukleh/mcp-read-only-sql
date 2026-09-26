@@ -12,6 +12,7 @@ import socket
 from contextlib import closing
 
 from ..errors import ConnectorError
+from .ssh_tunnel import DEFAULT_KNOWN_HOSTS_FILE
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +82,17 @@ class CLISSHTunnel:
             known_hosts_file: str | None = "/dev/null"
         else:
             known_hosts_file = self.ssh_config.known_hosts_file
+            # ssh only warns when it cannot record a key and would then treat
+            # every connection as first use, so make sure the directory it
+            # writes to exists. Its default file lives in ~/.ssh.
+            record_file = known_hosts_file or os.path.expanduser(DEFAULT_KNOWN_HOSTS_FILE)
+            directory = os.path.dirname(os.path.abspath(record_file))
+            try:
+                os.makedirs(directory, mode=0o700, exist_ok=True)
+            except OSError as exc:
+                raise ConnectorError(
+                    f"SSH: cannot create {directory} to record host keys: {exc}"
+                ) from exc
 
         ssh_options = [
             "-N",  # No command execution
