@@ -142,6 +142,23 @@ async def mcp_client(test_config_file):
         yield session
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _docker_known_hosts(tmp_path_factory):
+    """Record the test bastion in a fresh per-session known_hosts file.
+
+    The bastion image generates its host keys at build time, so a file kept
+    from an earlier run would make a rebuilt image look like a changed key.
+    An explicit TEST_SSH_KNOWN_HOSTS is left alone.
+    """
+    if os.environ.get("TEST_SSH_KNOWN_HOSTS"):
+        yield
+        return
+    path = tmp_path_factory.mktemp("ssh") / "known_hosts"
+    os.environ["TEST_SSH_KNOWN_HOSTS"] = str(path)
+    yield
+    os.environ.pop("TEST_SSH_KNOWN_HOSTS", None)
+
+
 # Docker-based fixtures for integration tests
 @pytest.fixture(scope="session")
 def docker_check():

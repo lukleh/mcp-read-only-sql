@@ -7,6 +7,33 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Security
+
+- SSH tunnels now verify the bastion's host key. Both implementations
+  trusted any key (`StrictHostKeyChecking=no` with no known_hosts file for
+  system `ssh`, Paramiko `AutoAddPolicy` with no loaded keys), so a spoofed
+  bastion would have received the database credentials. The new
+  `ssh_tunnel.host_key_checking` field takes the OpenSSH values and defaults
+  to `accept-new`: a bastion is recorded on first use and refused if its key
+  changes. `yes` refuses unrecorded bastions; `no` restores the previous
+  behaviour and records nothing. Known keys are read from
+  `/etc/ssh/ssh_known_hosts` and `~/.ssh/known_hosts`, and new ones recorded
+  in the latter, unless `ssh_tunnel.known_hosts_file` names another file;
+  the Paramiko tunnel reads those files the way `ssh` does (wildcard
+  patterns, negated and hashed names, `@revoked` entries; `@cert-authority`
+  entries are skipped because Paramiko cannot verify host certificates) and
+  appends new keys in OpenSSH's line format, so `ssh` and both
+  implementations share one record. Both create the directory of the
+  known_hosts file when it is missing, since `ssh` would otherwise only warn
+  and treat every connection as first use.
+
+### Changed
+
+- A bastion whose host key changed, or one not yet recorded under
+  `host_key_checking: yes`, is refused with an `SSH:` error. Existing
+  configurations keep working: their bastions are recorded on the next
+  connection. Set `host_key_checking: no` to opt out.
+
 ## [0.5.1] - 2026-09-25
 
 ### Changed

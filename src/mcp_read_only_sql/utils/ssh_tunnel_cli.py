@@ -12,6 +12,7 @@ import socket
 from contextlib import closing
 
 from ..errors import ConnectorError
+from .ssh_tunnel import DEFAULT_KNOWN_HOSTS_FILE
 
 logger = logging.getLogger(__name__)
 
@@ -71,15 +72,34 @@ class CLISSHTunnel:
         # Find a free local port
         self.local_port = self._find_free_port()
 
-        # Build SSH options common to all auth modes
+        # Build SSH options common to all auth modes. Host keys are verified
+        # the way ssh itself does: accept-new (the default) records a bastion
+        # on first use and refuses it if its key changes.
+        host_key_checking = self.ssh_config.host_key_checking
+        if host_key_checking == "no":
+            # Legacy mode: trust everything and record nothing, whatever file
+            # is configured, matching the Paramiko tunnel.
+            known_hosts_file: str | None = "/dev/null"
+        else:
+            known_hosts_file = self.ssh_config.known_hosts_file
+            # ssh only warns when it cannot record a key and would then treat
+            # every connection as first use, so make sure the directory it
+            # writes to exists. Its default file lives in ~/.ssh.
+            record_file = known_hosts_file or os.path.expanduser(DEFAULT_KNOWN_HOSTS_FILE)
+            directory = os.path.dirname(os.path.abspath(record_file))
+            try:
+                os.makedirs(directory, mode=0o700, exist_ok=True)
+            except OSError as exc:
+                raise ConnectorError(
+                    f"SSH: cannot create {directory} to record host keys: {exc}"
+                ) from exc
+
         ssh_options = [
             "-N",  # No command execution
             "-L",
             f"{self.local_port}:{self.remote_host}:{self.remote_port}",
             "-o",
-            "StrictHostKeyChecking=no",  # Avoid interactive prompts
-            "-o",
-            "UserKnownHostsFile=/dev/null",  # Don't update known_hosts
+            f"StrictHostKeyChecking={host_key_checking}",
             "-o",
             "LogLevel=ERROR",  # Reduce noise
             "-o",
@@ -91,6 +111,8 @@ class CLISSHTunnel:
             "-p",
             str(self.ssh_port),
         ]
+        if known_hosts_file is not None:
+            ssh_options.extend(["-o", f"UserKnownHostsFile={known_hosts_file}"])
 
         env = os.environ.copy()
         ssh_base_cmd = ["ssh"]

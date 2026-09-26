@@ -1,15 +1,206 @@
 import asyncio
 import contextlib
 import logging
+import os
+import re
 import select
 import socket
 import threading
+from dataclasses import dataclass
 
 import paramiko
+from paramiko.hostkeys import HostKeyEntry, InvalidHostKey
 
 from ..errors import ConnectorError
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_KNOWN_HOSTS_FILE = "~/.ssh/known_hosts"
+# Read as well, never written: the file ssh consults before the user's.
+GLOBAL_KNOWN_HOSTS_FILE = "/etc/ssh/ssh_known_hosts"
+# Tunnels start on executor threads; serialise appends to one known_hosts file.
+_KNOWN_HOSTS_WRITE_LOCK = threading.Lock()
+
+
+def _has_line(path: str, line: str) -> bool:
+    try:
+        with open(path, encoding="utf-8") as handle:
+            return any(existing.strip() == line for existing in handle)
+    except FileNotFoundError:
+        return False
+
+
+def _pattern_matches(pattern: str, hostname: str) -> bool:
+    """An OpenSSH known_hosts host pattern: ``*`` and ``?`` wildcards."""
+    regex = "".join(
+        ".*" if char == "*" else "." if char == "?" else re.escape(char)
+        for char in pattern
+    )
+    return re.fullmatch(regex, hostname, re.IGNORECASE) is not None
+
+
+def _entry_names(hostnames, hostname: str) -> bool:
+    """True when an entry's host list names ``hostname`` the way ssh reads it.
+
+    Plain names and patterns with ``*`` and ``?`` match case-insensitively, a
+    hashed name (``|1|salt|hash``) matches when the hash of ``hostname`` is
+    equal, and a negated pattern (``!name``) excludes the entry when it
+    matches.
+    """
+    matched = False
+    for name in hostnames:
+        if name.startswith("!"):
+            if _pattern_matches(name[1:], hostname):
+                return False
+        elif name.startswith("|1|"):
+            if paramiko.HostKeys.hash_host(hostname, name) == name:
+                matched = True
+        elif _pattern_matches(name, hostname):
+            matched = True
+    return matched
+
+
+@dataclass(frozen=True)
+class KnownHostsEntry:
+    """One known_hosts line: its host patterns and the key it pins."""
+
+    hostnames: tuple[str, ...]
+    key: paramiko.PKey
+
+
+class KnownHosts:
+    """The known_hosts entries ssh would consult, with OpenSSH's markers.
+
+    Paramiko's own loader rejects marker lines and matches names literally.
+    This reads the files itself: ``@revoked`` entries are kept apart so their
+    keys are refused, ``@cert-authority`` entries are skipped because Paramiko
+    cannot verify host certificates, and lookups honour wildcard patterns,
+    negation and hashed names.
+    """
+
+    def __init__(self):
+        self.files: list[str] = []
+        self.entries: list[KnownHostsEntry] = []
+        self.revoked: list[KnownHostsEntry] = []
+
+    def load(self, path: str) -> None:
+        """Read ``path`` if it exists; malformed lines are skipped with a warning."""
+        self.files.append(path)
+        try:
+            with open(path, encoding="utf-8") as handle:
+                lines = handle.read().splitlines()
+        except OSError:
+            return
+        for number, raw in enumerate(lines, 1):
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            marker = None
+            if line.startswith("@"):
+                marker, _, line = line.partition(" ")
+                if marker == "@cert-authority":
+                    continue
+                if marker != "@revoked":
+                    logger.warning(
+                        "SSH: ignoring unknown marker %s in %s line %d", marker, path, number
+                    )
+                    continue
+            try:
+                parsed = HostKeyEntry.from_line(line, number)
+            except (InvalidHostKey, ValueError) as exc:
+                logger.warning("SSH: ignoring %s line %d: %s", path, number, exc)
+                continue
+            if parsed is None or parsed.key is None or not parsed.hostnames:
+                continue
+            entry = KnownHostsEntry(tuple(parsed.hostnames), parsed.key)
+            (self.revoked if marker == "@revoked" else self.entries).append(entry)
+
+    def apply_to(self, host_keys: paramiko.HostKeys) -> None:
+        """Give Paramiko the plain and hashed names for its own exact lookup.
+
+        That lookup refuses a changed key before any policy runs and makes the
+        transport prefer a key type that is already recorded.
+        """
+        for entry in self.entries:
+            for name in entry.hostnames:
+                if not name.startswith("!") and "*" not in name and "?" not in name:
+                    host_keys.add(name, entry.key.get_name(), entry.key)
+
+    def pinned_key(self, hostname: str, key_type: str):
+        """The recorded key of ``key_type`` for ``hostname``, wildcards included."""
+        for entry in self.entries:
+            if entry.key.get_name() == key_type and _entry_names(entry.hostnames, hostname):
+                return entry.key
+        return None
+
+    def is_revoked(self, hostname: str, key) -> bool:
+        return any(
+            entry.key == key and _entry_names(entry.hostnames, hostname)
+            for entry in self.revoked
+        )
+
+
+class _KnownHostsPolicy(paramiko.MissingHostKeyPolicy):
+    """The checks ssh makes that Paramiko's exact lookup does not.
+
+    Paramiko consults a policy only for a host its exact lookup did not find.
+    Before treating the host as new, this checks the entries ssh would still
+    match: a revoked key is refused, a wildcard or negated pattern that pins
+    the host is honoured (and a differing key refused), and only then does the
+    mode decide what happens to an unknown host.
+    """
+
+    def __init__(self, known: "KnownHosts | None" = None):
+        self.known = known or KnownHosts()
+
+    def missing_host_key(self, client, hostname, key):
+        if self.known.is_revoked(hostname, key):
+            raise paramiko.SSHException(
+                f"Host key for {hostname} is revoked in known_hosts"
+            )
+        pinned = self.known.pinned_key(hostname, key.get_name())
+        if pinned is not None:
+            if pinned != key:
+                raise paramiko.BadHostKeyException(hostname, key, pinned)
+            return
+        self.unknown_host(client, hostname, key)
+
+    def unknown_host(self, client, hostname, key):
+        raise NotImplementedError
+
+
+class StrictHostKeyPolicy(_KnownHostsPolicy):
+    """Refuse a host that no entry pins, like StrictHostKeyChecking=yes."""
+
+    def unknown_host(self, client, hostname, key):
+        raise paramiko.SSHException(f"Server {hostname!r} not found in known_hosts")
+
+
+class AcceptNewHostKeyPolicy(_KnownHostsPolicy):
+    """Trust a host key on first use and record it, like OpenSSH accept-new.
+
+    New keys are appended to the known_hosts file in OpenSSH's own line
+    format, so ``ssh`` and this tunnel share one record.
+    """
+
+    def __init__(self, known_hosts_file: str, known: "KnownHosts | None" = None):
+        super().__init__(known)
+        self.known_hosts_file = known_hosts_file
+
+    def unknown_host(self, client, hostname, key):
+        client.get_host_keys().add(hostname, key.get_name(), key)
+        line = f"{hostname} {key.get_name()} {key.get_base64()}"
+        path = os.path.abspath(self.known_hosts_file)
+        with _KNOWN_HOSTS_WRITE_LOCK:
+            if _has_line(path, line):
+                return  # another tunnel recorded it meanwhile
+            os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+            with os.fdopen(fd, "a", encoding="utf-8") as handle:
+                handle.write(line + "\n")
+        logger.info(
+            "SSH: recorded new %s host key for %s in %s", key.get_name(), hostname, path
+        )
 
 
 class SSHTunnel:
@@ -66,9 +257,31 @@ class SSHTunnel:
                 remote_host = self.remote_host
                 remote_port = self.remote_port
 
-                # Create SSH client
+                # Create SSH client and decide how to treat the bastion's host
+                # key, mirroring OpenSSH StrictHostKeyChecking. A recorded key
+                # that no longer matches raises BadHostKeyException in
+                # connect() regardless of the policy.
                 self.ssh_client = paramiko.SSHClient()
-                self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                host_key_checking = self.ssh_config.host_key_checking
+                known_hosts_file = self.ssh_config.known_hosts_file or os.path.expanduser(
+                    DEFAULT_KNOWN_HOSTS_FILE
+                )
+                if host_key_checking == "no":
+                    # Legacy mode: trust everything and record nothing.
+                    policy: paramiko.MissingHostKeyPolicy = paramiko.AutoAddPolicy()
+                else:
+                    # The same files ssh consults: the global one, then the
+                    # user's. Both are read-only here; new keys go to the
+                    # user's file through the policy below.
+                    known = KnownHosts()
+                    for path in (GLOBAL_KNOWN_HOSTS_FILE, known_hosts_file):
+                        known.load(path)
+                    known.apply_to(self.ssh_client.get_host_keys())
+                    if host_key_checking == "yes":
+                        policy = StrictHostKeyPolicy(known)
+                    else:
+                        policy = AcceptNewHostKeyPolicy(known_hosts_file, known)
+                self.ssh_client.set_missing_host_key_policy(policy)
 
                 # Authentication
                 connect_kwargs = {

@@ -462,13 +462,10 @@ class TestSSHKeyAutoDetection:
         """Integration test: Verify real SSH key loading works with actual tunnel"""
         from mcp_read_only_sql.config import SSHTunnelConfig
 
+        # The helper also points known_hosts at the per-run file, so the
+        # bastion's build-time host key never collides with ~/.ssh/known_hosts.
         ssh_config = SSHTunnelConfig.from_dict(
-            {
-                "host": docker_test_ssh_tunnel()["host"],
-                "port": docker_test_ssh_tunnel()["port"],
-                "user": "tunnel",
-                "private_key": ssh_test_key_path,
-            }
+            docker_test_ssh_tunnel(private_key=ssh_test_key_path)
         )
 
         tunnel = SSHTunnel(ssh_config, "mcp-postgres-private", 5432)
