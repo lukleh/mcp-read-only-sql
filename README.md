@@ -28,6 +28,7 @@ All write operations (INSERT, UPDATE, DELETE, etc.) are blocked at the database 
 - **PostgreSQL (CLI)** – Queries are wrapped in a transaction that issues `SET TRANSACTION READ ONLY;` before execution. Only a single statement (plus optional trailing semicolon) is forwarded, and all `psql` invocations include `--single-transaction`, `-v ON_ERROR_STOP=1`, and `PGOPTIONS=-c default_transaction_read_only=on` for defence in depth.
 - **ClickHouse (Python)** – The driver sets `readonly=1` plus connection/query timeouts, forcing the server to reject any write or DDL attempt.
 - **ClickHouse (CLI)** – `clickhouse-client` is invoked with `--readonly=1`, `--max_execution_time`, and connection timeouts, turning the session into a read-only context.
+- **ClickHouse (both)** – A login whose profile already sets `readonly` refuses the client-side `readonly` and `max_execution_time` settings by name. Each connector finds out once which settings the login accepts, with a probe that does not involve the caller's statement (`SELECT 1` for `clickhouse-client`, the client construction for clickhouse-connect), drops only the refused ones, and remembers the answer. A statement is never re-run with weaker settings than it was first sent with.
 
 The shared connector base also applies hard timeouts, giving the MCP server deterministic behaviour even if the database misbehaves.
 

@@ -1,21 +1,64 @@
 import asyncio
 import logging
 import os
-from collections.abc import Callable
+import re
+from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
+from ...config import Connection
 from ...errors import ConnectorError
 from ...utils.sql_guard import ReadOnlyQueryError, sanitize_read_only_sql
 from ...utils.ssh_tunnel_cli import CLISSHTunnel
 from ...utils.tsv_formatter import write_tsv_text_line
 from ..base_cli import BaseCLIConnector
+from .settings import client_settings, without_refused
 
 logger = logging.getLogger(__name__)
+
+# clickhouse-client writes this prompt to stderr under --ask-password; it is
+# noise in front of the actual error text.
+_PASSWORD_PROMPT = re.compile(r"^Password for user \([^)]*\):[ \t]*", re.MULTILINE)
 
 
 class ClickHouseCLIConnector(BaseCLIConnector):
     """ClickHouse connector using clickhouse-client CLI tool"""
+
+    def __init__(self, connection: Connection):
+        super().__init__(connection)
+        # Client-side settings each server accepted when it was probed, keyed
+        # by the selected server. A profile is per server, and one server's
+        # answer says nothing about another (see _probe_settings).
+        self._accepted_settings: dict[tuple[str, int], dict[str, object]] = {}
+
+    async def _probe_settings(
+        self, probe: Callable[[dict[str, object]], Awaitable[None]]
+    ) -> dict[str, object]:
+        """Settings this login accepts, found by running ``SELECT 1`` with them.
+
+        A profile that already sets ``readonly`` refuses client-side settings
+        by name. Each refused setting is dropped and the probe repeated, so the
+        caller's statement always runs with the strongest accepted settings and
+        is never re-run with weaker ones. Any other failure propagates and
+        nothing is remembered.
+        """
+        settings = client_settings(self.query_timeout)
+        while True:
+            try:
+                await probe(settings)
+                return settings
+            except ConnectorError as exc:
+                reduced = without_refused(settings, str(exc))
+                if reduced is None:
+                    raise
+                logger.warning(
+                    "ClickHouse: the profile of user %s refuses the client-side "
+                    "%s setting; continuing without it (%s)",
+                    self.username,
+                    set(settings) - set(reduced),
+                    exc,
+                )
+                settings = reduced
 
     def _get_default_port(self) -> int:
         # clickhouse-client uses native protocol port, not HTTP port
@@ -114,41 +157,41 @@ class ClickHouseCLIConnector(BaseCLIConnector):
             # Build clickhouse-client command with read-only enforcement.
             # Resolve the client binary explicitly so installs that are not on
             # PATH still work (mirrors the psql connector).
-            cmd = [
-                self._resolve_binary("clickhouse-client"),
-                "--host",
-                host,
-                "--port",
-                str(port),
-                "--user",
-                self.username,
-                "--database",
-                db_name,
-                "--readonly",
-                "1",  # Enforce read-only mode at database level
-                "--max_execution_time",
-                str(self.query_timeout),  # Query timeout in seconds
-                "--connect_timeout",
-                str(self.connection_timeout),  # Connection timeout
-                "--format",
-                "TabSeparatedWithNames",  # Use TSV format with headers
-                "--query",
-                sanitized_query,
-            ]
-
-            # Add --secure flag for TLS ports (9440)
-            if port == 9440:
-                cmd.insert(1, "--secure")  # Insert after "clickhouse-client"
-                logger.debug("Adding --secure flag for TLS port 9440")
-
-            # Add password if provided
-            if self.password:
-                cmd.append("--ask-password")
-
-            # Preserve PATH in environment
+            binary = self._resolve_binary("clickhouse-client")
             env = os.environ.copy()
 
-            try:
+            def build_command(statement: str, settings: dict[str, object]) -> list[str]:
+                cmd = [binary]
+                if port == 9440:
+                    cmd.append("--secure")  # TLS native port
+                    logger.debug("Adding --secure flag for TLS port 9440")
+                cmd += [
+                    "--host",
+                    host,
+                    "--port",
+                    str(port),
+                    "--user",
+                    self.username,
+                    "--database",
+                    db_name,
+                    "--connect_timeout",
+                    str(self.connection_timeout),  # Connection timeout
+                    "--format",
+                    "TabSeparatedWithNames",  # Use TSV format with headers
+                    "--query",
+                    statement,
+                ]
+                # Server-side read-only mode and query timeout, minus whatever
+                # this login's profile refused when it was probed.
+                for name, value in settings.items():
+                    cmd += [f"--{name}", str(value)]
+                if self.password:
+                    cmd.append("--ask-password")
+                return cmd
+
+            async def run_client(
+                cmd: list[str], emit_line: Callable[[str], None]
+            ) -> None:
                 process = await asyncio.create_subprocess_exec(
                     *cmd,
                     stdin=asyncio.subprocess.PIPE,
@@ -183,13 +226,12 @@ class ClickHouseCLIConnector(BaseCLIConnector):
                     )
 
                 stderr_task = asyncio.create_task(stderr_stream.read())
-                lines: list[str] = []
                 loop = asyncio.get_event_loop()
                 deadline = loop.time() + self.query_timeout
 
-                async def stream_output(emit_line: Callable[[str], None]) -> str | None:
-                    pending_line: str | None = None
-
+                async def stream_output() -> None:
+                    # Every stdout line is data: the header, then one line per
+                    # row. An empty line is a row whose only column is empty.
                     async def read_line_with_timeout() -> bytes:
                         remaining = deadline - loop.time()
                         if remaining <= 0:
@@ -203,12 +245,7 @@ class ClickHouseCLIConnector(BaseCLIConnector):
                             line_bytes = await read_line_with_timeout()
                             if not line_bytes:
                                 break
-
-                            line = line_bytes.decode(errors="replace").rstrip("\r\n")
-
-                            if pending_line is not None:
-                                emit_line(pending_line)
-                            pending_line = line
+                            emit_line(line_bytes.decode(errors="replace").rstrip("\r\n"))
                     except TimeoutError:
                         logger.warning(
                             "Query timeout - terminating clickhouse-client process"
@@ -223,11 +260,8 @@ class ClickHouseCLIConnector(BaseCLIConnector):
                         raise TimeoutError(
                             f"clickhouse-client: Query timeout after {self.query_timeout}s"
                         )
-                    return pending_line
 
-                async def finalize_process(
-                    emit_line: Callable[[str], None], pending_line: str | None
-                ) -> None:
+                async def finalize_process() -> None:
                     try:
                         await asyncio.wait_for(process.wait(), timeout=1.0)
                     except TimeoutError:
@@ -252,16 +286,51 @@ class ClickHouseCLIConnector(BaseCLIConnector):
                             "clickhouse-client process still running after wait(); treating as successful termination"
                         )
                     if returncode not in (0, None):
-                        error_msg = stderr.decode() if stderr else "Unknown error"
+                        error_msg = (
+                            _PASSWORD_PROMPT.sub("", stderr.decode()).strip()
+                            if stderr
+                            else "Unknown error"
+                        )
                         logger.error(f"clickhouse-client error: {error_msg}")
                         raise ConnectorError(f"clickhouse-client: {error_msg}")
 
-                    if pending_line not in (None, ""):
-                        emit_line(pending_line)
+                await stream_output()
+                await finalize_process()
+
+            def discard(_line: str) -> None:
+                return None
+
+            server_key = (selected_server.host, selected_server.port)
+
+            try:
+                settings = self._accepted_settings.get(server_key)
+                if settings is None or "readonly" not in settings:
+                    # Unknown, or known to run without readonly=1. The latter
+                    # is only safe while this server's profile stays
+                    # read-only, so it is asked again before every statement.
+                    settings = await self._probe_settings(
+                        lambda candidate: run_client(
+                            build_command("SELECT 1", candidate), discard
+                        )
+                    )
+                    self._accepted_settings[server_key] = settings
+                cmd = build_command(sanitized_query, settings)
+
+                async def run_statement(emit_line: Callable[[str], None]) -> None:
+                    try:
+                        await run_client(cmd, emit_line)
+                    except ConnectorError as exc:
+                        if without_refused(settings, str(exc)) is not None:
+                            # The server refuses a setting it accepted at the
+                            # probe: a profile change, or the statement's own
+                            # SETTINGS clause naming one of ours. Forget the
+                            # answer so the next statement probes again.
+                            self._accepted_settings.pop(server_key, None)
+                        raise
 
                 if output_path is None:
-                    pending_line = await stream_output(lines.append)
-                    await finalize_process(lines.append, pending_line)
+                    lines: list[str] = []
+                    await run_statement(lines.append)
                     return "\n".join(lines)
 
                 wrote_content = False
@@ -270,12 +339,10 @@ class ClickHouseCLIConnector(BaseCLIConnector):
                     nonlocal wrote_content
                     wrote_content = write_tsv_text_line(handle, line, wrote_content)
 
-                assert output_path is not None
                 with Path(output_path).open(  # noqa: ASYNC230 -- local file writes are fast; async file IO would add a dependency for no benefit
                     "w", encoding="utf-8", newline=""
                 ) as handle:
-                    pending_line = await stream_output(emit_file_line)
-                    await finalize_process(emit_file_line, pending_line)
+                    await run_statement(emit_file_line)
                 return None
 
             except FileNotFoundError:

@@ -718,6 +718,7 @@ async def test_clickhouse_python_blocks_mutations(
         query,
         original_port=None,
         is_ssh_tunnel=False,
+        **kwargs,
     ):
         assert query == statement
         raise ClickHouseError("Read-only violation")
