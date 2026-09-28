@@ -28,9 +28,12 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
   recorded fails the connection: `ssh` only warns when it cannot write the
   file and would treat every later connection as first use, so the
   system-ssh tunnel checks that the bastion is pinned once the tunnel is up.
-  The Paramiko tunnel checks the key the server used against `@revoked`
-  after connecting, since Paramiko accepts an exactly pinned key without
-  consulting the policy.
+  The Paramiko tunnel hands Paramiko only the keys pinned for the bastion
+  that are not revoked, so a revoked key always reaches the policy, which
+  refuses it after key exchange and before any credential is sent. A bastion
+  trusted only through an `@cert-authority` entry counts as pinned for the
+  system-ssh tunnel's recording check, since `ssh` verifies the host
+  certificate and records nothing.
 
 ### Changed
 

@@ -87,6 +87,9 @@ class KnownHosts:
         self.files: list[str] = []
         self.entries: list[KnownHostsEntry] = []
         self.revoked: list[KnownHostsEntry] = []
+        # ssh verifies a host certificate against these; Paramiko cannot,
+        # so they only count as "pinned" for the system-ssh tunnel.
+        self.cert_authorities: list[KnownHostsEntry] = []
 
     def load(self, path: str) -> None:
         """Read ``path`` if it exists; malformed lines are skipped with a warning."""
@@ -103,9 +106,7 @@ class KnownHosts:
             marker = None
             if line.startswith("@"):
                 marker, _, line = line.partition(" ")
-                if marker == "@cert-authority":
-                    continue
-                if marker != "@revoked":
+                if marker not in ("@cert-authority", "@revoked"):
                     logger.warning(
                         "SSH: ignoring unknown marker %s in %s line %d", marker, path, number
                     )
@@ -118,18 +119,27 @@ class KnownHosts:
             if parsed is None or parsed.key is None or not parsed.hostnames:
                 continue
             entry = KnownHostsEntry(tuple(parsed.hostnames), parsed.key)
-            (self.revoked if marker == "@revoked" else self.entries).append(entry)
+            if marker == "@revoked":
+                self.revoked.append(entry)
+            elif marker == "@cert-authority":
+                self.cert_authorities.append(entry)
+            else:
+                self.entries.append(entry)
 
-    def apply_to(self, host_keys: paramiko.HostKeys) -> None:
-        """Give Paramiko the plain and hashed names for its own exact lookup.
+    def apply_to(self, host_keys: paramiko.HostKeys, hostname: str) -> None:
+        """Give Paramiko the keys pinned for ``hostname`` under that exact name.
 
-        That lookup refuses a changed key before any policy runs and makes the
-        transport prefer a key type that is already recorded.
+        Paramiko checks its store right after key exchange and before any
+        authentication; a changed key is refused there and a stored type is
+        preferred in negotiation. Only keys that are not revoked for the host
+        go in, so a revoked key always falls through to the policy, which
+        refuses it before credentials are sent.
         """
         for entry in self.entries:
-            for name in entry.hostnames:
-                if not name.startswith("!") and "*" not in name and "?" not in name:
-                    host_keys.add(name, entry.key.get_name(), entry.key)
+            if _entry_names(entry.hostnames, hostname) and not self.is_revoked(
+                hostname, entry.key
+            ):
+                host_keys.add(hostname, entry.key.get_name(), entry.key)
 
     def pinned_key(self, hostname: str, key_type: str):
         """The recorded key of ``key_type`` for ``hostname``, wildcards included."""
@@ -139,8 +149,16 @@ class KnownHosts:
         return None
 
     def pinned_any(self, hostname: str) -> bool:
-        """Whether any entry, of any key type, names ``hostname``."""
-        return any(_entry_names(entry.hostnames, hostname) for entry in self.entries)
+        """Whether ssh has something to verify ``hostname`` against.
+
+        A host-key entry of any type, or a certificate authority entry that
+        names the host: with the latter ssh verifies the host certificate and
+        records nothing.
+        """
+        return any(
+            _entry_names(entry.hostnames, hostname)
+            for entry in (*self.entries, *self.cert_authorities)
+        )
 
     def is_revoked(self, hostname: str, key) -> bool:
         return any(
@@ -293,7 +311,10 @@ class SSHTunnel:
                     known = KnownHosts()
                     for path in (GLOBAL_KNOWN_HOSTS_FILE, known_hosts_file):
                         known.load(path)
-                    known.apply_to(self.ssh_client.get_host_keys())
+                    known.apply_to(
+                        self.ssh_client.get_host_keys(),
+                        known_hosts_name(ssh_host, ssh_port),
+                    )
                     if host_key_checking == "yes":
                         policy = StrictHostKeyPolicy(known)
                     else:
@@ -355,17 +376,11 @@ class SSHTunnel:
 
                 # Connect to SSH server
                 logger.info(f"Connecting to SSH server {ssh_host}:{ssh_port}")
+                # connect() checks the host key right after key exchange and
+                # before it authenticates: against the store filled above,
+                # then through the policy, which refuses revoked keys.
                 self.ssh_client.connect(**connect_kwargs)
                 self.transport = self.ssh_client.get_transport()
-                if known is not None:
-                    # Paramiko accepts an exactly pinned key without asking
-                    # the policy, so a revoked key that is also pinned would
-                    # pass. Check the key the server actually used.
-                    server_name = known_hosts_name(ssh_host, ssh_port)
-                    if known.is_revoked(server_name, self.transport.get_remote_server_key()):
-                        raise paramiko.SSHException(
-                            f"Host key for {server_name} is revoked in known_hosts"
-                        )
 
                 # Get a free local port
                 sock = socket.socket()
