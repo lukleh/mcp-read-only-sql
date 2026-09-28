@@ -149,16 +149,18 @@ class KnownHosts:
         return None
 
     def pinned_any(self, hostname: str) -> bool:
-        """Whether ssh has something to verify ``hostname`` against.
+        """Whether a host-key entry of any type names ``hostname``."""
+        return any(_entry_names(entry.hostnames, hostname) for entry in self.entries)
 
-        A host-key entry of any type, or a certificate authority entry that
-        names the host: with the latter ssh verifies the host certificate and
-        records nothing.
+    def certified(self, hostname: str) -> bool:
+        """Whether a certificate authority entry names ``hostname``.
+
+        Such an entry lets ssh verify a host certificate, but does not by
+        itself prove that a given connection used one: under accept-new ssh
+        would still take a raw key from that host. The system-ssh tunnel
+        therefore runs strictly in that case.
         """
-        return any(
-            _entry_names(entry.hostnames, hostname)
-            for entry in (*self.entries, *self.cert_authorities)
-        )
+        return any(_entry_names(entry.hostnames, hostname) for entry in self.cert_authorities)
 
     def is_revoked(self, hostname: str, key) -> bool:
         return any(

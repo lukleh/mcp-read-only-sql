@@ -164,6 +164,20 @@ class TestCLIOptions:
             await _cli_ssh_args(monkeypatch, config, pinned=False)
 
     @pytest.mark.anyio
+    async def test_ca_only_entry_runs_ssh_strictly(self, monkeypatch, tmp_path):
+        """A CA entry alone cannot tell a verified certificate from a raw
+        first-use key, so ssh must require the certificate."""
+        known_hosts = tmp_path / "known_hosts"
+        ca = paramiko.RSAKey.generate(1024)
+        known_hosts.write_text(f"@cert-authority bastion.example.com ssh-rsa {ca.get_base64()}\n")
+        config = _config(known_hosts_file=str(known_hosts))
+
+        args = await _cli_ssh_args(monkeypatch, config, pinned=False)
+
+        assert _option(args, "StrictHostKeyChecking") == "yes"
+        assert known_hosts.read_text().startswith("@cert-authority")
+
+    @pytest.mark.anyio
     async def test_a_wildcard_pin_counts_as_recorded(self, monkeypatch, tmp_path):
         known_hosts = tmp_path / "known_hosts"
         key = paramiko.RSAKey.generate(1024)
@@ -248,17 +262,17 @@ class TestKnownHostsEntries:
 
         assert host_keys.lookup("bastion.example.com")["ssh-rsa"] == pinned
 
-    def test_cert_authority_counts_as_pinned_for_ssh(self, tmp_path):
-        """ssh verifies the host certificate and records nothing, so the
-        fail-closed recording check must not expect a raw key."""
+    def test_cert_authority_is_kept_apart_from_host_key_pins(self, tmp_path):
+        """A CA entry lets ssh verify a certificate; it is not a pinned key."""
         ca = paramiko.RSAKey.generate(1024)
         # Off port 22 the pattern carries the port, as ssh writes it.
         known = _known(
             tmp_path, f"@cert-authority [*.example.com]:2222 ssh-rsa {ca.get_base64()}\n"
         )
 
-        assert known.pinned_any("[bastion.example.com]:2222")
-        assert not known.pinned_any("[bastion.example.com]:22")
+        assert known.certified("[bastion.example.com]:2222")
+        assert not known.certified("[bastion.example.com]:22")
+        assert not known.pinned_any("[bastion.example.com]:2222")
         assert known.pinned_key("[bastion.example.com]:2222", "ssh-rsa") is None
 
     def test_revoked_key_is_refused(self, tmp_path):
@@ -454,6 +468,13 @@ def _bastion_accepted_logins() -> int:
     return (log.stdout + log.stderr).count("Accepted ")
 
 
+def _fresh_ca_public_line(tmp_path) -> str:
+    """The public key line of a CA that has signed nothing."""
+    ca = tmp_path / "unrelated_ca"
+    subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(ca)], check=True)
+    return (tmp_path / "unrelated_ca.pub").read_text().strip()
+
+
 def _ca_signed_bastion(tmp_path) -> str:
     """Sign the fixture bastion's host key with a fresh CA and install the
     certificate; returns the CA's public key line. Stays in place for the
@@ -593,6 +614,25 @@ class TestAgainstBastion:
 
         assert result.split("\n")[1] == "1"
         assert known_hosts.read_text() == f"@cert-authority {_bastion_name()} {ca_line}\n"
+
+    async def test_ca_only_file_refuses_a_bastion_without_a_matching_certificate(
+        self, implementation, tmp_path
+    ):
+        """With a CA entry from a CA that never signed the bastion, ssh gets
+        a key it cannot verify; it must be refused, not recorded."""
+        if implementation != "cli":
+            pytest.skip("Paramiko cannot verify host certificates")
+        line = f"@cert-authority {_bastion_name()} {_fresh_ca_public_line(tmp_path)}\n"
+        known_hosts = tmp_path / "known_hosts"
+        known_hosts.write_text(line)
+        connector = _tunnelled_connector(
+            implementation, known_hosts_file=str(known_hosts)
+        )
+
+        with pytest.raises(ConnectorError, match="(?i)host key"):
+            await connector.execute_query("SELECT 1")
+
+        assert known_hosts.read_text() == line
 
     async def test_changed_key_is_refused(self, implementation, tmp_path):
         known_hosts = tmp_path / "known_hosts"

@@ -60,12 +60,19 @@ class CLISSHTunnel:
             files.append(os.path.expanduser("~/.ssh/known_hosts2"))
         return files
 
-    def _pinned(self, record_file: str) -> bool:
-        """Whether any entry ssh would read names the bastion, of any key type."""
+    def _known(self, record_file: str) -> KnownHosts:
         known = KnownHosts()
         for path in self._known_hosts_files(record_file):
             known.load(path)
-        return known.pinned_any(self._server_name())
+        return known
+
+    def _pinned(self, record_file: str) -> bool:
+        """Whether a host-key entry ssh would read names the bastion."""
+        return self._known(record_file).pinned_any(self._server_name())
+
+    def _certified(self, record_file: str) -> bool:
+        """Whether only a certificate authority entry covers the bastion."""
+        return self._known(record_file).certified(self._server_name())
 
     def _find_free_port(self) -> int:
         """Find a free local port"""
@@ -117,11 +124,23 @@ class CLISSHTunnel:
                 raise ConnectorError(
                     f"SSH: cannot create {directory} to record host keys: {exc}"
                 ) from exc
-            # A bastion not pinned yet must be in the file once the tunnel is
-            # up; the check below fails closed if ssh could not write it.
-            must_record = host_key_checking == "accept-new" and not self._pinned(
-                record_file
-            )
+            if host_key_checking == "accept-new" and not self._pinned(record_file):
+                if self._certified(record_file):
+                    # A CA entry lets ssh verify a host certificate, but under
+                    # accept-new ssh would also take a raw key from that host
+                    # and nothing here could tell the two apart. Run strictly:
+                    # a valid certificate connects, a raw key is refused.
+                    host_key_checking = "yes"
+                    logger.info(
+                        "SSH: %s is covered by a certificate authority entry; "
+                        "requiring a valid host certificate",
+                        self._server_name(),
+                    )
+                else:
+                    # A bastion not pinned yet must be in the file once the
+                    # tunnel is up; the check below fails closed if ssh could
+                    # not write it.
+                    must_record = True
 
         ssh_options = [
             "-N",  # No command execution

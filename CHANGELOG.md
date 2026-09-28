@@ -31,9 +31,10 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
   The Paramiko tunnel hands Paramiko only the keys pinned for the bastion
   that are not revoked, so a revoked key always reaches the policy, which
   refuses it after key exchange and before any credential is sent. A bastion
-  trusted only through an `@cert-authority` entry counts as pinned for the
-  system-ssh tunnel's recording check, since `ssh` verifies the host
-  certificate and records nothing.
+  covered only by an `@cert-authority` entry is connected to strictly by the
+  system-ssh tunnel: a valid host certificate connects, a raw key from that
+  host is refused rather than recorded, since nothing else could tell the
+  two apart.
 
 ### Changed
 
