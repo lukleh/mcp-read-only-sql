@@ -17,6 +17,19 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
   locks `readonly` at 0 is refused outright with a clear error. The
   clickhouse-connect client is created without settings and receives the
   decided ones with each query.
+- The psycopg2 PostgreSQL connector runs every statement inside one explicit
+  transaction that starts with `SET TRANSACTION READ ONLY; SET LOCAL
+  statement_timeout = ...`, the shape the psql connector already used,
+  instead of session-level `set_session(readonly=True, autocommit=True)` and
+  `SET statement_timeout`. Behind a transaction pooler such as PgBouncer the
+  session-level guards could land on a different server connection than the
+  query; the transaction-scoped ones cannot. The startup option
+  `default_transaction_read_only=on` is still requested and, as in the CLI,
+  dropped only when the server rejects the startup parameter.
+- SELECT-shaped statements on that connector are read through a server-side
+  cursor in batches of 1000 rows, so a large result streams to the result
+  file instead of being loaded into memory first. EXPLAIN and SHOW, which
+  cannot be declared as cursors, run on a plain cursor.
 
 ## [0.6.0] - 2026-09-29
 

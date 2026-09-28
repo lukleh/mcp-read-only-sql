@@ -24,7 +24,7 @@ All write operations (INSERT, UPDATE, DELETE, etc.) are blocked at the database 
 ### How Read-Only Is Enforced
 
 - **PostgreSQL (both implementations)** – Every query is parsed with PostgreSQL's own grammar (`pglast`) before it leaves the server. Only `SELECT`, `EXPLAIN` and `SHOW` shapes are accepted, and every function call must be on an allow-list of `pg_catalog` functions PostgreSQL declares side-effect free. This refuses the things a read-only transaction alone does not stop, such as `COPY ... TO PROGRAM`, `DO` blocks, and calls like `pg_terminate_backend()` or `pg_read_file()`. The list can be extended per connection with `allowed_functions`.
-- **PostgreSQL (Python)** – Connections are opened with `default_transaction_read_only=on`, sessions are set to read-only, and every statement runs with a configurable `statement_timeout`.
+- **PostgreSQL (Python)** – Every statement runs inside one explicit transaction whose first statement is `SET TRANSACTION READ ONLY; SET LOCAL statement_timeout = ...`, the same shape the CLI uses. Nothing is session state, so the guarantees hold behind a transaction pooler such as PgBouncer. Connections also ask for `default_transaction_read_only=on` at startup and fall back without it when a pooler rejects the option. SELECT-shaped statements are read through a server-side cursor in batches.
 - **PostgreSQL (CLI)** – Queries are wrapped in a transaction that issues `SET TRANSACTION READ ONLY;` before execution. Only a single statement (plus optional trailing semicolon) is forwarded, and all `psql` invocations include `--single-transaction`, `-v ON_ERROR_STOP=1`, and `PGOPTIONS=-c default_transaction_read_only=on` for defence in depth.
 - **ClickHouse (Python)** – The driver sets `readonly=1` plus connection/query timeouts, forcing the server to reject any write or DDL attempt.
 - **ClickHouse (CLI)** – `clickhouse-client` is invoked with `--readonly=1`, `--max_execution_time`, and connection timeouts, turning the session into a read-only context.
@@ -283,11 +283,11 @@ reflect the endpoints the agent should reference.
 | **Default Port** | 5432 | 5432 | 9000 | 8123 |
 | **Supported Ports** | Any PostgreSQL port | Any PostgreSQL port | 9000, 9440 (native + TLS) | 8123 (HTTP), 8443 (HTTPS) |
 | **TLS/SSL Support** | ✅ Yes | ✅ Yes | ✅ Yes (--secure for 9440) | ✅ Yes (HTTPS on 8443) |
-| **Read-Only Method** | `SET TRANSACTION READ ONLY` | `default_transaction_read_only=on` | `--readonly=1` flag | `readonly=1` setting |
+| **Read-Only Method** | `SET TRANSACTION READ ONLY` | `SET TRANSACTION READ ONLY` | `--readonly=1` flag | `readonly=1` setting |
 | **SSH Key Auth** | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
 | **SSH Password Auth** | ✅ Yes (requires `sshpass`) | ✅ Yes (requires `sshpass`) | ✅ Yes (requires `sshpass`) | ✅ Yes (requires `sshpass`) |
 | **Timeout Control** | ✅ Via SQL | ✅ Driver-level | ✅ CLI flags | ✅ Driver-level |
-| **Result Streaming** | ✅ Yes | ⚠️ No (psycopg2 loads the result before it is written) | ✅ Yes | ✅ Yes |
+| **Result Streaming** | ✅ Yes | ✅ Yes (server-side cursor, 1000 rows per fetch) | ✅ Yes | ✅ Yes |
 | **Binary Required** | `psql` (+ `ssh` for tunnels) | `ssh` for tunnels | `clickhouse-client` (+ `ssh` for tunnels) | `ssh` for tunnels |
 
 ### ClickHouse Port Compatibility

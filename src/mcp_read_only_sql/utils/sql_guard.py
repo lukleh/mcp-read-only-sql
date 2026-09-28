@@ -34,6 +34,7 @@ __all__ = [
     "ReadOnlyQueryError",
     "postgresql_shadow_guard_block",
     "postgresql_shadow_query",
+    "postgresql_statement_is_select",
     "sanitize_postgresql_read_only_sql",
     "sanitize_read_only_sql",
 ]
@@ -173,6 +174,17 @@ def sanitize_postgresql_read_only_sql(
     """
 
     return _analyze(query, allowed_functions)[0]
+
+
+def postgresql_statement_is_select(query: str) -> bool:
+    """Whether the validated statement is SELECT-shaped (SELECT, VALUES, TABLE).
+
+    Only such a statement can be declared as a server-side cursor; EXPLAIN
+    and SHOW cannot, and their output is small enough to fetch at once.
+    """
+
+    statements = parser.parse_sql(sanitize_read_only_sql(query))
+    return isinstance(statements[0].stmt, ast.SelectStmt)
 
 
 def postgresql_shadow_query(
