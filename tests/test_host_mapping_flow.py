@@ -1,5 +1,5 @@
-from conftest import make_recording_connector
 from mcp_read_only_sql.server import _display_hosts_for_connector
+from tests.conftest import make_recording_connector
 
 
 def test_ssh_local_display_host_maps_back_to_localhost():

@@ -30,9 +30,6 @@ class ClickHousePythonConnector(BaseConnector):
         # created for it, keyed by the selected server (see _open_client).
         self._accepted_settings: dict[tuple[str, int], dict[str, object]] = {}
 
-    def _get_default_port(self) -> int:
-        return 8123  # HTTP port (clickhouse-connect default)
-
     @asynccontextmanager
     async def _get_ssh_tunnel(self, server: str | None = None):
         """Override SSH tunnel to ensure we tunnel to correct HTTP/HTTPS port for clickhouse-connect"""

@@ -3,12 +3,11 @@ import asyncio
 import pytest
 
 from mcp_read_only_sql.connectors.postgresql.cli import PostgreSQLCLIConnector
-from tests.conftest import FakeCLIProcess
+from tests.conftest import FakeCLIProcess, make_connection
 
 
 @pytest.mark.anyio
 async def test_postgres_cli_retries_without_pgoptions(monkeypatch):
-    from tests.conftest import make_connection
 
     config = make_connection(
         {

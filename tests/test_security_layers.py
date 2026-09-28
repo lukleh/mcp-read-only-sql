@@ -11,6 +11,7 @@ from mcp_read_only_sql.config.parser import ConfigParser
 from mcp_read_only_sql.connectors.clickhouse.python import ClickHousePythonConnector
 from mcp_read_only_sql.connectors.postgresql.python import PostgreSQLPythonConnector
 from mcp_read_only_sql.utils.sql_guard import ReadOnlyQueryError
+from tests.conftest import make_connection
 from tests.docker_test_config import apply_docker_test_overrides
 
 
@@ -24,7 +25,6 @@ def test_config():
 @pytest.fixture
 def postgres_connector(test_config):
     """Create PostgreSQL connector for testing"""
-    from conftest import make_connection
 
     config = next(
         (c for c in test_config if c["connection_name"] == "test_postgres"), None
@@ -40,7 +40,6 @@ def postgres_connector(test_config):
 @pytest.fixture
 def clickhouse_connector(test_config):
     """Create ClickHouse connector for testing"""
-    from conftest import make_connection
 
     config = next(
         (c for c in test_config if c["connection_name"] == "test_clickhouse"), None

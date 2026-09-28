@@ -22,9 +22,6 @@ logger = logging.getLogger(__name__)
 class PostgreSQLCLIConnector(BaseCLIConnector):
     """PostgreSQL connector using psql CLI tool"""
 
-    def _get_default_port(self) -> int:
-        return 5432
-
     async def execute_query(
         self, query: str, database: str | None = None, server: str | None = None
     ) -> str:

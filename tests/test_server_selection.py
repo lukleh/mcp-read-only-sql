@@ -3,6 +3,7 @@
 import pytest
 
 from mcp_read_only_sql.connectors.base import BaseConnector
+from tests.conftest import make_connection
 
 
 class MockConnector(BaseConnector):
@@ -11,16 +12,12 @@ class MockConnector(BaseConnector):
     async def execute_query(self, query: str, database=None, server=None):
         return "mock result"
 
-    def _get_default_port(self) -> int:
-        return 5432
-
 
 class TestServerSelection:
     """Test the server selection parameter functionality"""
 
     def test_select_server_default(self):
         """Test that _select_server returns first server by default"""
-        from conftest import make_connection
 
         config = make_connection(
             {
@@ -44,7 +41,6 @@ class TestServerSelection:
 
     def test_select_server_by_host_only(self):
         """Test selecting server by host only (matches first with that host)"""
-        from conftest import make_connection
 
         config = make_connection(
             {
@@ -68,7 +64,6 @@ class TestServerSelection:
 
     def test_select_server_rejects_host_and_port(self):
         """Server parameter must reject host:port strings"""
-        from conftest import make_connection
 
         config = make_connection(
             {
@@ -92,7 +87,6 @@ class TestServerSelection:
 
     def test_select_server_ssh_display_host_alias(self):
         """Test selecting server using SSH host alias when canonical server is localhost"""
-        from conftest import make_connection
 
         config = make_connection(
             {
@@ -117,7 +111,6 @@ class TestServerSelection:
 
     def test_select_server_not_found_by_host(self):
         """Test that ValueError is raised when server host not found"""
-        from conftest import make_connection
 
         config = make_connection(
             {
@@ -145,7 +138,6 @@ class TestServerSelection:
 
     def test_select_server_not_found_by_port(self):
         """Test that ValueError is raised when host matches but port doesn't"""
-        from conftest import make_connection
 
         config = make_connection(
             {
@@ -170,7 +162,6 @@ class TestServerSelection:
 
     def test_select_server_invalid_port_format(self):
         """Test that ValueError is raised for invalid port in specification"""
-        from conftest import make_connection
 
         config = make_connection(
             {
@@ -193,7 +184,6 @@ class TestServerSelection:
 
     def test_select_server_with_colon_in_host(self):
         """Hostnames with IPv6 literals work when specified without port"""
-        from conftest import make_connection
 
         config = make_connection(
             {
@@ -215,7 +205,6 @@ class TestServerSelection:
 
     def test_select_server_no_servers_configured(self):
         """Test that configuration rejects empty server lists"""
-        from conftest import make_connection
 
         with pytest.raises(ValueError, match="missing required field 'servers'"):
             make_connection(
@@ -231,7 +220,6 @@ class TestServerSelection:
 
     def test_select_server_none_parameter(self):
         """Test that None parameter explicitly uses default (first server)"""
-        from conftest import make_connection
 
         config = make_connection(
             {
@@ -254,7 +242,6 @@ class TestServerSelection:
 
     def test_select_server_multiple_matches_returns_first(self):
         """Test that when multiple servers match host, first is returned"""
-        from conftest import make_connection
 
         config = make_connection(
             {
@@ -282,7 +269,6 @@ class TestServerSelectionClickHouse:
 
     def test_select_clickhouse_http_port(self):
         """Test selecting ClickHouse server with HTTP port"""
-        from conftest import make_connection
 
         config = make_connection(
             {
@@ -305,7 +291,6 @@ class TestServerSelectionClickHouse:
 
     def test_select_clickhouse_native_port(self):
         """Test selecting ClickHouse server with native port"""
-        from conftest import make_connection
 
         config = make_connection(
             {

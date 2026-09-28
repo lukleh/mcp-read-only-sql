@@ -11,40 +11,46 @@ This test suite is organized by functionality to clearly test the core security 
 ### MCP Protocol
 - **test_mcp_protocol.py** - Tests MCP server/client communication
 - **test_mcp_server.py** - Tests MCP server functionality
-- **test_concurrent_queries.py** - Tests concurrent query handling
 
 ### Database Connectivity
 - **test_docker_connectivity.py** - Verifies Docker databases are accessible
 
-## Security Tests (Three-Layer Model)
+## Security Tests
 
-### Layer 1 & 2: Read-Only Enforcement
-- **test_security_readonly.py** - Tests database-level read-only enforcement
+### Layer 1: Client-side statement policy
+- **test_sql_guard_postgresql.py** - The PostgreSQL parse-tree allow-list: accepted shapes, refused statements and functions, `allowed_functions`
+
+### Layer 2: Database-level read-only
+- **test_security_readonly.py** - Read-only sessions for both implementations, with mocked clients
   - Blocks INSERT, UPDATE, DELETE, DROP, CREATE, ALTER, TRUNCATE
-  - Tests both CLI and Python implementations
+- **test_security_readonly_integration.py** - The same against the Docker databases, including with the client-side guard bypassed
 
-### Layer 3: Timeout and Managed Result Files
+### Layer 3: Timeouts
 - **test_limits.py** - Tests timeout enforcement and hard timeout behavior
   - Ensures long-running queries are terminated
+
+### Managed result files
 - **test_run_query_file_output.py** - Tests managed result-file creation
   - Ensures query results are written under the managed state directory with `0600` permissions
 
 ### Integration
-- **test_security_layers.py** - Tests all three security layers working together
+- **test_security_layers.py** - Tests the layers working together
 
 ## Running Tests
 
 ```bash
-# Run all tests
-just test
+# Run all tests: starts the Docker fixtures, runs pytest, tears them down
+./run_tests.sh          # or: just test
 
 # Run specific test categories
 pytest tests/test_security_*.py  # All security tests
 pytest tests/test_mcp_*.py       # All MCP protocol tests
 
-# Run with Docker containers
-docker compose up -d
-pytest -m docker                 # Tests requiring Docker
+# Keep the Docker fixtures running between pytest invocations
+docker-compose --profile test up -d   # every service sits behind the "test" profile
+docker cp mcp-ssh-bastion:/tmp/test_key /tmp/docker_test_key && chmod 600 /tmp/docker_test_key
+pytest -m docker                      # Tests requiring Docker
+docker-compose --profile test down
 
 # Override the Docker-exposed host/ports when localhost is not correct
 TEST_DOCKER_HOST=your-db-host TEST_SSH_HOST=your-ssh-host pytest -m docker

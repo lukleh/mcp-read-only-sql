@@ -80,24 +80,3 @@ class ConfigParser:
             conn["servers"] = processed_servers
 
         return conn
-
-    def save_config(self, config: list[dict[str, Any]]) -> None:
-        """Save configuration to YAML file."""
-        clean_config = []
-        for conn in config:
-            clean_conn = {}
-            for key, value in conn.items():
-                if value is None:
-                    continue
-                if key == "ssh_tunnel" and value:
-                    ssh_clean = {k: v for k, v in value.items() if v is not None}
-                    if ssh_clean:
-                        clean_conn[key] = ssh_clean
-                else:
-                    clean_conn[key] = value
-            clean_config.append(clean_conn)
-
-        self.config_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.config_path, "w", encoding="utf-8") as f:
-            yaml.dump(clean_config, f, default_flow_style=False, sort_keys=False)
-        os.chmod(self.config_path, 0o600)

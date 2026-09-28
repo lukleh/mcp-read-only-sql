@@ -23,10 +23,6 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 from . import __version__
 from .config import Connection, dbeaver_import, load_connections_from_text
-from .config.connection import (
-    DEFAULT_CONNECTION_TIMEOUT,
-    DEFAULT_QUERY_TIMEOUT,
-)
 from .connectors.base import BaseConnector
 from .connectors.clickhouse.cli import ClickHouseCLIConnector
 from .connectors.clickhouse.python import ClickHousePythonConnector
@@ -330,11 +326,6 @@ class ReadOnlySQLServer:
                     "databases": connector.allowed_databases,
                     "user": connector.username or "",
                 }
-
-                if connector.query_timeout != DEFAULT_QUERY_TIMEOUT:
-                    conn_info["query_timeout"] = connector.query_timeout
-                if connector.connection_timeout != DEFAULT_CONNECTION_TIMEOUT:
-                    conn_info["connection_timeout"] = connector.connection_timeout
 
                 conn_list.append(conn_info)
 

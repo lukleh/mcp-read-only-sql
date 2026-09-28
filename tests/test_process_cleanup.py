@@ -7,12 +7,12 @@ import pytest
 
 from mcp_read_only_sql.connectors.clickhouse.cli import ClickHouseCLIConnector
 from mcp_read_only_sql.connectors.postgresql.cli import PostgreSQLCLIConnector
+from tests.conftest import make_connection
 
 
 @pytest.mark.anyio
 async def test_postgresql_cli_process_cleanup_on_timeout():
     """Test that psql process is killed when timeout occurs"""
-    from conftest import make_connection
 
     config = make_connection(
         {
@@ -71,7 +71,6 @@ async def test_postgresql_cli_process_cleanup_on_timeout():
 @pytest.mark.anyio
 async def test_clickhouse_cli_process_cleanup_on_timeout():
     """Test that clickhouse-client process is killed when timeout occurs"""
-    from conftest import make_connection
 
     config = make_connection(
         {

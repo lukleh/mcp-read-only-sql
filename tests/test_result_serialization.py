@@ -9,6 +9,7 @@ from mcp_read_only_sql.connectors.clickhouse.cli import ClickHouseCLIConnector
 from mcp_read_only_sql.connectors.clickhouse.python import ClickHousePythonConnector
 from mcp_read_only_sql.connectors.postgresql.cli import PostgreSQLCLIConnector
 from mcp_read_only_sql.connectors.postgresql.python import PostgreSQLPythonConnector
+from tests.conftest import execute_query, make_connection
 from tests.docker_test_config import docker_test_server
 
 
@@ -30,7 +31,6 @@ def parse_tsv(tsv_str):
 @pytest.fixture
 def postgres_python_conn():
     """PostgreSQL Python connector"""
-    from conftest import make_connection
 
     config = make_connection(
         {
@@ -48,7 +48,6 @@ def postgres_python_conn():
 @pytest.fixture
 def postgres_cli_conn():
     """PostgreSQL CLI connector"""
-    from conftest import make_connection
 
     config = make_connection(
         {
@@ -66,7 +65,6 @@ def postgres_cli_conn():
 @pytest.fixture
 def clickhouse_python_conn():
     """ClickHouse Python connector"""
-    from conftest import make_connection
 
     config = make_connection(
         {
@@ -84,7 +82,6 @@ def clickhouse_python_conn():
 @pytest.fixture
 def clickhouse_cli_conn():
     """ClickHouse CLI connector"""
-    from conftest import make_connection
 
     config = make_connection(
         {
@@ -492,7 +489,6 @@ class TestMCPSerialization:
 
     async def test_mcp_datetime_handling(self, integration_client):
         """Test that datetime values work through MCP protocol"""
-        from tests.conftest import execute_query
 
         # This query has datetime columns
         result = await execute_query(
@@ -512,7 +508,6 @@ class TestMCPSerialization:
 
     async def test_mcp_mixed_types(self, integration_client):
         """Test mixed data types through MCP"""
-        from tests.conftest import execute_query
 
         result = await execute_query(
             integration_client,

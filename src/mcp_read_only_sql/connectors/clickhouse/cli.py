@@ -60,10 +60,6 @@ class ClickHouseCLIConnector(BaseCLIConnector):
                 )
                 settings = reduced
 
-    def _get_default_port(self) -> int:
-        # clickhouse-client uses native protocol port, not HTTP port
-        return 9000
-
     @asynccontextmanager
     async def _get_ssh_tunnel(self, server: str | None = None):
         """Override SSH tunnel to ensure we tunnel to native port for clickhouse-client"""
