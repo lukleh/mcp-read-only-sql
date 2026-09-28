@@ -28,6 +28,7 @@ All write operations (INSERT, UPDATE, DELETE, etc.) are blocked at the database 
 - **PostgreSQL (CLI)** – Queries are wrapped in a transaction that issues `SET TRANSACTION READ ONLY;` before execution. Only a single statement (plus optional trailing semicolon) is forwarded, and all `psql` invocations include `--single-transaction`, `-v ON_ERROR_STOP=1`, and `PGOPTIONS=-c default_transaction_read_only=on` for defence in depth.
 - **ClickHouse (Python)** – The driver sets `readonly=1` plus connection/query timeouts, forcing the server to reject any write or DDL attempt.
 - **ClickHouse (CLI)** – `clickhouse-client` is invoked with `--readonly=1`, `--max_execution_time`, and connection timeouts, turning the session into a read-only context.
+- **ClickHouse (both)** – A login whose profile already sets `readonly` refuses the client-side `readonly` and `max_execution_time` settings by name. Each connector finds out once which settings the login accepts, with a probe that does not involve the caller's statement (`SELECT 1` for `clickhouse-client`, the client construction for clickhouse-connect), drops only the refused ones, and remembers the answer. A statement is never re-run with weaker settings than it was first sent with.
 
 The shared connector base also applies hard timeouts, giving the MCP server deterministic behaviour even if the database misbehaves.
 
@@ -48,7 +49,7 @@ See [READ_ONLY_ENFORCEMENT_MATRIX.md](READ_ONLY_ENFORCEMENT_MATRIX.md) for a sta
 
 - [uv](https://github.com/astral-sh/uv) for package installs and ephemeral `uvx` runs
 - `ssh` (OpenSSH 7.6 or newer) if any connection uses an SSH tunnel; both implementations tunnel through it
-- `psql` if you want PostgreSQL connections with `implementation: cli`
+- `psql` 12 or newer if you want PostgreSQL connections with `implementation: cli` (its CSV output mode is used)
 - `clickhouse-client` if you want ClickHouse connections with `implementation: cli`
 - `sshpass` only if you want SSH tunnels with password authentication
 - [just](https://github.com/casey/just) is optional and only needed for repo-local contributor workflows
@@ -251,6 +252,13 @@ Execute read-only SQL queries on configured databases.
 state directory, typically `~/.local/state/lukleh/mcp-read-only-sql/results/`.
 Successful query results are persisted with `0600` permissions and are no
 longer returned inline on success.
+
+The file holds a header line and one line per row, tab-separated. For
+PostgreSQL both implementations follow the quoting rules of `psql --csv`:
+NULL and the empty string are empty, and a value containing a tab, a double
+quote or a line break is enclosed in double quotes with inner quotes doubled,
+so such a row may span several lines. ClickHouse results use ClickHouse's own
+`TabSeparatedWithNames` escaping (`\N` for NULL, backslash escapes).
 
 Result files accumulate under `state_dir/results/` until you remove them.
 If you do not want to retain old query output, periodically clean
