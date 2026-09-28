@@ -1,5 +1,5 @@
 """
-Test CLI connectors with system SSH (not Paramiko)
+Test CLI connectors with system SSH
 """
 
 import asyncio

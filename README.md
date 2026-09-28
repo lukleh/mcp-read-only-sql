@@ -40,17 +40,18 @@ See [READ_ONLY_ENFORCEMENT_MATRIX.md](READ_ONLY_ENFORCEMENT_MATRIX.md) for a sta
 
 - **Read-only enforcement** - Multiple layers of protection against writes
 - **Multi-database support** - PostgreSQL and ClickHouse
-- **Dual implementations** - Choose between Python (pure Python, no dependencies) or CLI (uses `psql`/`clickhouse-client`)
-- **SSH tunnel support** - Both implementations support key authentication, password authentication (Paramiko in Python, `sshpass` in CLI), and falling back to agent-loaded identities when no credentials are provided
+- **Dual implementations** - Choose between Python (database drivers in the package) or CLI (uses `psql`/`clickhouse-client`)
+- **SSH tunnel support** - Tunnels go through the system `ssh` for both implementations: key authentication, password authentication with `sshpass`, agent-loaded identities and host certificates, and `ssh`'s own host-key verification
 - **Security built-in** - Timeouts, managed result files, session controls
 - **DBeaver import** - Import existing connections easily
 
 ## Prerequisites
 
 - [uv](https://github.com/astral-sh/uv) for package installs and ephemeral `uvx` runs
+- `ssh` (OpenSSH 7.6 or newer) if any connection uses an SSH tunnel; both implementations tunnel through it
 - `psql` 12 or newer if you want PostgreSQL connections with `implementation: cli` (its CSV output mode is used)
 - `clickhouse-client` if you want ClickHouse connections with `implementation: cli`
-- `sshpass` only if you want CLI-based SSH tunnels with password authentication
+- `sshpass` only if you want SSH tunnels with password authentication
 - [just](https://github.com/casey/just) is optional and only needed for repo-local contributor workflows
 
 Install the optional CLI binaries with your operating system's package manager or the official PostgreSQL / ClickHouse packages for your environment.
@@ -60,7 +61,7 @@ The CLI binaries are located via the override environment variable (`MCP_READ_ON
 The SQL package keeps both execution models first-class:
 
 - `implementation: cli` uses the official database client binaries you already trust in operations.
-- `implementation: python` stays fully supported when you want a pure-Python setup with no external database client binaries.
+- `implementation: python` stays fully supported when you want a setup with no external database client binaries.
 
 You can verify optional CLI dependencies with:
 
@@ -284,10 +285,10 @@ reflect the endpoints the agent should reference.
 | **TLS/SSL Support** | ✅ Yes | ✅ Yes | ✅ Yes (--secure for 9440) | ✅ Yes (HTTPS on 8443) |
 | **Read-Only Method** | `SET TRANSACTION READ ONLY` | `default_transaction_read_only=on` | `--readonly=1` flag | `readonly=1` setting |
 | **SSH Key Auth** | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
-| **SSH Password Auth** | ✅ Yes (requires `sshpass`) | ✅ Yes (Paramiko) | ✅ Yes (requires `sshpass`) | ✅ Yes (Paramiko) |
+| **SSH Password Auth** | ✅ Yes (requires `sshpass`) | ✅ Yes (requires `sshpass`) | ✅ Yes (requires `sshpass`) | ✅ Yes (requires `sshpass`) |
 | **Timeout Control** | ✅ Via SQL | ✅ Driver-level | ✅ CLI flags | ✅ Driver-level |
 | **Result Streaming** | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
-| **Binary Required** | `psql` | None | `clickhouse-client` | None |
+| **Binary Required** | `psql` (+ `ssh` for tunnels) | `ssh` for tunnels | `clickhouse-client` (+ `ssh` for tunnels) | `ssh` for tunnels |
 
 ### ClickHouse Port Compatibility
 
@@ -327,9 +328,8 @@ reflect the endpoints the agent should reference.
 - You want the exact behavior of the official CLI tools
 
 **Use Python implementation when:**
-- You want a pure Python solution with no external dependencies
+- You want no database client binaries
 - You're connecting to ClickHouse HTTP interface (port 8123, 8443)
-- You need SSH password authentication without installing `sshpass`
 - You want more programmatic control over connections
 
 ## Configuration Notes
@@ -357,8 +357,7 @@ Example HAProxy configuration:
 When multiple servers are specified in a connection's configuration, the system currently uses only the first server in the list. Load balancing across servers is not implemented.
 
 ### SSH Authentication
-- **Python implementation**: Supports both `ssh_tunnel.password` and `ssh_tunnel.private_key`
-- **CLI implementation**: Supports key-based authentication and can use passwords when `sshpass` is installed
-- **SSH agent / identity fallback**: Omit both `private_key` and `password` to use agent-loaded identities and identity-related SSH configuration. The Python implementation lets paramiko discover keys via `look_for_keys`/`allow_agent`; the CLI implementation invokes system `ssh` without `-i`, so agent identities and matching identity options can be used. The configured `ssh_tunnel.host`, `user`, and `port` are still passed explicitly; full OpenSSH `Host` alias fallback for those fields is future work.
-- **Timeout behavior**: CLI SSH tunnel startup defaults to 30 seconds to allow system `ssh` interactive approval flows such as hardware tokens or short-lived certificate prompts. Python/Paramiko SSH tunnel startup keeps the 5 second default because it does not use the system `ssh` interactive prompt path. Set `ssh_tunnel.ssh_timeout` to a lower value when fail-fast behavior is preferred for unreachable bastions.
-- **Host-key trust**: SSH tunnel helpers currently trust newly seen bastion host keys automatically (`StrictHostKeyChecking=no` for CLI, Paramiko `AutoAddPolicy` for Python). Use these tunnels only on trusted networks until configurable host-key verification is added.
+- **One tunnel**: Both implementations start the system `ssh` for the tunnel, so everything `ssh` supports applies: keys, agents, certificates, `~/.ssh/config`. `ssh_tunnel.private_key` is passed with `-i`; `ssh_tunnel.password` needs `sshpass`
+- **SSH agent / identity fallback**: Omit both `private_key` and `password` and `ssh` runs without `-i`, so agent identities and matching identity options are used. The configured `ssh_tunnel.host`, `user`, and `port` are still passed explicitly; full OpenSSH `Host` alias fallback for those fields is future work.
+- **Timeout behavior**: Tunnel startup defaults to 30 seconds to allow `ssh` interactive approval flows such as hardware tokens or short-lived certificate prompts. Set `ssh_tunnel.ssh_timeout` to a lower value when fail-fast behavior is preferred for unreachable bastions.
+- **Host-key verification**: `ssh` verifies the bastion's host key, and by default the key must already be known: `ssh_tunnel.host_key_checking` takes the OpenSSH `StrictHostKeyChecking` values and defaults to `yes`. A bastion you have connected to with `ssh` before is already known. To provision one you have not, fetch its key with `ssh-keyscan -p <port> <host>`, compare the fingerprint (`ssh-keygen -lf` on the output) with one you got from the bastion's operator or console, and only then append the line to `~/.ssh/known_hosts`; `ssh-keyscan` itself does not verify anything, so appending it unseen is trust on first use, which is what `accept-new` does with a safety check. `ssh_tunnel.known_hosts_file` can point at another file; `/etc/ssh/ssh_known_hosts` is read as well. `accept-new` is the explicit trust-on-first-use mode: the bastion is recorded on first use and refused if its key changes, and because `ssh` only warns when it cannot write the file, the tunnel passes known_hosts files explicitly and checks that a first-use key was saved. It uses `ssh_tunnel.known_hosts_file` when set, otherwise the standard user and global files. This mode overrides `UserKnownHostsFile` and `GlobalKnownHostsFile` from `~/.ssh/config`; set `ssh_tunnel.known_hosts_file` to use a custom file. `HostKeyAlias` and `HostName` still apply. A bastion covered only by an `@cert-authority` entry is always connected to strictly, so a valid host certificate connects and a raw key is refused rather than recorded. `no` restores the previous behaviour: every key is trusted and none is recorded. A changed key surfaces as an `SSH:` error naming host key verification; remove the stale line from the file once you have confirmed the new key.

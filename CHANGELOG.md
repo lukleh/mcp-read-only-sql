@@ -7,6 +7,49 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Security
+
+- SSH tunnels now verify the bastion's host key. Both implementations
+  trusted any key (`StrictHostKeyChecking=no` with no known_hosts file for
+  system `ssh`, Paramiko `AutoAddPolicy` with no loaded keys), so a spoofed
+  bastion would have received the database credentials. The new
+  `ssh_tunnel.host_key_checking` field takes the OpenSSH values and defaults
+  to `yes`: the bastion's key must already be in `/etc/ssh/ssh_known_hosts`,
+  `~/.ssh/known_hosts`, or the file `ssh_tunnel.known_hosts_file` names.
+  `accept-new` is the explicit trust-on-first-use mode: the bastion is
+  recorded on first use and refused if its key changes. Since `ssh` only
+  warns when it cannot save the key, the tunnel checks the chosen files
+  before and after connecting and fails if a new key was not recorded.
+  It passes those files to `ssh` explicitly; configure `known_hosts_file`
+  to use a custom user file in this mode. A bastion covered only by an
+  `@cert-authority` entry is always connected to strictly. `no` restores
+  the previous behaviour and records nothing.
+
+### Changed
+
+- Every connector tunnels through the system `ssh`. The Python
+  implementations used a Paramiko tunnel, whose host-key handling matched
+  names literally, knew no `@revoked` or `@cert-authority` markers, held one
+  key per host and type, and could not verify host certificates; each of
+  those had to be re-implemented by hand. `ssh` does all of it. Consequences
+  for the Python implementations: `ssh` must be installed,
+  `ssh_tunnel.password` needs `sshpass` as it already did for the CLI
+  implementations, tunnel startup allows 30 seconds instead of 5 for
+  interactive prompts, and host certificates and `~/.ssh/config` now apply.
+  Paramiko is no longer a dependency.
+
+### Removed
+
+- The `mcp_read_only_sql.utils.ssh_tunnel` module and its `SSHTunnel`
+  class (the Paramiko tunnel). `mcp_read_only_sql.utils.ssh_tunnel_cli`
+  is the one tunnel.
+- An SSH tunnel to a bastion whose host key is not in a known_hosts file
+  is refused with an `SSH:` error, as is one whose key changed. Bastions you
+  have connected to with `ssh` before are already known; for the others,
+  fetch the key with `ssh-keyscan`, check its fingerprint against a trusted
+  source, and append it, or set `host_key_checking: accept-new` to trust
+  them on first use.
+
 ### Fixed
 
 - The psql connector no longer drops rows. It parsed psql's output and
