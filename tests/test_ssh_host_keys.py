@@ -24,7 +24,6 @@ from mcp_read_only_sql.errors import ConnectorError
 from mcp_read_only_sql.utils.ssh_tunnel_cli import (
     CLISSHTunnel,
     HostKeySurvey,
-    _split_paths,
     known_hosts_name,
 )
 from tests.conftest import make_connection
@@ -77,8 +76,7 @@ class TestConfig:
 
 
 class TestSurvey:
-    """The tunnel asks ssh -G where and under which name it records the
-    bastion, and ssh-keygen what those files say."""
+    """The tunnel asks ssh -G for the host-key name, then checks its own files."""
 
     def _survey(self, tmp_path, text: str, host: str = "bastion.example.com", port: int = 22):
         path = tmp_path / "pins"
@@ -138,22 +136,22 @@ class TestSurvey:
         survey = tunnel._survey(["-o", f"UserKnownHostsFile={tmp_path / 'absent'}"], "bastion.example.com")
         assert not survey.pinned
 
-    def test_ssh_config_decides_the_file_and_the_name(self, tmp_path, monkeypatch):
-        """HostKeyAlias and UserKnownHostsFile from ~/.ssh/config win, as they
-        do for ssh; the tunnel takes them from ssh -G instead of guessing."""
+    def test_ssh_config_decides_the_name_but_not_the_files(self, tmp_path, monkeypatch):
+        """The host alias applies, while accept-new uses explicit file paths."""
         work_file = tmp_path / "known_hosts_work"
         work_file.write_text(f"jump.alias {_public_key_line(tmp_path)}\n")
+        ssh_config_file = tmp_path / "ignored_by_accept_new"
         monkeypatch.setattr(
             "mcp_read_only_sql.utils.ssh_tunnel_cli._ssh_resolved_config",
             lambda options, destination: {
                 "hostname": "10.0.0.5",
                 "port": "22",
                 "hostkeyalias": "jump.alias",
-                "userknownhostsfile": f"{work_file} {tmp_path / 'second'}",
+                "userknownhostsfile": str(ssh_config_file),
                 "globalknownhostsfile": "/etc/ssh/ssh_known_hosts /etc/ssh/ssh_known_hosts2",
             },
         )
-        tunnel = CLISSHTunnel(_config(), "db", 1)
+        tunnel = CLISSHTunnel(_config(known_hosts_file=str(work_file)), "db", 1)
 
         survey = tunnel._survey([], "tunnel@bastion.example.com")
 
@@ -161,20 +159,7 @@ class TestSurvey:
         assert survey.record_file == str(work_file)
         assert survey.pinned
 
-    @pytest.mark.parametrize(
-        ("value", "paths"),
-        [
-            ("/a/known_hosts /a/known_hosts2", ["/a/known_hosts", "/a/known_hosts2"]),
-            ("/dir with space/known hosts /tmp/plain", ["/dir with space/known hosts", "/tmp/plain"]),
-            ("~/.ssh/known hosts", ["~/.ssh/known hosts"]),
-            ("", []),
-        ],
-    )
-    def test_ssh_g_file_lists_keep_spaces_inside_paths(self, value, paths):
-        assert _split_paths(value) == paths
-
-    def test_known_hosts_path_with_spaces_from_ssh(self, tmp_path):
-        """ssh -G prints the path unquoted; the survey must keep it whole."""
+    def test_known_hosts_path_with_spaces(self, tmp_path):
         folder = tmp_path / "dir with space"
         folder.mkdir()
         path = folder / "known hosts"
@@ -186,17 +171,25 @@ class TestSurvey:
         assert survey.record_file == str(path)
         assert survey.pinned
 
-    def test_falls_back_to_ssh_defaults_when_ssh_g_fails(self, monkeypatch):
+    def test_ambiguous_ssh_g_path_cannot_invent_a_pin(self, tmp_path):
+        """A different file with a pin must not disable the recording check."""
+        decoy = tmp_path / "known"
+        decoy.write_text(f"bastion.example.com {_public_key_line(tmp_path)}\n")
+        actual = tmp_path / "known /hosts"
+        tunnel = CLISSHTunnel(_config(known_hosts_file=str(actual)), "db", 1)
+
+        survey = tunnel._survey(["-o", f'UserKnownHostsFile="{actual}"'], "tunnel@bastion.example.com")
+
+        assert survey.record_file == str(actual)
+        assert not survey.pinned
+
+    def test_fails_closed_when_ssh_g_fails(self, monkeypatch):
         monkeypatch.setattr(
             "mcp_read_only_sql.utils.ssh_tunnel_cli._ssh_resolved_config",
             lambda options, destination: {},
         )
-        monkeypatch.setattr(
-            "mcp_read_only_sql.utils.ssh_tunnel_cli._ssh_keygen_find", lambda name, path: []
-        )
-        survey = CLISSHTunnel(_config(port=2222), "db", 1)._survey([], "bastion.example.com")
-        assert survey.name == "[bastion.example.com]:2222"
-        assert survey.record_file == os.path.expanduser("~/.ssh/known_hosts")
+        with pytest.raises(ConnectorError, match="cannot resolve host-key settings"):
+            CLISSHTunnel(_config(port=2222), "db", 1)._survey([], "bastion.example.com")
 
 
 async def _cli_ssh_args(
@@ -261,11 +254,29 @@ class TestCLIOptions:
     async def test_accept_new_is_an_explicit_mode(self, monkeypatch):
         args = await _cli_ssh_args(monkeypatch, _config(host_key_checking="accept-new"))
         assert _option(args, "StrictHostKeyChecking") == "accept-new"
+        assert _option(args, "UserKnownHostsFile") == (
+            f'"{os.path.expanduser("~/.ssh/known_hosts")}" '
+            f'"{os.path.expanduser("~/.ssh/known_hosts2")}"'
+        )
+        assert _option(args, "GlobalKnownHostsFile") == (
+            '"/etc/ssh/ssh_known_hosts" "/etc/ssh/ssh_known_hosts2"'
+        )
+
+    @pytest.mark.anyio
+    async def test_accept_new_passes_one_quoted_file_even_with_ambiguous_spaces(
+        self, monkeypatch, tmp_path
+    ):
+        path = tmp_path / "known /hosts"
+        config = _config(host_key_checking="accept-new", known_hosts_file=str(path))
+
+        args = await _cli_ssh_args(monkeypatch, config)
+
+        assert _option(args, "UserKnownHostsFile") == f'"{path}"'
 
     @pytest.mark.anyio
     async def test_explicit_known_hosts_file_is_passed(self, monkeypatch, tmp_path):
         args = await _cli_ssh_args(monkeypatch, _config(known_hosts_file=str(tmp_path / "kh")))
-        assert _option(args, "UserKnownHostsFile") == str(tmp_path / "kh")
+        assert _option(args, "UserKnownHostsFile") == f'"{tmp_path / "kh"}"'
 
     @pytest.mark.anyio
     @pytest.mark.parametrize("known_hosts_file", [None, "/tmp/kh"])
@@ -477,6 +488,36 @@ class TestAgainstBastion:
         assert result.split("\n")[1] == "1"
         assert _recorded(known_hosts, _bastion_name())
 
+    async def test_first_use_records_in_a_path_with_ambiguous_spaces(
+        self, implementation, tmp_path
+    ):
+        known_hosts = tmp_path / "known /hosts"
+        known_hosts.parent.mkdir()
+        connector = _tunnelled_connector(implementation, known_hosts_file=str(known_hosts))
+
+        result = await connector.execute_query("SELECT 1 AS one")
+
+        assert result.split("\n")[1] == "1"
+        assert _recorded(known_hosts, _bastion_name())
+        assert not (tmp_path / "known").exists()
+
+    async def test_decoy_pin_cannot_hide_an_unwritable_record_file(
+        self, implementation, tmp_path
+    ):
+        decoy = tmp_path / "known"
+        decoy.write_text(f"{_bastion_name()} {_bastion_key_line()}\n")
+        known_hosts = tmp_path / "known /hosts"
+        known_hosts.parent.mkdir()
+        known_hosts.write_text("")
+        known_hosts.chmod(0o400)
+        connector = _tunnelled_connector(implementation, known_hosts_file=str(known_hosts))
+
+        with pytest.raises(ConnectorError, match="(?i)record"):
+            await connector.execute_query("SELECT 1")
+
+        assert known_hosts.read_text() == ""
+        assert decoy.read_text().startswith(_bastion_name())
+
     async def test_first_use_creates_the_directory(self, implementation, tmp_path):
         known_hosts = tmp_path / "missing" / "known_hosts"
         connector = _tunnelled_connector(implementation, known_hosts_file=str(known_hosts))
@@ -588,9 +629,13 @@ class TestAgainstBastion:
             await connector.execute_query("SELECT 1")
         assert known_hosts.read_text() == ""
 
-    async def test_default_accepts_a_provisioned_bastion(self, implementation, tmp_path):
+    @pytest.mark.parametrize("relative_path", ["known_hosts", "known /hosts"])
+    async def test_default_accepts_a_provisioned_bastion(
+        self, implementation, tmp_path, relative_path
+    ):
         """The intended setup: ssh-keyscan (or a prior ssh session) provisioned the key."""
-        known_hosts = tmp_path / "known_hosts"
+        known_hosts = tmp_path / relative_path
+        known_hosts.parent.mkdir(exist_ok=True)
         known_hosts.write_text(f"{_bastion_name()} {_bastion_key_line()}\n")
         connector = _tunnelled_connector(
             implementation, known_hosts_file=str(known_hosts), host_key_checking="yes"

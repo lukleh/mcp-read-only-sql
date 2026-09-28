@@ -17,13 +17,13 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
   to `yes`: the bastion's key must already be in `/etc/ssh/ssh_known_hosts`,
   `~/.ssh/known_hosts`, or the file `ssh_tunnel.known_hosts_file` names.
   `accept-new` is the explicit trust-on-first-use mode: the bastion is
-  recorded on first use and refused if its key changes, and since `ssh`
-  only warns when it cannot write the file, the tunnel asks `ssh -G` which
-  file and name `ssh` uses for the bastion (so `~/.ssh/config` is honoured)
-  and `ssh-keygen -F` whether it was known before and is recorded after,
-  failing the connection otherwise. A bastion covered only by an `@cert-authority` entry
-  is always connected to strictly. `no` restores the previous behaviour and
-  records nothing.
+  recorded on first use and refused if its key changes. Since `ssh` only
+  warns when it cannot save the key, the tunnel checks the chosen files
+  before and after connecting and fails if a new key was not recorded.
+  It passes those files to `ssh` explicitly; configure `known_hosts_file`
+  to use a custom user file in this mode. A bastion covered only by an
+  `@cert-authority` entry is always connected to strictly. `no` restores
+  the previous behaviour and records nothing.
 
 ### Changed
 

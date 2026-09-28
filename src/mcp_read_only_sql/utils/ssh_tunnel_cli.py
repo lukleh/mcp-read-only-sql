@@ -17,10 +17,10 @@ from ..errors import ConnectorError
 
 logger = logging.getLogger(__name__)
 
-# Where ssh looks when its configuration says nothing else; used only if
-# ``ssh -G`` cannot be asked.
-DEFAULT_KNOWN_HOSTS_FILES = ("/etc/ssh/ssh_known_hosts", "/etc/ssh/ssh_known_hosts2")
-DEFAULT_USER_KNOWN_HOSTS_FILE = "~/.ssh/known_hosts"
+# In accept-new mode these are passed to ssh explicitly, so the files checked
+# before and after a connection are exactly the files ssh uses.
+GLOBAL_KNOWN_HOSTS_FILES = ("/etc/ssh/ssh_known_hosts", "/etc/ssh/ssh_known_hosts2")
+DEFAULT_USER_KNOWN_HOSTS_FILES = ("~/.ssh/known_hosts", "~/.ssh/known_hosts2")
 
 
 def known_hosts_name(host: str, port: int) -> str:
@@ -31,9 +31,10 @@ def known_hosts_name(host: str, port: int) -> str:
 def _ssh_resolved_config(options: list[str], destination: str) -> dict[str, str]:
     """The options ssh would use for ``destination``, from ``ssh -G``.
 
-    ssh resolves ``~/.ssh/config`` (HostName, Port, HostKeyAlias,
-    UserKnownHostsFile, GlobalKnownHostsFile) and prints the result without
-    connecting. An empty dict means ssh could not be asked.
+    ssh resolves ``~/.ssh/config`` (including HostName and HostKeyAlias)
+    without connecting. Its host-key file list is not used: paths with spaces
+    are printed without unambiguous separators. An empty dict means ssh
+    could not be asked.
     """
     try:
         resolved = subprocess.run(
@@ -54,22 +55,15 @@ def _ssh_resolved_config(options: list[str], destination: str) -> dict[str, str]
     return config
 
 
-def _split_paths(value: str) -> list[str]:
-    """The paths in an ``ssh -G`` file list, which is space-separated and unquoted.
-
-    A path may contain spaces, so the split is by where a path can start:
-    every path in ssh configuration is absolute or ``~``-relative, and a word
-    beginning with neither continues the previous path.
-    """
-    paths: list[str] = []
-    for word in value.split(" "):
-        if not word:
-            continue
-        if paths and not word.startswith(("/", "~")):
-            paths[-1] += " " + word
-        else:
-            paths.append(word)
-    return paths
+def _ssh_file_option(name: str, paths: tuple[str, ...]) -> str:
+    """Pass exact paths through ssh's config parser, including spaces and %."""
+    quoted = []
+    for path in paths:
+        if "\n" in path or "\r" in path:
+            raise ConnectorError(f"SSH: invalid {name} path")
+        # %% prevents ssh from expanding a literal percent as a config token.
+        quoted.append('"' + path.replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%") + '"')
+    return f"{name}=" + " ".join(quoted)
 
 
 def _ssh_keygen_find(name: str, path: str) -> list[str]:
@@ -116,8 +110,8 @@ def _key_parses(line: str) -> bool:
 class HostKeySurvey:
     """What ssh knows about the bastion before or after a connection.
 
-    ``name`` is what ssh records the bastion under and ``record_file`` where,
-    both as ssh itself resolves them. ``pinned`` means a usable host-key
+    ``name`` is what ssh records the bastion under and ``record_file`` where.
+    ``pinned`` means a usable host-key
     entry names the bastion in one of the files ssh reads; ``certified``
     means a certificate authority entry does.
     """
@@ -134,8 +128,9 @@ class CLISSHTunnel:
     Used by every connector. ``ssh`` brings its own host-key verification,
     agent and certificate support, and configuration. By default the bastion
     must already be known (``StrictHostKeyChecking=yes``). In the explicit
-    ``accept-new`` mode the tunnel asks ``ssh-keygen -F`` whether the bastion
-    was known before and is recorded after, and fails closed otherwise.
+    ``accept-new`` mode the tunnel chooses the known_hosts files, then asks
+    ``ssh-keygen -F`` whether the bastion was known before and is recorded
+    after, and fails closed otherwise.
     """
 
     DEFAULT_SSH_TIMEOUT = 30  # seconds — generous default to accommodate
@@ -163,33 +158,32 @@ class CLISSHTunnel:
         self.ssh_process = None
         self.local_port = None
 
+    def _user_known_hosts_files(self) -> tuple[str, ...]:
+        if self.ssh_config.known_hosts_file is not None:
+            return (os.path.abspath(self.ssh_config.known_hosts_file),)
+        return tuple(os.path.expanduser(path) for path in DEFAULT_USER_KNOWN_HOSTS_FILES)
+
     def _survey(self, ssh_options: list[str], destination: str) -> HostKeySurvey:
-        """Ask ssh which name and files it uses for the bastion, then ssh-keygen
-        what those files say. Blocking; run it off the event loop."""
+        """Ask ssh for the host-key name, then check the exact files passed to it.
+
+        Blocking; run it off the event loop.
+        """
         resolved = _ssh_resolved_config(ssh_options, destination)
-        if resolved:
-            user_files = _split_paths(resolved.get("userknownhostsfile", ""))
-            global_files = _split_paths(resolved.get("globalknownhostsfile", ""))
-            name = resolved.get("hostkeyalias") or known_hosts_name(
-                resolved.get("hostname", self.ssh_host),
-                int(resolved.get("port", self.ssh_port)),
-            )
-        else:
-            logger.warning("SSH: ssh -G failed for %s; assuming its default files", destination)
-            user_files = [os.path.expanduser(DEFAULT_USER_KNOWN_HOSTS_FILE)]
-            global_files = list(DEFAULT_KNOWN_HOSTS_FILES)
-            name = known_hosts_name(self.ssh_host, self.ssh_port)
-        record_file = user_files[0] if user_files else os.path.expanduser(
-            DEFAULT_USER_KNOWN_HOSTS_FILE
+        if not resolved:
+            raise ConnectorError(f"SSH: cannot resolve host-key settings for {destination}")
+        name = resolved.get("hostkeyalias") or known_hosts_name(
+            resolved.get("hostname", self.ssh_host),
+            int(resolved.get("port", self.ssh_port)),
         )
+        user_files = self._user_known_hosts_files()
         matches = [
             line
-            for path in (*global_files, *user_files)
-            for line in _ssh_keygen_find(name, os.path.expanduser(path))
+            for path in (*GLOBAL_KNOWN_HOSTS_FILES, *user_files)
+            for line in _ssh_keygen_find(name, path)
         ]
         return HostKeySurvey(
             name=name,
-            record_file=os.path.expanduser(record_file),
+            record_file=user_files[0],
             pinned=any(not line.startswith("@") for line in matches),
             certified=any(line.startswith("@cert-authority") for line in matches),
         )
@@ -230,20 +224,26 @@ class CLISSHTunnel:
             if host_key_checking == "no"
             else self.ssh_config.known_hosts_file
         )
-        # Determine destination (user@host) and the options that decide
-        # which known_hosts files and name ssh uses for it.
+        # Determine destination (user@host). In accept-new mode pass the
+        # exact files we inspect to ssh, avoiding ssh -G's ambiguous unquoted
+        # list of file paths.
         destination = (
             f"{self.ssh_user}@{self.ssh_host}" if self.ssh_user else self.ssh_host
         )
         lookup_options = ["-p", str(self.ssh_port)]
-        if known_hosts_file is not None:
-            lookup_options += ["-o", f"UserKnownHostsFile={known_hosts_file}"]
+        known_hosts_options: list[str] = []
+        if host_key_checking == "accept-new":
+            known_hosts_options = [
+                "-o", _ssh_file_option("UserKnownHostsFile", self._user_known_hosts_files()),
+                "-o", _ssh_file_option("GlobalKnownHostsFile", GLOBAL_KNOWN_HOSTS_FILES),
+            ]
+            lookup_options.extend(known_hosts_options)
 
         # accept-new is trust on first use. ssh only warns when it cannot
         # record the key and would then treat every connection as first use,
         # so a bastion ssh does not know yet must be recorded once the tunnel
         # is up (checked below), and the directory it records into must
-        # exist. ssh itself says where and under which name (ssh -G).
+        # exist. ssh -G supplies the host-key name; the file paths are ours.
         must_record = False
         if host_key_checking == "accept-new":
             before = await asyncio.to_thread(self._survey, lookup_options, destination)
@@ -285,8 +285,15 @@ class CLISSHTunnel:
             "-p",
             str(self.ssh_port),
         ]
-        if known_hosts_file is not None:
-            ssh_options.extend(["-o", f"UserKnownHostsFile={known_hosts_file}"])
+        if self.ssh_config.host_key_checking == "accept-new":
+            ssh_options.extend(known_hosts_options)
+        elif known_hosts_file is not None:
+            option = (
+                f"UserKnownHostsFile={known_hosts_file}"
+                if self.ssh_config.host_key_checking == "no"
+                else _ssh_file_option("UserKnownHostsFile", (os.path.abspath(known_hosts_file),))
+            )
+            ssh_options.extend(["-o", option])
 
         env = os.environ.copy()
         ssh_base_cmd = ["ssh"]
