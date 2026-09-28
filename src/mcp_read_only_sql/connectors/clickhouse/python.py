@@ -16,7 +16,7 @@ from ...utils.sql_guard import sanitize_read_only_sql
 from ...utils.ssh_tunnel_cli import CLISSHTunnel
 from ...utils.tsv_formatter import format_tsv_line
 from ..base import BaseConnector
-from .settings import client_settings, without_refused
+from .settings import PROBE_QUERY, decide_client_settings, refuses_sent_setting
 
 logger = logging.getLogger(__name__)
 
@@ -26,9 +26,9 @@ class ClickHousePythonConnector(BaseConnector):
 
     def __init__(self, connection: Connection):
         super().__init__(connection)
-        # Client-side settings each server accepted when a client was first
-        # created for it, keyed by the selected server (see _open_client).
-        self._accepted_settings: dict[tuple[str, int], dict[str, object]] = {}
+        # Client-side settings decided for each server from its
+        # ``system.settings``, keyed by the selected server (see _open_client).
+        self._decided_settings: dict[tuple[str, int], dict[str, object]] = {}
 
     @asynccontextmanager
     async def _get_ssh_tunnel(self, server: str | None = None):
@@ -194,10 +194,12 @@ class ClickHousePythonConnector(BaseConnector):
         database: str,
         original_port: int | None,
         is_ssh_tunnel: bool,
-        *,
-        settings: dict[str, object] | None = None,
     ):
-        """Create a configured clickhouse-connect client for this endpoint."""
+        """Create a configured clickhouse-connect client for this endpoint.
+
+        No client-side settings are attached: they are decided per server
+        and passed with each query (see _open_client).
+        """
         interface, resolved_port = self._resolve_client_endpoint(
             port, original_port, is_ssh_tunnel
         )
@@ -210,7 +212,6 @@ class ClickHousePythonConnector(BaseConnector):
             password=self.password,
             connect_timeout=self.connection_timeout,
             query_limit=0,  # No limit on query result size (we handle it ourselves)
-            settings=settings,
         )
 
     def _open_client(
@@ -222,49 +223,38 @@ class ClickHousePythonConnector(BaseConnector):
         is_ssh_tunnel: bool,
         server_key: tuple[str, int] | None,
     ) -> tuple[Client, dict[str, object]]:
-        """Create the client with the settings this login accepts on this server.
+        """Create the client and decide the settings to send on this server.
 
-        clickhouse-connect validates client-side settings against
-        ``system.settings`` for this login when the client is created, so the
-        decision never involves a statement. A profile that already sets
-        ``readonly`` refuses settings by name; each refused one is dropped and
-        the result is remembered per server. An answer without ``readonly``
-        is only safe while that server's profile stays read-only, so it is
-        not reused: the settings are negotiated again for every statement.
-        Returns the client and the settings it was created with (possibly
-        empty).
+        The client carries no settings of its own. When this server's answer
+        is unknown, ``PROBE_QUERY`` is run through it and the settings are
+        decided from the profile it reports, then remembered per server. An
+        answer without ``readonly`` is only safe while that server's profile
+        stays read-only, so it is not reused: ``system.settings`` is read
+        again for every statement. A login whose profile locks ``readonly``
+        at 0 is refused. Returns the client and the settings to send with
+        each query (possibly empty).
         """
-        settings = self._accepted_settings.get(server_key)
+        client = self._create_client(host, port, database, original_port, is_ssh_tunnel)
+        settings = self._decided_settings.get(server_key)
         if settings is not None and "readonly" in settings:
-            client = self._create_client(
-                host, port, database, original_port, is_ssh_tunnel,
-                settings=settings,
-            )
             return client, settings
 
-        settings = client_settings(self.query_timeout)
-        while True:
-            try:
-                client = self._create_client(
-                    host, port, database, original_port, is_ssh_tunnel,
-                    settings=settings or None,
-                )
-            except ClickHouseError as exc:
-                reduced = without_refused(settings, str(exc))
-                if reduced is None:
-                    raise
-                logger.warning(
-                    "ClickHouse: the profile of user %s refuses the client-side "
-                    "%s setting; continuing without it (%s)",
-                    self.username,
-                    set(settings) - set(reduced),
-                    exc,
-                )
-                settings = reduced
-                continue
-            if server_key is not None:
-                self._accepted_settings[server_key] = settings
-            return client, settings
+        try:
+            rows = client.query(PROBE_QUERY, column_oriented=False).result_rows
+            settings = decide_client_settings(rows, self.query_timeout)
+        except Exception:
+            client.close()
+            raise
+        if len(settings) < 2:
+            logger.warning(
+                "ClickHouse: the profile of user %s locks the client-side %s "
+                "setting; continuing without it",
+                self.username,
+                {"readonly", "max_execution_time"} - set(settings),
+            )
+        if server_key is not None:
+            self._decided_settings[server_key] = settings
+        return client, settings
 
     def _forget_if_refused(
         self,
@@ -272,9 +262,9 @@ class ClickHousePythonConnector(BaseConnector):
         settings: dict[str, object],
         exc: ClickHouseError,
     ) -> None:
-        """Drop the remembered answer when the server refuses a setting it accepted."""
-        if without_refused(settings, str(exc)) is not None:
-            self._accepted_settings.pop(server_key, None)
+        """Drop the remembered answer when the server refuses a setting it reported changeable."""
+        if refuses_sent_setting(settings, str(exc)):
+            self._decided_settings.pop(server_key, None)
 
     def _execute_sync_query(
         self,
@@ -310,7 +300,9 @@ class ClickHousePythonConnector(BaseConnector):
 
             # Execute query and get result
             try:
-                result = client.query(query, column_oriented=False)
+                result = client.query(
+                    query, column_oriented=False, settings=settings or None
+                )
             except ClickHouseError as exc:
                 self._forget_if_refused(server_key, settings, exc)
                 raise

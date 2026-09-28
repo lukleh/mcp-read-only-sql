@@ -1,23 +1,31 @@
-"""Client-side ClickHouse settings and the read-only-profile fallback.
+"""Client-side ClickHouse settings, decided from ``system.settings``.
 
 Both ClickHouse connectors ask the server for ``readonly=1`` and a
-``max_execution_time`` on every query. A login whose profile already sets
-``readonly`` (1 or 2) refuses such settings by name: ClickHouse answers
-``Cannot modify '<setting>' setting in readonly mode`` and clickhouse-connect
-refuses them client-side as ``Setting <name> is readonly`` before sending.
+``max_execution_time`` on every statement. A login whose profile already
+sets ``readonly`` (1 or 2) refuses such settings, and a profile constraint
+can lock either one. Rather than sending them and interpreting the refusal,
+the connectors read ``system.settings`` first, which every login can read:
+its ``readonly`` column says whether a setting can be changed in this
+session and its ``value`` column what the profile set. The decision is made
+from those two facts and nothing else.
 
-The connectors find out which settings a login accepts once, with a probe
-that does not involve the caller's statement (``SELECT 1`` for the CLI, the
-client construction for clickhouse-connect), drop only the refused setting,
-and remember the result for the connector's lifetime. A statement is never
-re-run with weaker settings than the ones it was first sent with: a
-statement's own ``SETTINGS`` clause produces the same refusal text, and
-re-running it without ``readonly=1`` would run it unguarded.
+A statement is never re-run with weaker settings than the ones it was first
+sent with. A refusal that names one of the sent settings only forgets the
+remembered decision, so the next statement reads ``system.settings`` again.
 """
 
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
+
+from ...errors import ConnectorError
+
+# Sent without any client-side settings, so it reports the profile itself.
+PROBE_QUERY = (
+    "SELECT name, value, readonly FROM system.settings "
+    "WHERE name IN ('readonly', 'max_execution_time')"
+)
 
 _REFUSED = re.compile(
     r"Setting (\w+) is (?:unknown or )?readonly"  # clickhouse-connect validation
@@ -26,8 +34,41 @@ _REFUSED = re.compile(
 
 
 def client_settings(query_timeout: float) -> dict[str, object]:
-    """Settings sent with each query when the login's profile allows them."""
+    """The settings the connectors want to send with each statement."""
     return {"readonly": 1, "max_execution_time": query_timeout}
+
+
+def decide_client_settings(
+    rows: Iterable[Iterable[object]], query_timeout: float
+) -> dict[str, object]:
+    """The settings to send, from ``PROBE_QUERY``'s rows (name, value, readonly).
+
+    A locked setting (``readonly`` column 1) is not sent. If ``readonly``
+    itself is locked, the profile must already be read-only (value 1 or 2);
+    a login whose ``readonly`` is locked at 0 can be neither made read-only
+    by the client nor is it read-only by profile, and running statements
+    for it is refused. A setting missing from the rows is treated as
+    changeable, so it is sent and the server has the last word.
+    """
+    facts: dict[str, tuple[str, bool]] = {}
+    for row in rows:
+        fields = [str(field) for field in row]
+        if len(fields) >= 3:
+            facts[fields[0]] = (fields[1], fields[2] == "1")
+    readonly_value, readonly_locked = facts.get("readonly", ("0", False))
+    _, timeout_locked = facts.get("max_execution_time", ("0", False))
+
+    settings = client_settings(query_timeout)
+    if readonly_locked:
+        if readonly_value not in ("1", "2"):
+            raise ConnectorError(
+                "ClickHouse: this login cannot be made read-only: its profile "
+                "locks the readonly setting at 0. Refusing to run statements."
+            )
+        del settings["readonly"]
+    if timeout_locked:
+        del settings["max_execution_time"]
+    return settings
 
 
 def refused_setting(message: str) -> str | None:
@@ -38,15 +79,11 @@ def refused_setting(message: str) -> str | None:
     return match.group(1) or match.group(2)
 
 
-def without_refused(
-    settings: dict[str, object], message: str
-) -> dict[str, object] | None:
-    """``settings`` minus the one ``message`` refuses, or None if it refuses none.
+def refuses_sent_setting(settings: dict[str, object], message: str) -> bool:
+    """Whether ``message`` refuses one of the settings the connector sent.
 
-    None also when the refused name is not one of ``settings``: that refusal
-    came from the statement itself, not from the client-side settings.
+    False when it names a setting the connector did not send: that refusal
+    came from the statement's own SETTINGS clause.
     """
     name = refused_setting(message)
-    if name is None or name not in settings:
-        return None
-    return {key: value for key, value in settings.items() if key != name}
+    return name is not None and name in settings

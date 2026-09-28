@@ -117,23 +117,30 @@ read.
 - CLI: executes `clickhouse-client` with `--readonly=1`, `--max_execution_time`,
   and `--connect_timeout`. SSH tunnelling adjusts ports but leaves the server in
   read-only mode.
-- Python: uses `clickhouse_connect.get_client(..., settings={'readonly': 1,
-  'max_execution_time': query_timeout})`. Requests are executed via HTTP/HTTPS
-  (or tunneled) and ClickHouse enforces read-only semantics.
+- Python: sends `settings={'readonly': 1, 'max_execution_time':
+  query_timeout}` with every `client.query` / `client.raw_stream` call.
+  Requests are executed via HTTP/HTTPS (or tunneled) and ClickHouse enforces
+  read-only semantics.
 - Both: a login whose profile already sets `readonly` (1 or 2) refuses these
-  client-side settings by name (`Cannot modify '<setting>' setting in
-  readonly mode`, or clickhouse-connect's `Setting <name> is readonly`).
-  Each connector probes once per connector instance, without the caller's
-  statement (`SELECT 1` for the CLI, the client construction for
-  clickhouse-connect), drops only the refused setting and remembers the
-  result. A statement is never re-run with weaker settings: its own
+  client-side settings (`Cannot modify '<setting>' setting in readonly
+  mode`), and a profile constraint can lock either one
+  (`SETTING_CONSTRAINT_VIOLATION`). Before the first statement on a server,
+  each connector runs `SELECT name, value, readonly FROM system.settings`
+  for the two names, with no client-side settings, and sends only the
+  settings whose `readonly` column is 0. `system.settings` is readable by
+  every login. A profile that locks `readonly` at 0 leaves no way to make
+  the login read-only, and the connector refuses to run statements for it.
+  The decision is remembered per server; one without `readonly` is read
+  again before every statement, since only a read-only profile makes it
+  safe. A statement is never re-run with weaker settings: its own
   `SETTINGS` clause produces the same refusal text, and re-running it
-  without `readonly=1` would run it unguarded. Covered by
+  without `readonly=1` would run it unguarded; such a refusal of a sent
+  setting only forgets the remembered decision. Covered by
   `tests/test_clickhouse_readonly_profiles.py` against fixture users
   `readonly_user` (readonly=1, with the `URL`, `CREATE TEMPORARY TABLE` and
-  `INSERT` grants so the profile alone is what refuses `url()` and writes)
-  and `readonly2_user`, plus a write with a `SETTINGS` clause on the
-  full-privilege login.
+  `INSERT` grants so the profile alone is what refuses `url()` and writes),
+  `readonly2_user`, `locked_user` (readonly locked at 0), plus a write with
+  a `SETTINGS` clause on the full-privilege login.
 
 ### Data Manipulation & Mutations
 

@@ -13,6 +13,7 @@ from clickhouse_connect.driver.exceptions import ClickHouseError
 
 from mcp_read_only_sql.connectors.clickhouse.cli import ClickHouseCLIConnector
 from mcp_read_only_sql.connectors.clickhouse.python import ClickHousePythonConnector
+from mcp_read_only_sql.connectors.clickhouse.settings import PROBE_QUERY
 from mcp_read_only_sql.connectors.postgresql.cli import PostgreSQLCLIConnector
 from mcp_read_only_sql.connectors.postgresql.python import PostgreSQLPythonConnector
 from mcp_read_only_sql.utils.sql_guard import ReadOnlyQueryError, sanitize_read_only_sql
@@ -563,7 +564,7 @@ async def test_postgresql_python_blocks_write_statements(
 
 
 def test_clickhouse_python_sets_readonly_setting(monkeypatch, clickhouse_config):
-    """clickhouse-connect client must be instantiated with readonly=1."""
+    """Every statement must be sent with readonly=1 once system.settings allows it."""
 
     captured = {}
 
@@ -571,12 +572,21 @@ def test_clickhouse_python_sets_readonly_setting(monkeypatch, clickhouse_config)
         column_names: ClassVar[list[str]] = ["col"]
         result_rows: ClassVar[list[list[int]]] = [[1]]
 
+    class ProbeResult:
+        result_rows: ClassVar[list[tuple[str, str, int]]] = [
+            ("max_execution_time", "0", 0),
+            ("readonly", "0", 0),
+        ]
+
     class DummyClient:
         def __init__(self, **kwargs):
             captured["client_kwargs"] = kwargs
 
-        def query(self, sql, column_oriented=False):
+        def query(self, sql, column_oriented=False, settings=None):
+            if sql == PROBE_QUERY:
+                return ProbeResult()
             captured["query"] = sql
+            captured["settings"] = settings
             return DummyResult()
 
         def close(self):
@@ -599,7 +609,8 @@ def test_clickhouse_python_sets_readonly_setting(monkeypatch, clickhouse_config)
     )
 
     assert output == "col\n1"
-    assert captured["kwargs"]["settings"]["readonly"] == 1
+    assert captured["kwargs"].get("settings") is None
+    assert captured["settings"]["readonly"] == 1
     assert captured["query"] == "SELECT 1"
 
 
