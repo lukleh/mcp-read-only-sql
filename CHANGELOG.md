@@ -18,9 +18,10 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
   `~/.ssh/known_hosts`, or the file `ssh_tunnel.known_hosts_file` names.
   `accept-new` is the explicit trust-on-first-use mode: the bastion is
   recorded on first use and refused if its key changes, and since `ssh`
-  only warns when it cannot write the file, the tunnel asks `ssh-keygen -F`
-  whether the bastion was known before and is recorded after, failing the
-  connection otherwise. A bastion covered only by an `@cert-authority` entry
+  only warns when it cannot write the file, the tunnel asks `ssh -G` which
+  file and name `ssh` uses for the bastion (so `~/.ssh/config` is honoured)
+  and `ssh-keygen -F` whether it was known before and is recorded after,
+  failing the connection otherwise. A bastion covered only by an `@cert-authority` entry
   is always connected to strictly. `no` restores the previous behaviour and
   records nothing.
 
@@ -36,6 +37,12 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
   implementations, tunnel startup allows 30 seconds instead of 5 for
   interactive prompts, and host certificates and `~/.ssh/config` now apply.
   Paramiko is no longer a dependency.
+
+### Removed
+
+- The `mcp_read_only_sql.utils.ssh_tunnel` module and its `SSHTunnel`
+  class (the Paramiko tunnel). `mcp_read_only_sql.utils.ssh_tunnel_cli`
+  is the one tunnel.
 - An SSH tunnel to a bastion whose host key is not in a known_hosts file
   is refused with an `SSH:` error, as is one whose key changed. Bastions you
   have connected to with `ssh` before are already known; for the others run

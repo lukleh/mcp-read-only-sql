@@ -11,19 +11,47 @@ import signal
 import socket
 import subprocess
 from contextlib import closing
+from dataclasses import dataclass
 
 from ..errors import ConnectorError
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_KNOWN_HOSTS_FILE = "~/.ssh/known_hosts"
-# Read as well, never written: the file ssh consults before the user's.
-GLOBAL_KNOWN_HOSTS_FILE = "/etc/ssh/ssh_known_hosts"
+# Where ssh looks when its configuration says nothing else; used only if
+# ``ssh -G`` cannot be asked.
+DEFAULT_KNOWN_HOSTS_FILES = ("/etc/ssh/ssh_known_hosts", "/etc/ssh/ssh_known_hosts2")
+DEFAULT_USER_KNOWN_HOSTS_FILE = "~/.ssh/known_hosts"
 
 
 def known_hosts_name(host: str, port: int) -> str:
     """The name ssh records a host under: ``[host]:port`` off port 22."""
     return host if port == 22 else f"[{host}]:{port}"
+
+
+def _ssh_resolved_config(options: list[str], destination: str) -> dict[str, str]:
+    """The options ssh would use for ``destination``, from ``ssh -G``.
+
+    ssh resolves ``~/.ssh/config`` (HostName, Port, HostKeyAlias,
+    UserKnownHostsFile, GlobalKnownHostsFile) and prints the result without
+    connecting. An empty dict means ssh could not be asked.
+    """
+    try:
+        resolved = subprocess.run(
+            ["ssh", "-G", *options, destination],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return {}
+    if resolved.returncode != 0:
+        return {}
+    config: dict[str, str] = {}
+    for line in resolved.stdout.splitlines():
+        key, _, value = line.partition(" ")
+        if key:
+            config[key.lower()] = value.strip()
+    return config
 
 
 def _ssh_keygen_find(name: str, path: str) -> list[str]:
@@ -66,6 +94,22 @@ def _key_parses(line: str) -> bool:
     return checked.returncode == 0
 
 
+@dataclass(frozen=True)
+class HostKeySurvey:
+    """What ssh knows about the bastion before or after a connection.
+
+    ``name`` is what ssh records the bastion under and ``record_file`` where,
+    both as ssh itself resolves them. ``pinned`` means a usable host-key
+    entry names the bastion in one of the files ssh reads; ``certified``
+    means a certificate authority entry does.
+    """
+
+    name: str
+    record_file: str
+    pinned: bool
+    certified: bool
+
+
 class CLISSHTunnel:
     """SSH tunnel through the system ``ssh`` command.
 
@@ -101,30 +145,36 @@ class CLISSHTunnel:
         self.ssh_process = None
         self.local_port = None
 
-    def _server_name(self) -> str:
-        return known_hosts_name(self.ssh_host, self.ssh_port)
-
-    def _known_hosts_files(self, record_file: str) -> list[str]:
-        """The files ssh reads for this tunnel, the one it records into last."""
-        files = [GLOBAL_KNOWN_HOSTS_FILE, record_file]
-        if self.ssh_config.known_hosts_file is None:
-            files.append(os.path.expanduser("~/.ssh/known_hosts2"))
-        return files
-
-    def _matches(self, record_file: str) -> list[str]:
-        """Every known_hosts line ssh matches for the bastion, across its files."""
-        lines: list[str] = []
-        for path in self._known_hosts_files(record_file):
-            lines.extend(_ssh_keygen_find(self._server_name(), path))
-        return lines
-
-    def _pinned(self, record_file: str) -> bool:
-        """Whether ssh finds a host key (not a marker line) for the bastion."""
-        return any(not line.startswith("@") for line in self._matches(record_file))
-
-    def _certified(self, record_file: str) -> bool:
-        """Whether ssh finds a certificate authority entry for the bastion."""
-        return any(line.startswith("@cert-authority") for line in self._matches(record_file))
+    def _survey(self, ssh_options: list[str], destination: str) -> HostKeySurvey:
+        """Ask ssh which name and files it uses for the bastion, then ssh-keygen
+        what those files say. Blocking; run it off the event loop."""
+        resolved = _ssh_resolved_config(ssh_options, destination)
+        if resolved:
+            user_files = resolved.get("userknownhostsfile", "").split()
+            global_files = resolved.get("globalknownhostsfile", "").split()
+            name = resolved.get("hostkeyalias") or known_hosts_name(
+                resolved.get("hostname", self.ssh_host),
+                int(resolved.get("port", self.ssh_port)),
+            )
+        else:
+            logger.warning("SSH: ssh -G failed for %s; assuming its default files", destination)
+            user_files = [os.path.expanduser(DEFAULT_USER_KNOWN_HOSTS_FILE)]
+            global_files = list(DEFAULT_KNOWN_HOSTS_FILES)
+            name = known_hosts_name(self.ssh_host, self.ssh_port)
+        record_file = user_files[0] if user_files else os.path.expanduser(
+            DEFAULT_USER_KNOWN_HOSTS_FILE
+        )
+        matches = [
+            line
+            for path in (*global_files, *user_files)
+            for line in _ssh_keygen_find(name, os.path.expanduser(path))
+        ]
+        return HostKeySurvey(
+            name=name,
+            record_file=os.path.expanduser(record_file),
+            pinned=any(not line.startswith("@") for line in matches),
+            certified=any(line.startswith("@cert-authority") for line in matches),
+        )
 
     def _find_free_port(self) -> int:
         """Find a free local port"""
@@ -157,42 +207,48 @@ class CLISSHTunnel:
         # by ssh: yes (the default) requires a provisioned key, accept-new
         # records a bastion on first use and refuses it if its key changes.
         host_key_checking = self.ssh_config.host_key_checking
-        record_file = ""
+        known_hosts_file = (
+            "/dev/null"  # legacy mode: trust everything and record nothing
+            if host_key_checking == "no"
+            else self.ssh_config.known_hosts_file
+        )
+        # Determine destination (user@host) and the options that decide
+        # which known_hosts files and name ssh uses for it.
+        destination = (
+            f"{self.ssh_user}@{self.ssh_host}" if self.ssh_user else self.ssh_host
+        )
+        lookup_options = ["-p", str(self.ssh_port)]
+        if known_hosts_file is not None:
+            lookup_options += ["-o", f"UserKnownHostsFile={known_hosts_file}"]
+
+        # accept-new is trust on first use. ssh only warns when it cannot
+        # record the key and would then treat every connection as first use,
+        # so a bastion ssh does not know yet must be recorded once the tunnel
+        # is up (checked below), and the directory it records into must
+        # exist. ssh itself says where and under which name (ssh -G).
         must_record = False
-        if host_key_checking == "no":
-            # Legacy mode: trust everything and record nothing, whatever file
-            # is configured.
-            known_hosts_file: str | None = "/dev/null"
-        else:
-            known_hosts_file = self.ssh_config.known_hosts_file
-            # ssh only warns when it cannot record a key and would then treat
-            # every connection as first use, so make sure the directory it
-            # writes to exists. Its default file lives in ~/.ssh.
-            record_file = known_hosts_file or os.path.expanduser(DEFAULT_KNOWN_HOSTS_FILE)
-            directory = os.path.dirname(os.path.abspath(record_file))
+        if host_key_checking == "accept-new":
+            before = await asyncio.to_thread(self._survey, lookup_options, destination)
+            directory = os.path.dirname(os.path.abspath(before.record_file))
             try:
                 os.makedirs(directory, mode=0o700, exist_ok=True)
             except OSError as exc:
                 raise ConnectorError(
                     f"SSH: cannot create {directory} to record host keys: {exc}"
                 ) from exc
-            if host_key_checking == "accept-new" and not self._pinned(record_file):
-                if self._certified(record_file):
-                    # A CA entry lets ssh verify a host certificate, but under
-                    # accept-new ssh would also take a raw key from that host
-                    # and nothing here could tell the two apart. Run strictly:
-                    # a valid certificate connects, a raw key is refused.
-                    host_key_checking = "yes"
-                    logger.info(
-                        "SSH: %s is covered by a certificate authority entry; "
-                        "requiring a valid host certificate",
-                        self._server_name(),
-                    )
-                else:
-                    # A bastion not pinned yet must be in the file once the
-                    # tunnel is up; the check below fails closed if ssh could
-                    # not write it.
-                    must_record = True
+            if before.certified and not before.pinned:
+                # A CA entry lets ssh verify a host certificate, but under
+                # accept-new ssh would also take a raw key from that host
+                # and nothing here could tell the two apart. Run strictly:
+                # a valid certificate connects, a raw key is refused.
+                host_key_checking = "yes"
+                logger.info(
+                    "SSH: %s is covered by a certificate authority entry; "
+                    "requiring a valid host certificate",
+                    before.name,
+                )
+            elif not before.pinned:
+                must_record = True
 
         ssh_options = [
             "-N",  # No command execution
@@ -237,11 +293,6 @@ class CLISSHTunnel:
         elif self.ssh_key:
             ssh_options.extend(["-i", self.ssh_key])
 
-        # Determine destination (user@host)
-        destination = (
-            f"{self.ssh_user}@{self.ssh_host}" if self.ssh_user else self.ssh_host
-        )
-
         ssh_cmd = ssh_base_cmd + ssh_options + [destination]
 
         logger.debug("Starting SSH tunnel: %s", " ".join(ssh_cmd))
@@ -282,13 +333,15 @@ class CLISSHTunnel:
                     await asyncio.sleep(poll_interval)
                     continue
 
-            if must_record and not self._pinned(record_file):
-                await self.stop()
-                raise ConnectorError(
-                    f"SSH: the host key for {self._server_name()} was not recorded "
-                    f"in {record_file}; ssh continued without saving it. Check that "
-                    "the file is writable."
-                )
+            if must_record:
+                after = await asyncio.to_thread(self._survey, lookup_options, destination)
+                if not after.pinned:
+                    await self.stop()
+                    raise ConnectorError(
+                        f"SSH: the host key for {after.name} was not recorded in "
+                        f"{after.record_file}; ssh continued without saving it. "
+                        "Check that the file is writable."
+                    )
 
             logger.info(f"SSH tunnel established on local port {self.local_port}")
             return self.local_port

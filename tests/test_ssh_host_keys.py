@@ -14,7 +14,6 @@ import stat
 import subprocess
 import time
 from itertools import pairwise
-from pathlib import Path
 
 import pytest
 
@@ -23,8 +22,8 @@ from mcp_read_only_sql.connectors.postgresql.cli import PostgreSQLCLIConnector
 from mcp_read_only_sql.connectors.postgresql.python import PostgreSQLPythonConnector
 from mcp_read_only_sql.errors import ConnectorError
 from mcp_read_only_sql.utils.ssh_tunnel_cli import (
-    GLOBAL_KNOWN_HOSTS_FILE,
     CLISSHTunnel,
+    HostKeySurvey,
     known_hosts_name,
 )
 from tests.conftest import make_connection
@@ -76,69 +75,102 @@ class TestConfig:
             _config(known_hosts_file=value)
 
 
-class TestWhatSshFinds:
-    """The tunnel asks ssh-keygen -F, so it sees the file as ssh sees it."""
+class TestSurvey:
+    """The tunnel asks ssh -G where and under which name it records the
+    bastion, and ssh-keygen what those files say."""
 
-    def _tunnel(self, tmp_path, text: str, host: str = "bastion.example.com", port: int = 22):
+    def _survey(self, tmp_path, text: str, host: str = "bastion.example.com", port: int = 22):
         path = tmp_path / "pins"
         path.write_text(text)
         config = _config(host=host, port=port, known_hosts_file=str(path))
-        return CLISSHTunnel(config, "db.internal", 5432), str(path)
+        tunnel = CLISSHTunnel(config, "db.internal", 5432)
+        return tunnel._survey(["-p", str(port), "-o", f"UserKnownHostsFile={path}"], f"tunnel@{host}")
 
     def test_name_forms(self):
         assert known_hosts_name("bastion.example.com", 22) == "bastion.example.com"
         assert known_hosts_name("bastion.example.com", 2222) == "[bastion.example.com]:2222"
 
+    def test_ssh_resolves_name_and_files(self, tmp_path):
+        survey = self._survey(tmp_path, "", "bastion.example.com", 2222)
+        assert survey.name == "[bastion.example.com]:2222"
+        assert survey.record_file == str(tmp_path / "pins")
+        assert not survey.pinned and not survey.certified
+
     def test_plain_pin(self, tmp_path):
-        tunnel, path = self._tunnel(tmp_path, f"bastion.example.com {_public_key_line(tmp_path)}\n")
-        assert tunnel._pinned(path)
-        assert not tunnel._certified(path)
+        survey = self._survey(tmp_path, f"bastion.example.com {_public_key_line(tmp_path)}\n")
+        assert survey.pinned and not survey.certified
 
     def test_wildcard_pin_with_port(self, tmp_path):
-        tunnel, path = self._tunnel(
-            tmp_path, f"[*.internal]:2222 {_public_key_line(tmp_path)}\n", "jump.internal", 2222
-        )
-        assert tunnel._pinned(path)
-        other, other_path = self._tunnel(
-            tmp_path, f"[*.internal]:2222 {_public_key_line(tmp_path, 'b')}\n", "jump.internal", 22
-        )
-        assert not other._pinned(other_path)
+        line = f"[*.internal]:2222 {_public_key_line(tmp_path)}\n"
+        assert self._survey(tmp_path, line, "jump.internal", 2222).pinned
+        assert not self._survey(tmp_path, line, "jump.internal", 22).pinned
 
     def test_negated_pattern_excludes_the_host(self, tmp_path):
-        tunnel, path = self._tunnel(
-            tmp_path, f"!bastion.example.com,*.example.com {_public_key_line(tmp_path)}\n"
-        )
-        assert not tunnel._pinned(path)
+        line = f"!bastion.example.com,*.example.com {_public_key_line(tmp_path)}\n"
+        assert not self._survey(tmp_path, line).pinned
 
     def test_hashed_names_as_ssh_keygen_writes_them(self, tmp_path):
-        tunnel, path = self._tunnel(
-            tmp_path, f"[bastion.example.com]:2222 {_public_key_line(tmp_path)}\n",
-            "bastion.example.com", 2222,
-        )
-        subprocess.run(["ssh-keygen", "-q", "-H", "-f", path], check=True)
-        assert Path(path).read_text().startswith("|1|")
-        assert tunnel._pinned(path)
+        path = tmp_path / "pins"
+        path.write_text(f"[bastion.example.com]:2222 {_public_key_line(tmp_path)}\n")
+        subprocess.run(["ssh-keygen", "-q", "-H", "-f", str(path)], check=True)
+        assert path.read_text().startswith("|1|")
+        tunnel = CLISSHTunnel(_config(port=2222, known_hosts_file=str(path)), "db", 1)
+        survey = tunnel._survey(["-p", "2222", "-o", f"UserKnownHostsFile={path}"], "tunnel@bastion.example.com")
+        assert survey.pinned
 
     def test_markers(self, tmp_path):
-        tunnel, path = self._tunnel(
+        survey = self._survey(
             tmp_path,
             f"@revoked bastion.example.com {_public_key_line(tmp_path, 'r')}\n"
             f"@cert-authority *.example.com {_public_key_line(tmp_path, 'ca')}\n",
         )
-        assert not tunnel._pinned(path), "a revoked entry pins nothing"
-        assert tunnel._certified(path)
+        assert not survey.pinned, "a revoked entry pins nothing"
+        assert survey.certified
 
     def test_malformed_key_is_not_a_pin(self, tmp_path):
         """ssh skips a line whose key does not parse; so must the tunnel."""
-        tunnel, path = self._tunnel(
-            tmp_path, "[bastion.example.com]:2222 ssh-rsa not-valid-base64\n",
-            "bastion.example.com", 2222,
-        )
-        assert not tunnel._pinned(path)
+        line = "[bastion.example.com]:2222 ssh-rsa not-valid-base64\n"
+        assert not self._survey(tmp_path, line, "bastion.example.com", 2222).pinned
 
     def test_missing_file(self, tmp_path):
         tunnel = CLISSHTunnel(_config(known_hosts_file=str(tmp_path / "absent")), "db", 1)
-        assert not tunnel._pinned(str(tmp_path / "absent"))
+        survey = tunnel._survey(["-o", f"UserKnownHostsFile={tmp_path / 'absent'}"], "bastion.example.com")
+        assert not survey.pinned
+
+    def test_ssh_config_decides_the_file_and_the_name(self, tmp_path, monkeypatch):
+        """HostKeyAlias and UserKnownHostsFile from ~/.ssh/config win, as they
+        do for ssh; the tunnel takes them from ssh -G instead of guessing."""
+        work_file = tmp_path / "known_hosts_work"
+        work_file.write_text(f"jump.alias {_public_key_line(tmp_path)}\n")
+        monkeypatch.setattr(
+            "mcp_read_only_sql.utils.ssh_tunnel_cli._ssh_resolved_config",
+            lambda options, destination: {
+                "hostname": "10.0.0.5",
+                "port": "22",
+                "hostkeyalias": "jump.alias",
+                "userknownhostsfile": f"{work_file} {tmp_path / 'second'}",
+                "globalknownhostsfile": "/etc/ssh/ssh_known_hosts /etc/ssh/ssh_known_hosts2",
+            },
+        )
+        tunnel = CLISSHTunnel(_config(), "db", 1)
+
+        survey = tunnel._survey([], "tunnel@bastion.example.com")
+
+        assert survey.name == "jump.alias"
+        assert survey.record_file == str(work_file)
+        assert survey.pinned
+
+    def test_falls_back_to_ssh_defaults_when_ssh_g_fails(self, monkeypatch):
+        monkeypatch.setattr(
+            "mcp_read_only_sql.utils.ssh_tunnel_cli._ssh_resolved_config",
+            lambda options, destination: {},
+        )
+        monkeypatch.setattr(
+            "mcp_read_only_sql.utils.ssh_tunnel_cli._ssh_keygen_find", lambda name, path: []
+        )
+        survey = CLISSHTunnel(_config(port=2222), "db", 1)._survey([], "bastion.example.com")
+        assert survey.name == "[bastion.example.com]:2222"
+        assert survey.record_file == os.path.expanduser("~/.ssh/known_hosts")
 
 
 async def _cli_ssh_args(
@@ -172,7 +204,13 @@ async def _cli_ssh_args(
     monkeypatch.setattr(asyncio, "open_connection", fake_open_connection)
     if pinned:
         # The fake ssh records nothing; these tests are about the command line.
-        monkeypatch.setattr(CLISSHTunnel, "_pinned", lambda self, record_file: True)
+        monkeypatch.setattr(
+            CLISSHTunnel,
+            "_survey",
+            lambda self, options, destination: HostKeySurvey(
+                "bastion.example.com", "/dev/null", pinned=True, certified=False
+            ),
+        )
     tunnel = CLISSHTunnel(config, "db.internal", 5432)
     monkeypatch.setattr(tunnel, "_find_free_port", lambda: 45454)
     await tunnel.start()
@@ -215,9 +253,20 @@ class TestCLIOptions:
 
     @pytest.mark.anyio
     async def test_creates_the_directory_ssh_records_into(self, monkeypatch, tmp_path):
-        """ssh only warns when it cannot record a key; the directory must exist."""
+        """Under accept-new ssh only warns when it cannot record a key, so the
+        directory it records into (as ssh resolves it) must exist first."""
         known_hosts = tmp_path / "missing" / "known_hosts"
-        await _cli_ssh_args(monkeypatch, _config(known_hosts_file=str(known_hosts)))
+        monkeypatch.setattr(
+            CLISSHTunnel,
+            "_survey",
+            lambda self, options, destination: HostKeySurvey(
+                "bastion.example.com", str(known_hosts), pinned=True, certified=False
+            ),
+        )
+        config = _config(host_key_checking="accept-new", known_hosts_file=str(known_hosts))
+
+        await _cli_ssh_args(monkeypatch, config, pinned=False)
+
         assert known_hosts.parent.is_dir()
         assert stat.S_IMODE(known_hosts.parent.stat().st_mode) == 0o700
 
@@ -256,18 +305,18 @@ class TestCLIOptions:
         assert _option(args, "StrictHostKeyChecking") == "yes"
         assert known_hosts.read_text().startswith("@cert-authority")
 
-    def test_files_ssh_reads(self, tmp_path):
-        tunnel = CLISSHTunnel(_config(), "db.internal", 5432)
-        assert tunnel._known_hosts_files("/home/u/.ssh/known_hosts") == [
-            GLOBAL_KNOWN_HOSTS_FILE,
-            "/home/u/.ssh/known_hosts",
-            os.path.expanduser("~/.ssh/known_hosts2"),
-        ]
-        explicit = CLISSHTunnel(_config(known_hosts_file=str(tmp_path / "kh")), "db", 1)
-        assert explicit._known_hosts_files(str(tmp_path / "kh")) == [
-            GLOBAL_KNOWN_HOSTS_FILE,
-            str(tmp_path / "kh"),
-        ]
+    @pytest.mark.anyio
+    async def test_a_pin_next_to_a_ca_entry_stays_accept_new(self, monkeypatch, tmp_path):
+        known_hosts = tmp_path / "known_hosts"
+        known_hosts.write_text(
+            f"bastion.example.com {_public_key_line(tmp_path, 'k')}\n"
+            f"@cert-authority bastion.example.com {_public_key_line(tmp_path, 'ca')}\n"
+        )
+        config = _config(host_key_checking="accept-new", known_hosts_file=str(known_hosts))
+
+        args = await _cli_ssh_args(monkeypatch, config, pinned=False)
+
+        assert _option(args, "StrictHostKeyChecking") == "accept-new"
 
 
 def _bastion_name() -> str:
@@ -486,6 +535,21 @@ class TestAgainstBastion:
 
         with pytest.raises(ConnectorError, match="(?i)host key"):
             await connector.execute_query("SELECT 1")
+
+    async def test_no_mode_trusts_a_changed_key_and_records_nothing(
+        self, implementation, tmp_path
+    ):
+        known_hosts = tmp_path / "known_hosts"
+        line = f"{_bastion_name()} {_public_key_line(tmp_path)}\n"
+        known_hosts.write_text(line)
+        connector = _tunnelled_connector(
+            implementation, known_hosts_file=str(known_hosts), host_key_checking="no"
+        )
+
+        result = await connector.execute_query("SELECT 1 AS one")
+
+        assert result.split("\n")[1] == "1"
+        assert known_hosts.read_text() == line
 
     async def test_default_refuses_an_unprovisioned_bastion(self, implementation, tmp_path):
         known_hosts = tmp_path / "known_hosts"
