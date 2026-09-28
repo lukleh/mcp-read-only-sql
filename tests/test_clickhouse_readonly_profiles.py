@@ -49,6 +49,11 @@ READONLY2_REFUSAL = (
     "Code: 164. DB::Exception: Cannot modify 'readonly' setting in readonly mode. "
     "(READONLY)\n"
 )
+# What a profile constraint answers when it locks a previously changeable setting.
+CONSTRAINT_REFUSAL = (
+    "DB::Exception: Setting readonly should not be changed. "
+    "(SETTING_CONSTRAINT_VIOLATION)\n"
+)
 # What a statement's own SETTINGS clause produces under readonly=1.
 STATEMENT_REFUSAL = (
     "Code: 164. DB::Exception: Cannot modify 'max_threads' setting in readonly "
@@ -182,6 +187,11 @@ class TestSettingsHelpers:
             ("Setting readonly is unknown or readonly", "readonly"),
             (PROFILE_REFUSAL, "max_execution_time"),
             (READONLY2_REFUSAL, "readonly"),
+            (CONSTRAINT_REFUSAL, "readonly"),
+            (
+                "Setting max_execution_time should not be changed",
+                "max_execution_time",
+            ),
             (STATEMENT_REFUSAL, "max_threads"),
         ],
     )
@@ -363,6 +373,34 @@ class TestCLIProbe:
 
         assert [_query_of(cmd) for cmd in commands] == [
             PROBE_QUERY, "SELECT 1 + 1", PROBE_QUERY, "SELECT 2 + 2"
+        ]
+
+    @pytest.mark.anyio
+    async def test_new_readonly_constraint_invalidates_cached_settings(
+        self, clickhouse_config, monkeypatch
+    ):
+        commands = _fake_clickhouse_client(
+            monkeypatch,
+            [
+                _probe(NORMAL_PROFILE),
+                _ok("col\n", "1\n"),
+                _fail(CONSTRAINT_REFUSAL),
+                _probe(LOCKED_WRITABLE_PROFILE),
+            ],
+        )
+        connector = ClickHouseCLIConnector(clickhouse_config)
+
+        await connector.execute_query("SELECT 1")
+        with pytest.raises(ConnectorError, match="SETTING_CONSTRAINT_VIOLATION"):
+            await connector.execute_query("SELECT 2")
+        with pytest.raises(ConnectorError, match="cannot be made read-only"):
+            await connector.execute_query("SELECT 3")
+
+        assert [_query_of(cmd) for cmd in commands] == [
+            PROBE_QUERY,
+            "SELECT 1",
+            "SELECT 2",
+            PROBE_QUERY,
         ]
 
     @pytest.mark.anyio

@@ -27,9 +27,10 @@ PROBE_QUERY = (
     "WHERE name IN ('readonly', 'max_execution_time')"
 )
 
+# Client validation, profile constraints, and server read-only mode.
 _REFUSED = re.compile(
-    r"Setting (\w+) is (?:unknown or )?readonly"  # clickhouse-connect validation
-    r"|Cannot modify '(\w+)' setting in readonly mode"  # server, via any client
+    r"Setting (\w+) (?:is (?:unknown or )?readonly|should not be changed)"
+    r"|Cannot modify '(\w+)' setting in readonly mode"
 )
 
 
