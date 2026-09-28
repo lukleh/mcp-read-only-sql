@@ -10,8 +10,8 @@ DEFAULT_SSH_PORT = 22
 DEFAULT_QUERY_TIMEOUT = 120
 DEFAULT_CONNECTION_TIMEOUT = 10
 # OpenSSH StrictHostKeyChecking values accepted for ssh_tunnel.host_key_checking
-HOST_KEY_CHECKING_VALUES = ("accept-new", "yes", "no")
-DEFAULT_HOST_KEY_CHECKING = "accept-new"
+HOST_KEY_CHECKING_VALUES = ("yes", "accept-new", "no")
+DEFAULT_HOST_KEY_CHECKING = "yes"
 
 
 def _normalize_positive_timeout(value: Any, field_name: str) -> float:
@@ -121,9 +121,9 @@ class SSHTunnelConfig:
     private_key: str | None = None
     password: str | None = None
     ssh_timeout: int | None = None
-    # OpenSSH StrictHostKeyChecking value applied by both implementations:
-    # accept-new records a bastion's key on first use and refuses a changed
-    # one, yes refuses unknown keys, no trusts everything (legacy behaviour).
+    # OpenSSH StrictHostKeyChecking value: yes (default) requires the
+    # bastion's key to be known already, accept-new records it on first use
+    # and refuses a changed one, no trusts everything (legacy behaviour).
     host_key_checking: str = DEFAULT_HOST_KEY_CHECKING
     # Where known keys are read from and new ones recorded. None means the
     # SSH default, ~/.ssh/known_hosts.

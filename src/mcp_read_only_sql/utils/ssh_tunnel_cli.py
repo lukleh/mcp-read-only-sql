@@ -4,16 +4,12 @@ Supports key-based authentication and password authentication (via sshpass).
 """
 
 import asyncio
-import base64
-import binascii
-import hashlib
-import hmac
 import logging
 import os
-import re
 import shutil
 import signal
 import socket
+import subprocess
 from contextlib import closing
 
 from ..errors import ConnectorError
@@ -30,107 +26,54 @@ def known_hosts_name(host: str, port: int) -> str:
     return host if port == 22 else f"[{host}]:{port}"
 
 
-def _pattern_matches(pattern: str, hostname: str) -> bool:
-    """An OpenSSH known_hosts host pattern: ``*`` and ``?`` wildcards."""
-    regex = "".join(
-        ".*" if char == "*" else "." if char == "?" else re.escape(char)
-        for char in pattern
-    )
-    return re.fullmatch(regex, hostname, re.IGNORECASE) is not None
+def _ssh_keygen_find(name: str, path: str) -> list[str]:
+    """The lines of ``path`` that ssh matches for ``name`` and whose key parses.
 
-
-def _hashed_matches(name: str, hostname: str) -> bool:
-    """A hashed name, ``|1|salt|hash`` with HMAC-SHA1 of the hostname."""
+    ``ssh-keygen -F`` applies the same host rules as ssh (hashed names,
+    wildcard and negated patterns, markers) but reports a line whose key is
+    garbage too, and ssh would ignore that line. ``ssh-keygen -l`` is asked
+    about each match, marker stripped, so only lines ssh can use count.
+    Nothing here interprets the file on its own.
+    """
     try:
-        _, _, salt, digest = name.split("|", 3)
-        salt_bytes, digest_bytes = base64.b64decode(salt), base64.b64decode(digest)
-    except (ValueError, binascii.Error):
+        found = subprocess.run(
+            ["ssh-keygen", "-F", name, "-f", path],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return []
+    if found.returncode != 0:
+        return []
+    matches = [line for line in found.stdout.splitlines() if line and not line.startswith("#")]
+    return [line for line in matches if _key_parses(line)]
+
+
+def _key_parses(line: str) -> bool:
+    """Whether ssh can read the key on a known_hosts line (``ssh-keygen -l``)."""
+    entry = line.split(" ", 1)[1] if line.startswith("@") and " " in line else line
+    try:
+        checked = subprocess.run(
+            ["ssh-keygen", "-l", "-f", "-"],
+            input=entry + "\n",
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
         return False
-    computed = hmac.new(salt_bytes, hostname.encode(), hashlib.sha1).digest()
-    return hmac.compare_digest(computed, digest_bytes)
-
-
-def _entry_names(hostnames, hostname: str) -> bool:
-    """True when an entry's host list names ``hostname`` the way ssh reads it.
-
-    Plain names and patterns with ``*`` and ``?`` match case-insensitively, a
-    hashed name matches when the hash of ``hostname`` is equal, and a negated
-    pattern (``!name``) excludes the entry when it matches.
-    """
-    matched = False
-    for name in hostnames:
-        if name.startswith("!"):
-            if _pattern_matches(name[1:], hostname):
-                return False
-        elif name.startswith("|1|"):
-            if _hashed_matches(name, hostname):
-                matched = True
-        elif _pattern_matches(name, hostname):
-            matched = True
-    return matched
-
-
-class KnownHosts:
-    """Which hosts the known_hosts files ssh reads say something about.
-
-    Verifying keys is ssh's job; this only answers whether a host is pinned
-    by an entry (of any key type), or covered by a certificate authority
-    entry, so the tunnel knows what to expect after ssh connects. Wildcard
-    patterns, negation, hashed names and the ``@revoked`` and
-    ``@cert-authority`` markers are read as ssh reads them; a revoked entry
-    pins nothing.
-    """
-
-    def __init__(self):
-        self.files: list[str] = []
-        self.pins: list[tuple[str, ...]] = []
-        self.cert_authorities: list[tuple[str, ...]] = []
-
-    def load(self, path: str) -> None:
-        """Read ``path`` if it exists."""
-        self.files.append(path)
-        try:
-            with open(path, encoding="utf-8") as handle:
-                lines = handle.read().splitlines()
-        except OSError:
-            return
-        for raw in lines:
-            line = raw.strip()
-            if not line or line.startswith("#"):
-                continue
-            marker = None
-            if line.startswith("@"):
-                marker, _, line = line.partition(" ")
-            fields = line.split()
-            if len(fields) < 3:
-                continue
-            hostnames = tuple(fields[0].split(","))
-            if marker == "@cert-authority":
-                self.cert_authorities.append(hostnames)
-            elif marker is None:
-                self.pins.append(hostnames)
-
-    def pinned_any(self, hostname: str) -> bool:
-        """Whether a host-key entry of any type names ``hostname``."""
-        return any(_entry_names(names, hostname) for names in self.pins)
-
-    def certified(self, hostname: str) -> bool:
-        """Whether a certificate authority entry names ``hostname``.
-
-        Such an entry lets ssh verify a host certificate, but does not by
-        itself prove that a given connection used one: under accept-new ssh
-        would still take a raw key from that host. The tunnel therefore runs
-        strictly in that case.
-        """
-        return any(_entry_names(names, hostname) for names in self.cert_authorities)
+    return checked.returncode == 0
 
 
 class CLISSHTunnel:
     """SSH tunnel through the system ``ssh`` command.
 
     Used by every connector. ``ssh`` brings its own host-key verification,
-    agent and certificate support, and configuration; the tunnel only
-    chooses options and checks afterwards that a first-use key was recorded.
+    agent and certificate support, and configuration. By default the bastion
+    must already be known (``StrictHostKeyChecking=yes``). In the explicit
+    ``accept-new`` mode the tunnel asks ``ssh-keygen -F`` whether the bastion
+    was known before and is recorded after, and fails closed otherwise.
     """
 
     DEFAULT_SSH_TIMEOUT = 30  # seconds — generous default to accommodate
@@ -168,19 +111,20 @@ class CLISSHTunnel:
             files.append(os.path.expanduser("~/.ssh/known_hosts2"))
         return files
 
-    def _known(self, record_file: str) -> KnownHosts:
-        known = KnownHosts()
+    def _matches(self, record_file: str) -> list[str]:
+        """Every known_hosts line ssh matches for the bastion, across its files."""
+        lines: list[str] = []
         for path in self._known_hosts_files(record_file):
-            known.load(path)
-        return known
+            lines.extend(_ssh_keygen_find(self._server_name(), path))
+        return lines
 
     def _pinned(self, record_file: str) -> bool:
-        """Whether a host-key entry ssh would read names the bastion."""
-        return self._known(record_file).pinned_any(self._server_name())
+        """Whether ssh finds a host key (not a marker line) for the bastion."""
+        return any(not line.startswith("@") for line in self._matches(record_file))
 
     def _certified(self, record_file: str) -> bool:
-        """Whether only a certificate authority entry covers the bastion."""
-        return self._known(record_file).certified(self._server_name())
+        """Whether ssh finds a certificate authority entry for the bastion."""
+        return any(line.startswith("@cert-authority") for line in self._matches(record_file))
 
     def _find_free_port(self) -> int:
         """Find a free local port"""
@@ -210,8 +154,8 @@ class CLISSHTunnel:
         self.local_port = self._find_free_port()
 
         # Build SSH options common to all auth modes. Host keys are verified
-        # the way ssh itself does: accept-new (the default) records a bastion
-        # on first use and refuses it if its key changes.
+        # by ssh: yes (the default) requires a provisioned key, accept-new
+        # records a bastion on first use and refuses it if its key changes.
         host_key_checking = self.ssh_config.host_key_checking
         record_file = ""
         must_record = False

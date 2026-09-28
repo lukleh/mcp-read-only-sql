@@ -30,6 +30,7 @@ def test_docker_test_helpers_default_to_localhost(monkeypatch):
         "port": 2222,
         "user": "tunnel",
         "known_hosts_file": docker_test_known_hosts(),
+        "host_key_checking": "accept-new",
         "password": "secret",
     }
     assert docker_test_known_hosts().endswith(f"-{os.getpid()}")
@@ -52,6 +53,7 @@ def test_docker_test_helpers_honor_env_overrides(monkeypatch):
         "port": 3222,
         "user": "tunnel",
         "known_hosts_file": "/tmp/known_hosts.test",
+        "host_key_checking": "accept-new",
         "private_key": "/tmp/key",
     }
 

@@ -14,17 +14,15 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
   system `ssh`, Paramiko `AutoAddPolicy` with no loaded keys), so a spoofed
   bastion would have received the database credentials. The new
   `ssh_tunnel.host_key_checking` field takes the OpenSSH values and defaults
-  to `accept-new`: a bastion is recorded on first use and refused if its key
-  changes. `yes` refuses unrecorded bastions; `no` restores the previous
-  behaviour and records nothing. Known keys are read from
-  `/etc/ssh/ssh_known_hosts` and `~/.ssh/known_hosts`, and new ones recorded
-  in the latter, unless `ssh_tunnel.known_hosts_file` names another file,
-  whose directory is created when missing. Beyond what `ssh` does on its
-  own: a first-use key that `ssh` could not record fails the connection
-  instead of leaving the next one unverified, and a bastion covered only by
-  an `@cert-authority` entry is connected to with `StrictHostKeyChecking=yes`,
-  so a valid host certificate connects and a raw key is refused rather than
-  recorded.
+  to `yes`: the bastion's key must already be in `/etc/ssh/ssh_known_hosts`,
+  `~/.ssh/known_hosts`, or the file `ssh_tunnel.known_hosts_file` names.
+  `accept-new` is the explicit trust-on-first-use mode: the bastion is
+  recorded on first use and refused if its key changes, and since `ssh`
+  only warns when it cannot write the file, the tunnel asks `ssh-keygen -F`
+  whether the bastion was known before and is recorded after, failing the
+  connection otherwise. A bastion covered only by an `@cert-authority` entry
+  is always connected to strictly. `no` restores the previous behaviour and
+  records nothing.
 
 ### Changed
 
@@ -38,10 +36,11 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
   implementations, tunnel startup allows 30 seconds instead of 5 for
   interactive prompts, and host certificates and `~/.ssh/config` now apply.
   Paramiko is no longer a dependency.
-- A bastion whose host key changed, or one not yet recorded under
-  `host_key_checking: yes`, is refused with an `SSH:` error. Existing
-  configurations keep working: their bastions are recorded on the next
-  connection. Set `host_key_checking: no` to opt out.
+- An SSH tunnel to a bastion whose host key is not in a known_hosts file
+  is refused with an `SSH:` error, as is one whose key changed. Bastions you
+  have connected to with `ssh` before are already known; for the others run
+  `ssh-keyscan -p <port> <host> >> ~/.ssh/known_hosts` once, or set
+  `host_key_checking: accept-new` to trust them on first use.
 
 ## [0.5.1] - 2026-09-25
 

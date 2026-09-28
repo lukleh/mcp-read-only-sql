@@ -90,6 +90,8 @@ def docker_test_ssh_tunnel(
         "port": docker_test_ssh_port(),
         "user": user,
         "known_hosts_file": known_hosts_file or docker_test_known_hosts(),
+        # The fixture bastion is not provisioned anywhere; trust it on first use.
+        "host_key_checking": "accept-new",
     }
     if private_key is not None:
         config["private_key"] = private_key
