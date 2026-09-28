@@ -22,6 +22,11 @@ GLOBAL_KNOWN_HOSTS_FILE = "/etc/ssh/ssh_known_hosts"
 _KNOWN_HOSTS_WRITE_LOCK = threading.Lock()
 
 
+def known_hosts_name(host: str, port: int) -> str:
+    """The name ssh and Paramiko record a host under: ``[host]:port`` off port 22."""
+    return host if port == 22 else f"[{host}]:{port}"
+
+
 def _has_line(path: str, line: str) -> bool:
     try:
         with open(path, encoding="utf-8") as handle:
@@ -133,6 +138,10 @@ class KnownHosts:
                 return entry.key
         return None
 
+    def pinned_any(self, hostname: str) -> bool:
+        """Whether any entry, of any key type, names ``hostname``."""
+        return any(_entry_names(entry.hostnames, hostname) for entry in self.entries)
+
     def is_revoked(self, hostname: str, key) -> bool:
         return any(
             entry.key == key and _entry_names(entry.hostnames, hostname)
@@ -194,10 +203,17 @@ class AcceptNewHostKeyPolicy(_KnownHostsPolicy):
         with _KNOWN_HOSTS_WRITE_LOCK:
             if _has_line(path, line):
                 return  # another tunnel recorded it meanwhile
-            os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
-            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
-            with os.fdopen(fd, "a", encoding="utf-8") as handle:
-                handle.write(line + "\n")
+            try:
+                os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+                fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+                with os.fdopen(fd, "a", encoding="utf-8") as handle:
+                    handle.write(line + "\n")
+            except OSError as exc:
+                # Fail closed: an unrecorded key would make the next
+                # connection first use again.
+                raise paramiko.SSHException(
+                    f"cannot record the host key for {hostname} in {path}: {exc}"
+                ) from exc
         logger.info(
             "SSH: recorded new %s host key for %s in %s", key.get_name(), hostname, path
         )
@@ -266,6 +282,7 @@ class SSHTunnel:
                 known_hosts_file = self.ssh_config.known_hosts_file or os.path.expanduser(
                     DEFAULT_KNOWN_HOSTS_FILE
                 )
+                known: KnownHosts | None = None
                 if host_key_checking == "no":
                     # Legacy mode: trust everything and record nothing.
                     policy: paramiko.MissingHostKeyPolicy = paramiko.AutoAddPolicy()
@@ -340,6 +357,15 @@ class SSHTunnel:
                 logger.info(f"Connecting to SSH server {ssh_host}:{ssh_port}")
                 self.ssh_client.connect(**connect_kwargs)
                 self.transport = self.ssh_client.get_transport()
+                if known is not None:
+                    # Paramiko accepts an exactly pinned key without asking
+                    # the policy, so a revoked key that is also pinned would
+                    # pass. Check the key the server actually used.
+                    server_name = known_hosts_name(ssh_host, ssh_port)
+                    if known.is_revoked(server_name, self.transport.get_remote_server_key()):
+                        raise paramiko.SSHException(
+                            f"Host key for {server_name} is revoked in known_hosts"
+                        )
 
                 # Get a free local port
                 sock = socket.socket()

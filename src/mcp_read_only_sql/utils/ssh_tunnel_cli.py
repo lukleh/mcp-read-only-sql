@@ -12,7 +12,12 @@ import socket
 from contextlib import closing
 
 from ..errors import ConnectorError
-from .ssh_tunnel import DEFAULT_KNOWN_HOSTS_FILE
+from .ssh_tunnel import (
+    DEFAULT_KNOWN_HOSTS_FILE,
+    GLOBAL_KNOWN_HOSTS_FILE,
+    KnownHosts,
+    known_hosts_name,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +50,23 @@ class CLISSHTunnel:
         self.ssh_process = None
         self.local_port = None
 
+    def _server_name(self) -> str:
+        return known_hosts_name(self.ssh_host, self.ssh_port)
+
+    def _known_hosts_files(self, record_file: str) -> list[str]:
+        """The files ssh reads for this tunnel, the one it records into last."""
+        files = [GLOBAL_KNOWN_HOSTS_FILE, record_file]
+        if self.ssh_config.known_hosts_file is None:
+            files.append(os.path.expanduser("~/.ssh/known_hosts2"))
+        return files
+
+    def _pinned(self, record_file: str) -> bool:
+        """Whether any entry ssh would read names the bastion, of any key type."""
+        known = KnownHosts()
+        for path in self._known_hosts_files(record_file):
+            known.load(path)
+        return known.pinned_any(self._server_name())
+
     def _find_free_port(self) -> int:
         """Find a free local port"""
         with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
@@ -76,6 +98,8 @@ class CLISSHTunnel:
         # the way ssh itself does: accept-new (the default) records a bastion
         # on first use and refuses it if its key changes.
         host_key_checking = self.ssh_config.host_key_checking
+        record_file = ""
+        must_record = False
         if host_key_checking == "no":
             # Legacy mode: trust everything and record nothing, whatever file
             # is configured, matching the Paramiko tunnel.
@@ -93,6 +117,11 @@ class CLISSHTunnel:
                 raise ConnectorError(
                     f"SSH: cannot create {directory} to record host keys: {exc}"
                 ) from exc
+            # A bastion not pinned yet must be in the file once the tunnel is
+            # up; the check below fails closed if ssh could not write it.
+            must_record = host_key_checking == "accept-new" and not self._pinned(
+                record_file
+            )
 
         ssh_options = [
             "-N",  # No command execution
@@ -181,6 +210,14 @@ class CLISSHTunnel:
                 except (TimeoutError, ConnectionRefusedError, OSError):
                     await asyncio.sleep(poll_interval)
                     continue
+
+            if must_record and not self._pinned(record_file):
+                await self.stop()
+                raise ConnectorError(
+                    f"SSH: the host key for {self._server_name()} was not recorded "
+                    f"in {record_file}; ssh continued without saving it. Check that "
+                    "the file is writable."
+                )
 
             logger.info(f"SSH tunnel established on local port {self.local_port}")
             return self.local_port

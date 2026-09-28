@@ -55,6 +55,9 @@ async def test_cli_tunnel_waits_until_forwarded_port_accepts_connections(monkeyp
     monkeypatch.setattr(asyncio, "open_connection", fake_open_connection)
     monkeypatch.setattr(asyncio, "sleep", fake_sleep)
 
+    # The fake ssh records nothing and this test is about the port polling,
+    # so treat the bastion as pinned rather than reading ~/.ssh/known_hosts.
+    monkeypatch.setattr(CLISSHTunnel, "_pinned", lambda self, record_file: True)
     tunnel = CLISSHTunnel(ssh_config, "db.internal", 5432)
     monkeypatch.setattr(tunnel, "_find_free_port", lambda: 45454)
 

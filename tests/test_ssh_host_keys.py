@@ -69,7 +69,9 @@ class TestConfig:
             _config(known_hosts_file=value)
 
 
-async def _cli_ssh_args(monkeypatch, config: SSHTunnelConfig) -> list[str]:
+async def _cli_ssh_args(
+    monkeypatch, config: SSHTunnelConfig, *, pinned: bool = True
+) -> list[str]:
     """Start a CLI tunnel against a fake ssh and return its command line."""
 
     class FakeProcess:
@@ -96,6 +98,9 @@ async def _cli_ssh_args(monkeypatch, config: SSHTunnelConfig) -> list[str]:
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
     monkeypatch.setattr(asyncio, "open_connection", fake_open_connection)
+    if pinned:
+        # The fake ssh records nothing; these tests are about the command line.
+        monkeypatch.setattr(CLISSHTunnel, "_pinned", lambda self, record_file: True)
     tunnel = CLISSHTunnel(config, "db.internal", 5432)
     monkeypatch.setattr(tunnel, "_find_free_port", lambda: 45454)
     await tunnel.start()
@@ -144,6 +149,29 @@ class TestCLIOptions:
         await _cli_ssh_args(monkeypatch, _config(known_hosts_file=str(known_hosts)))
         assert known_hosts.parent.is_dir()
         assert stat.S_IMODE(known_hosts.parent.stat().st_mode) == 0o700
+
+    @pytest.mark.anyio
+    async def test_first_use_fails_closed_when_ssh_recorded_nothing(
+        self, monkeypatch, tmp_path
+    ):
+        """ssh only warns when it cannot write the file; the tunnel must not."""
+        known_hosts = tmp_path / "known_hosts"
+        known_hosts.write_text("")
+        config = _config(known_hosts_file=str(known_hosts))
+
+        with pytest.raises(ConnectorError, match="was not recorded"):
+            await _cli_ssh_args(monkeypatch, config, pinned=False)
+
+    @pytest.mark.anyio
+    async def test_a_wildcard_pin_counts_as_recorded(self, monkeypatch, tmp_path):
+        known_hosts = tmp_path / "known_hosts"
+        key = paramiko.RSAKey.generate(1024)
+        known_hosts.write_text(f"*.example.com ssh-rsa {key.get_base64()}\n")
+        config = _config(known_hosts_file=str(known_hosts))
+
+        args = await _cli_ssh_args(monkeypatch, config, pinned=False)
+
+        assert _option(args, "StrictHostKeyChecking") == "accept-new"
 
 
 class _FakeClient:
@@ -213,6 +241,61 @@ class TestKnownHostsEntries:
             with pytest.raises(paramiko.SSHException, match="revoked"):
                 policy.missing_host_key(_FakeClient(), "bastion.example.com", key)
         assert not (tmp_path / "kh").exists()
+
+    def test_revoked_key_is_refused_even_with_an_exact_pin(self, monkeypatch, tmp_path):
+        """Paramiko accepts an exact pin without asking the policy, so the key
+        the server used is checked against @revoked after connecting."""
+        key = paramiko.RSAKey.generate(1024)
+        known_hosts = tmp_path / "known_hosts"
+        known_hosts.write_text(
+            f"bastion.example.com ssh-rsa {key.get_base64()}\n"
+            f"@revoked bastion.example.com ssh-rsa {key.get_base64()}\n"
+        )
+
+        class FakeTransport:
+            def get_remote_server_key(self):
+                return key
+
+            def is_active(self):
+                return True
+
+            def close(self):
+                pass
+
+        class FakeSSHClient:
+            host_keys = paramiko.HostKeys()
+
+            def get_host_keys(self):
+                return self.host_keys
+
+            def set_missing_host_key_policy(self, policy):
+                pass
+
+            def connect(self, **kwargs):
+                pass
+
+            def get_transport(self):
+                return FakeTransport()
+
+            def close(self):
+                pass
+
+        monkeypatch.setattr(paramiko, "SSHClient", FakeSSHClient)
+        config = _config(known_hosts_file=str(known_hosts))
+
+        with pytest.raises(ConnectorError, match="revoked"):
+            SSHTunnel(config, "db.internal", 5432)._start_sync()
+
+    def test_unwritable_file_fails_closed(self, tmp_path):
+        known_hosts = tmp_path / "known_hosts"
+        known_hosts.write_text("")
+        known_hosts.chmod(0o400)
+        key = paramiko.RSAKey.generate(1024)
+
+        with pytest.raises(paramiko.SSHException, match="cannot record"):
+            AcceptNewHostKeyPolicy(str(known_hosts)).missing_host_key(
+                _FakeClient(), "bastion.example.com", key
+            )
 
     def test_cert_authority_and_bad_lines_are_skipped(self, tmp_path):
         key = paramiko.RSAKey.generate(1024)
@@ -323,6 +406,16 @@ def _bastion_name() -> str:
     return host if port == 22 else f"[{host}]:{port}"
 
 
+def _bastion_key() -> paramiko.PKey:
+    """The host key the fixture bastion presents, fetched over a bare transport."""
+    transport = paramiko.Transport((docker_test_ssh_host(), docker_test_ssh_port()))
+    try:
+        transport.start_client(timeout=10)
+        return transport.get_remote_server_key()
+    finally:
+        transport.close()
+
+
 def _wrong_ed25519_line() -> str:
     public = Ed25519PrivateKey.generate().public_key()
     return public.public_bytes(Encoding.OpenSSH, PublicFormat.OpenSSH).decode()
@@ -376,6 +469,35 @@ class TestAgainstBastion:
         await connector.execute_query("SELECT 1")
 
         assert paramiko.HostKeys(str(known_hosts)).lookup(_bastion_name()) is not None
+
+    async def test_unwritable_file_fails_closed(self, implementation, tmp_path):
+        known_hosts = tmp_path / "known_hosts"
+        known_hosts.write_text("")
+        known_hosts.chmod(0o400)
+        connector = _tunnelled_connector(
+            implementation, known_hosts_file=str(known_hosts)
+        )
+
+        with pytest.raises(ConnectorError, match="(?i)record"):
+            await connector.execute_query("SELECT 1")
+
+        assert known_hosts.read_text() == ""
+
+    async def test_revoked_key_is_refused_next_to_an_ordinary_pin(
+        self, implementation, tmp_path
+    ):
+        key = _bastion_key()
+        known_hosts = tmp_path / "known_hosts"
+        known_hosts.write_text(
+            f"{_bastion_name()} {key.get_name()} {key.get_base64()}\n"
+            f"@revoked {_bastion_name()} {key.get_name()} {key.get_base64()}\n"
+        )
+        connector = _tunnelled_connector(
+            implementation, known_hosts_file=str(known_hosts)
+        )
+
+        with pytest.raises(ConnectorError, match="(?i)revoked"):
+            await connector.execute_query("SELECT 1")
 
     async def test_changed_key_is_refused(self, implementation, tmp_path):
         known_hosts = tmp_path / "known_hosts"

@@ -24,8 +24,13 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
   entries are skipped because Paramiko cannot verify host certificates) and
   appends new keys in OpenSSH's line format, so `ssh` and both
   implementations share one record. Both create the directory of the
-  known_hosts file when it is missing, since `ssh` would otherwise only warn
-  and treat every connection as first use.
+  known_hosts file when it is missing, and a first-use key that could not be
+  recorded fails the connection: `ssh` only warns when it cannot write the
+  file and would treat every later connection as first use, so the
+  system-ssh tunnel checks that the bastion is pinned once the tunnel is up.
+  The Paramiko tunnel checks the key the server used against `@revoked`
+  after connecting, since Paramiko accepts an exactly pinned key without
+  consulting the policy.
 
 ### Changed
 
