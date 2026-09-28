@@ -46,36 +46,12 @@ class ClickHousePythonConnector(BaseConnector):
             remote_port = 8443
         # Ports 8123 and 8443 stay as-is
 
-        from ...utils.ssh_tunnel import SSHTunnel
-
-        # Attempt Paramiko-based tunnel first
-        tunnel = SSHTunnel(self.ssh_config, remote_host, remote_port)
-        try:
-            local_port = await tunnel.start()
-        except RuntimeError as exc:
-            message = str(exc)
-            if "SSH: Authentication failed" not in message:
-                raise
-            logger.info(
-                "SSH: Paramiko authentication failed for %s; falling back to system ssh tunnel",
-                remote_host,
-            )
-        except TimeoutError:
-            raise
-        else:
-            try:
-                yield local_port
-            finally:
-                await tunnel.stop()
-            return
-
-        # Fall back to CLI-based tunnel (system ssh) if Paramiko cannot authenticate
-        cli_tunnel = CLISSHTunnel(self.ssh_config, remote_host, remote_port)
-        local_port = await cli_tunnel.start()
+        tunnel = CLISSHTunnel(self.ssh_config, remote_host, remote_port)
+        local_port = await tunnel.start()
         try:
             yield local_port
         finally:
-            await cli_tunnel.stop()
+            await tunnel.stop()
 
     async def execute_query(
         self, query: str, database: str | None = None, server: str | None = None

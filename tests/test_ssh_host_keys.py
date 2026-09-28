@@ -1,34 +1,31 @@
-"""Bastion host keys are verified the way OpenSSH does it.
+"""Bastion host keys are verified by ssh, for every connector.
 
 ``host_key_checking`` defaults to ``accept-new``: a bastion is recorded on
 first use and refused if its key changes. ``yes`` refuses unknown hosts and
-``no`` restores the old trust-everything behaviour. Both the system-ssh and
-the Paramiko tunnel honour it and share the OpenSSH known_hosts format.
+``no`` restores the old trust-everything behaviour. Beyond what ssh does on
+its own, the tunnel fails closed when ssh could not record a first-use key,
+and runs strictly when only a certificate authority entry covers the host.
 """
 
 import asyncio
 import os
 import stat
 import subprocess
+import time
 from itertools import pairwise
 
-import paramiko
 import pytest
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 from mcp_read_only_sql.config.connection import SSHTunnelConfig
 from mcp_read_only_sql.connectors.postgresql.cli import PostgreSQLCLIConnector
 from mcp_read_only_sql.connectors.postgresql.python import PostgreSQLPythonConnector
 from mcp_read_only_sql.errors import ConnectorError
-from mcp_read_only_sql.utils.ssh_tunnel import (
+from mcp_read_only_sql.utils.ssh_tunnel_cli import (
     GLOBAL_KNOWN_HOSTS_FILE,
-    AcceptNewHostKeyPolicy,
+    CLISSHTunnel,
     KnownHosts,
-    SSHTunnel,
-    StrictHostKeyPolicy,
+    known_hosts_name,
 )
-from mcp_read_only_sql.utils.ssh_tunnel_cli import CLISSHTunnel
 from tests.conftest import make_connection
 from tests.docker_test_config import (
     docker_test_ssh_host,
@@ -43,6 +40,14 @@ def _config(**extra) -> SSHTunnelConfig:
     config = SSHTunnelConfig.from_dict({**BASTION, **extra})
     assert config is not None
     return config
+
+
+def _public_key_line(tmp_path, name: str = "key") -> str:
+    """A fresh ed25519 public key as ssh-keygen prints it: type and base64."""
+    path = tmp_path / name
+    subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(path)], check=True)
+    key_type, key_data = (tmp_path / f"{name}.pub").read_text().split()[:2]
+    return f"{key_type} {key_data}"
 
 
 class TestConfig:
@@ -70,10 +75,76 @@ class TestConfig:
             _config(known_hosts_file=value)
 
 
+class TestKnownHostsEntries:
+    """What the known_hosts files say about a host, read the way ssh reads them."""
+
+    def _known(self, tmp_path, text: str) -> KnownHosts:
+        path = tmp_path / "pins"
+        path.write_text(text)
+        known = KnownHosts()
+        known.load(str(path))
+        return known
+
+    def test_name_forms(self):
+        assert known_hosts_name("bastion.example.com", 22) == "bastion.example.com"
+        assert known_hosts_name("bastion.example.com", 2222) == "[bastion.example.com]:2222"
+
+    def test_plain_and_wildcard_pins(self, tmp_path):
+        known = self._known(
+            tmp_path,
+            f"bastion.example.com {_public_key_line(tmp_path, 'a')}\n"
+            f"[*.internal]:2222 {_public_key_line(tmp_path, 'b')}\n",
+        )
+        assert known.pinned_any("bastion.example.com")
+        assert known.pinned_any("BASTION.example.com")
+        assert known.pinned_any("[jump.internal]:2222")
+        assert not known.pinned_any("[jump.internal]:22")
+        assert not known.pinned_any("other.example.com")
+
+    def test_negated_pattern_excludes_the_host(self, tmp_path):
+        known = self._known(
+            tmp_path, f"!bastion.example.com,*.example.com {_public_key_line(tmp_path)}\n"
+        )
+        assert not known.pinned_any("bastion.example.com")
+        assert known.pinned_any("other.example.com")
+
+    def test_hashed_names_as_ssh_keygen_writes_them(self, tmp_path):
+        path = tmp_path / "hashed"
+        path.write_text(f"[bastion.example.com]:2222 {_public_key_line(tmp_path)}\n")
+        subprocess.run(["ssh-keygen", "-q", "-H", "-f", str(path)], check=True)
+        assert path.read_text().startswith("|1|")
+        known = KnownHosts()
+        known.load(str(path))
+
+        assert known.pinned_any("[bastion.example.com]:2222")
+        assert not known.pinned_any("[other.example.com]:2222")
+
+    def test_markers(self, tmp_path):
+        known = self._known(
+            tmp_path,
+            f"@revoked bastion.example.com {_public_key_line(tmp_path, 'r')}\n"
+            f"@cert-authority *.example.com {_public_key_line(tmp_path, 'ca')}\n"
+            "@unknown-marker other.example.com ssh-ed25519 AAAA\n",
+        )
+        assert not known.pinned_any("bastion.example.com"), "a revoked entry pins nothing"
+        assert known.certified("bastion.example.com")
+        assert not known.certified("elsewhere.net")
+        assert not known.pinned_any("other.example.com")
+
+    def test_comments_blank_and_short_lines_are_skipped(self, tmp_path):
+        known = self._known(tmp_path, "# comment\n\ntwo fields\n")
+        assert known.pins == [] and known.cert_authorities == []
+
+    def test_missing_file_is_tolerated(self, tmp_path):
+        known = KnownHosts()
+        known.load(str(tmp_path / "absent"))
+        assert known.pins == [] and known.files == [str(tmp_path / "absent")]
+
+
 async def _cli_ssh_args(
     monkeypatch, config: SSHTunnelConfig, *, pinned: bool = True
 ) -> list[str]:
-    """Start a CLI tunnel against a fake ssh and return its command line."""
+    """Start a tunnel against a fake ssh and return its command line."""
 
     class FakeProcess:
         returncode = None
@@ -123,9 +194,9 @@ class TestCLIOptions:
         assert _option(args, "UserKnownHostsFile") is None
 
     @pytest.mark.anyio
-    async def test_explicit_known_hosts_file_is_passed(self, monkeypatch):
-        args = await _cli_ssh_args(monkeypatch, _config(known_hosts_file="/tmp/kh"))
-        assert _option(args, "UserKnownHostsFile") == "/tmp/kh"
+    async def test_explicit_known_hosts_file_is_passed(self, monkeypatch, tmp_path):
+        args = await _cli_ssh_args(monkeypatch, _config(known_hosts_file=str(tmp_path / "kh")))
+        assert _option(args, "UserKnownHostsFile") == str(tmp_path / "kh")
 
     @pytest.mark.anyio
     async def test_yes_refuses_unknown_hosts(self, monkeypatch):
@@ -141,7 +212,6 @@ class TestCLIOptions:
         args = await _cli_ssh_args(monkeypatch, config)
         assert _option(args, "StrictHostKeyChecking") == "no"
         assert _option(args, "UserKnownHostsFile") == "/dev/null"
-
 
     @pytest.mark.anyio
     async def test_creates_the_directory_ssh_records_into(self, monkeypatch, tmp_path):
@@ -164,12 +234,21 @@ class TestCLIOptions:
             await _cli_ssh_args(monkeypatch, config, pinned=False)
 
     @pytest.mark.anyio
+    async def test_a_wildcard_pin_counts_as_recorded(self, monkeypatch, tmp_path):
+        known_hosts = tmp_path / "known_hosts"
+        known_hosts.write_text(f"*.example.com {_public_key_line(tmp_path)}\n")
+        config = _config(known_hosts_file=str(known_hosts))
+
+        args = await _cli_ssh_args(monkeypatch, config, pinned=False)
+
+        assert _option(args, "StrictHostKeyChecking") == "accept-new"
+
+    @pytest.mark.anyio
     async def test_ca_only_entry_runs_ssh_strictly(self, monkeypatch, tmp_path):
         """A CA entry alone cannot tell a verified certificate from a raw
         first-use key, so ssh must require the certificate."""
         known_hosts = tmp_path / "known_hosts"
-        ca = paramiko.RSAKey.generate(1024)
-        known_hosts.write_text(f"@cert-authority bastion.example.com ssh-rsa {ca.get_base64()}\n")
+        known_hosts.write_text(f"@cert-authority bastion.example.com {_public_key_line(tmp_path)}\n")
         config = _config(known_hosts_file=str(known_hosts))
 
         args = await _cli_ssh_args(monkeypatch, config, pinned=False)
@@ -177,326 +256,55 @@ class TestCLIOptions:
         assert _option(args, "StrictHostKeyChecking") == "yes"
         assert known_hosts.read_text().startswith("@cert-authority")
 
-    @pytest.mark.anyio
-    async def test_a_wildcard_pin_counts_as_recorded(self, monkeypatch, tmp_path):
-        known_hosts = tmp_path / "known_hosts"
-        key = paramiko.RSAKey.generate(1024)
-        known_hosts.write_text(f"*.example.com ssh-rsa {key.get_base64()}\n")
-        config = _config(known_hosts_file=str(known_hosts))
-
-        args = await _cli_ssh_args(monkeypatch, config, pinned=False)
-
-        assert _option(args, "StrictHostKeyChecking") == "accept-new"
-
-
-class _FakeClient:
-    def __init__(self):
-        self.host_keys = paramiko.HostKeys()
-
-    def get_host_keys(self):
-        return self.host_keys
-
-
-def _known(tmp_path, text: str) -> KnownHosts:
-    path = tmp_path / "pins"
-    path.write_text(text)
-    known = KnownHosts()
-    known.load(str(path))
-    return known
-
-
-class TestKnownHostsEntries:
-    """The entries ssh matches that Paramiko's literal lookup does not."""
-
-    def test_wildcard_pin_accepts_the_matching_key(self, tmp_path):
-        key = paramiko.RSAKey.generate(1024)
-        known = _known(tmp_path, f"*.example.com ssh-rsa {key.get_base64()}\n")
-        record = tmp_path / "known_hosts"
-
-        AcceptNewHostKeyPolicy(str(record), known).missing_host_key(
-            _FakeClient(), "bastion.example.com", key
-        )
-        StrictHostKeyPolicy(known).missing_host_key(_FakeClient(), "bastion.example.com", key)
-
-        assert not record.exists(), "a pinned host is not recorded again"
-
-    def test_wildcard_pin_refuses_a_different_key(self, tmp_path):
-        pinned, other = paramiko.RSAKey.generate(1024), paramiko.RSAKey.generate(1024)
-        known = _known(tmp_path, f"*.example.com ssh-rsa {pinned.get_base64()}\n")
-
-        for policy in (AcceptNewHostKeyPolicy(str(tmp_path / "kh"), known), StrictHostKeyPolicy(known)):
-            with pytest.raises(paramiko.BadHostKeyException):
-                policy.missing_host_key(_FakeClient(), "bastion.example.com", other)
-
-    def test_negated_pattern_excludes_the_host(self, tmp_path):
-        key = paramiko.RSAKey.generate(1024)
-        known = _known(
-            tmp_path, f"!bastion.example.com,*.example.com ssh-rsa {key.get_base64()}\n"
-        )
-
-        assert known.pinned_keys("bastion.example.com", "ssh-rsa") == []
-        assert known.pinned_keys("other.example.com", "ssh-rsa") == [key]
-
-    def test_hashed_name_is_matched(self, tmp_path):
-        key = paramiko.RSAKey.generate(1024)
-        hashed = paramiko.HostKeys.hash_host("[bastion.example.com]:2222")
-        known = _known(tmp_path, f"{hashed} ssh-rsa {key.get_base64()}\n")
-        host_keys = paramiko.HostKeys()
-
-        known.apply_to(host_keys, "[bastion.example.com]:2222")
-
-        assert known.pinned_keys("[bastion.example.com]:2222", "ssh-rsa") == [key]
-        assert host_keys.lookup("[bastion.example.com]:2222")["ssh-rsa"] == key
-
-    def test_apply_to_feeds_wildcard_pins_and_skips_revoked_keys(self, tmp_path):
-        pinned, revoked = paramiko.RSAKey.generate(1024), paramiko.RSAKey.generate(1024)
-        known = _known(
-            tmp_path,
-            f"*.example.com ssh-rsa {pinned.get_base64()}\n"
-            f"bastion.example.com ssh-rsa {revoked.get_base64()}\n"
-            f"@revoked bastion.example.com ssh-rsa {revoked.get_base64()}\n",
-        )
-        host_keys = paramiko.HostKeys()
-
-        known.apply_to(host_keys, "bastion.example.com")
-
-        assert host_keys.lookup("bastion.example.com")["ssh-rsa"] == pinned
-
-    def test_several_keys_of_one_type_are_all_valid(self, tmp_path):
-        """During a rotation two entries of the same type are valid; ssh
-        accepts either, and so must the policy, without recording anything."""
-        old_key, new_key, other = (paramiko.RSAKey.generate(1024) for _ in range(3))
-        known = _known(
-            tmp_path,
-            f"bastion.example.com ssh-rsa {old_key.get_base64()}\n"
-            f"bastion.example.com ssh-rsa {new_key.get_base64()}\n",
-        )
-        record = tmp_path / "known_hosts"
-        policy = AcceptNewHostKeyPolicy(str(record), known)
-
-        policy.missing_host_key(_FakeClient(), "bastion.example.com", old_key)
-        policy.missing_host_key(_FakeClient(), "bastion.example.com", new_key)
-        StrictHostKeyPolicy(known).missing_host_key(_FakeClient(), "bastion.example.com", old_key)
-        assert not record.exists()
-
-        with pytest.raises(paramiko.BadHostKeyException):
-            policy.missing_host_key(_FakeClient(), "bastion.example.com", other)
-
-    def test_apply_to_leaves_out_a_type_with_several_pins(self, tmp_path):
-        """Paramiko's store holds one key per type; a second would replace the
-        first and its pre-auth check would refuse a valid rotated key."""
-        rsa_old, rsa_new = paramiko.RSAKey.generate(1024), paramiko.RSAKey.generate(1024)
-        ecdsa = paramiko.ECDSAKey.generate()
-        known = _known(
-            tmp_path,
-            f"bastion.example.com ssh-rsa {rsa_old.get_base64()}\n"
-            f"bastion.example.com ssh-rsa {rsa_new.get_base64()}\n"
-            f"bastion.example.com {ecdsa.get_name()} {ecdsa.get_base64()}\n",
-        )
-        host_keys = paramiko.HostKeys()
-
-        known.apply_to(host_keys, "bastion.example.com")
-
-        stored = host_keys.lookup("bastion.example.com")
-        assert "ssh-rsa" not in stored
-        assert stored[ecdsa.get_name()] == ecdsa
-
-    def test_cert_authority_is_kept_apart_from_host_key_pins(self, tmp_path):
-        """A CA entry lets ssh verify a certificate; it is not a pinned key."""
-        ca = paramiko.RSAKey.generate(1024)
-        # Off port 22 the pattern carries the port, as ssh writes it.
-        known = _known(
-            tmp_path, f"@cert-authority [*.example.com]:2222 ssh-rsa {ca.get_base64()}\n"
-        )
-
-        assert known.certified("[bastion.example.com]:2222")
-        assert not known.certified("[bastion.example.com]:22")
-        assert not known.pinned_any("[bastion.example.com]:2222")
-        assert known.pinned_keys("[bastion.example.com]:2222", "ssh-rsa") == []
-
-    def test_revoked_key_is_refused(self, tmp_path):
-        key = paramiko.RSAKey.generate(1024)
-        known = _known(tmp_path, f"@revoked bastion.example.com ssh-rsa {key.get_base64()}\n")
-
-        for policy in (AcceptNewHostKeyPolicy(str(tmp_path / "kh"), known), StrictHostKeyPolicy(known)):
-            with pytest.raises(paramiko.SSHException, match="revoked"):
-                policy.missing_host_key(_FakeClient(), "bastion.example.com", key)
-        assert not (tmp_path / "kh").exists()
-
-    def test_revoked_key_is_refused_before_authentication(self, monkeypatch, tmp_path):
-        """Paramiko checks its store, then the policy, before it authenticates.
-        A key that is pinned and revoked must not reach the store, so the
-        policy refuses it and no credential is ever sent."""
-        key = paramiko.RSAKey.generate(1024)
-        known_hosts = tmp_path / "known_hosts"
-        known_hosts.write_text(
-            f"bastion.example.com ssh-rsa {key.get_base64()}\n"
-            f"@revoked bastion.example.com ssh-rsa {key.get_base64()}\n"
-        )
-        seen = {"authenticated": False}
-
-        class FakeSSHClient:
-            """connect() in the order SSHClient.connect uses: key exchange,
-            host-key check (store, then policy), only then authentication."""
-
-            def __init__(self):
-                self.host_keys = paramiko.HostKeys()
-                self.policy = None
-
-            def get_host_keys(self):
-                return self.host_keys
-
-            def set_missing_host_key_policy(self, policy):
-                self.policy = policy
-
-            def connect(self, hostname, port, **kwargs):
-                name = hostname if port == 22 else f"[{hostname}]:{port}"
-                stored = self.host_keys.lookup(name)
-                if stored is None or key.get_name() not in stored:
-                    self.policy.missing_host_key(self, name, key)
-                elif stored[key.get_name()] != key:
-                    raise paramiko.BadHostKeyException(name, key, stored[key.get_name()])
-                seen["authenticated"] = True
-
-            def close(self):
-                pass
-
-        monkeypatch.setattr(paramiko, "SSHClient", FakeSSHClient)
-        config = _config(known_hosts_file=str(known_hosts))
-
-        with pytest.raises(ConnectorError, match="revoked"):
-            SSHTunnel(config, "db.internal", 5432)._start_sync()
-
-        assert seen["authenticated"] is False
-
-    def test_unwritable_file_fails_closed(self, tmp_path):
-        known_hosts = tmp_path / "known_hosts"
-        known_hosts.write_text("")
-        known_hosts.chmod(0o400)
-        key = paramiko.RSAKey.generate(1024)
-
-        with pytest.raises(paramiko.SSHException, match="cannot record"):
-            AcceptNewHostKeyPolicy(str(known_hosts)).missing_host_key(
-                _FakeClient(), "bastion.example.com", key
-            )
-
-    def test_cert_authority_and_bad_lines_are_skipped(self, tmp_path):
-        key = paramiko.RSAKey.generate(1024)
-        known = _known(
-            tmp_path,
-            "@cert-authority *.example.com ssh-rsa "
-            f"{paramiko.RSAKey.generate(1024).get_base64()}\n"
-            "this is not an entry\n"
-            f"bastion.example.com ssh-rsa {key.get_base64()}\n",
-        )
-
-        assert [entry.key for entry in known.entries] == [key]
-        assert known.revoked == []
-
-    def test_missing_file_is_tolerated(self, tmp_path):
-        known = KnownHosts()
-        known.load(str(tmp_path / "absent"))
-        assert known.entries == [] and known.files == [str(tmp_path / "absent")]
-
-
-class TestParamikoPolicy:
-    def test_accept_new_records_the_key_in_openssh_format(self, tmp_path):
-        known_hosts = tmp_path / "ssh" / "known_hosts"
-        key = paramiko.RSAKey.generate(1024)
-
-        class FakeClient:
-            host_keys = paramiko.HostKeys()
-
-            def get_host_keys(self):
-                return self.host_keys
-
-        client = FakeClient()
-        AcceptNewHostKeyPolicy(str(known_hosts)).missing_host_key(
-            client, "[bastion.example.com]:2222", key
-        )
-
-        assert known_hosts.read_text() == (
-            f"[bastion.example.com]:2222 ssh-rsa {key.get_base64()}\n"
-        )
-        assert stat.S_IMODE(known_hosts.stat().st_mode) == 0o600
-        assert client.host_keys.lookup("[bastion.example.com]:2222")["ssh-rsa"] == key
-
-    def test_accept_new_does_not_record_a_key_twice(self, tmp_path):
-        """Two tunnels racing on a fresh bastion append one line, not two."""
-        known_hosts = tmp_path / "known_hosts"
-        key = paramiko.RSAKey.generate(1024)
-        policy = AcceptNewHostKeyPolicy(str(known_hosts))
-
-        class FakeClient:
-            def __init__(self):
-                self.host_keys = paramiko.HostKeys()
-
-            def get_host_keys(self):
-                return self.host_keys
-
-        policy.missing_host_key(FakeClient(), "bastion.example.com", key)
-        policy.missing_host_key(FakeClient(), "bastion.example.com", key)
-
-        assert known_hosts.read_text().count("\n") == 1
-
-    @pytest.mark.parametrize(
-        ("checking", "policy_type", "loads_known_hosts"),
-        [
-            ("accept-new", AcceptNewHostKeyPolicy, True),
-            ("yes", StrictHostKeyPolicy, True),
-            ("no", paramiko.AutoAddPolicy, False),
-        ],
-    )
-    def test_tunnel_selects_policy(
-        self, monkeypatch, tmp_path, checking, policy_type, loads_known_hosts
-    ):
-        known_hosts = tmp_path / "known_hosts"
-        known_hosts.write_text("")
-        seen: dict[str, object] = {}
-
-        class FakeSSHClient:
-            host_keys = paramiko.HostKeys()
-
-            def get_host_keys(self):
-                return self.host_keys
-
-            def set_missing_host_key_policy(self, policy):
-                seen["policy"] = policy
-
-            def connect(self, **kwargs):
-                raise paramiko.SSHException("stop here")
-
-            def close(self):
-                pass
-
-        monkeypatch.setattr(paramiko, "SSHClient", FakeSSHClient)
-        config = _config(host_key_checking=checking, known_hosts_file=str(known_hosts))
-
-        with pytest.raises(ConnectorError, match="stop here"):
-            SSHTunnel(config, "db.internal", 5432)._start_sync()
-
-        policy = seen["policy"]
-        assert isinstance(policy, policy_type)
-        if loads_known_hosts:
-            # The same two files ssh reads, global first.
-            assert policy.known.files == [GLOBAL_KNOWN_HOSTS_FILE, str(known_hosts)]
-        else:
-            assert not hasattr(policy, "known")
+    def test_files_ssh_reads(self, tmp_path):
+        tunnel = CLISSHTunnel(_config(), "db.internal", 5432)
+        assert tunnel._known_hosts_files("/home/u/.ssh/known_hosts") == [
+            GLOBAL_KNOWN_HOSTS_FILE,
+            "/home/u/.ssh/known_hosts",
+            os.path.expanduser("~/.ssh/known_hosts2"),
+        ]
+        explicit = CLISSHTunnel(_config(known_hosts_file=str(tmp_path / "kh")), "db", 1)
+        assert explicit._known_hosts_files(str(tmp_path / "kh")) == [
+            GLOBAL_KNOWN_HOSTS_FILE,
+            str(tmp_path / "kh"),
+        ]
 
 
 def _bastion_name() -> str:
-    host, port = docker_test_ssh_host(), docker_test_ssh_port()
-    return host if port == 22 else f"[{host}]:{port}"
+    return known_hosts_name(docker_test_ssh_host(), docker_test_ssh_port())
 
 
-def _bastion_key() -> paramiko.PKey:
-    """The host key the fixture bastion presents, fetched over a bare transport."""
-    transport = paramiko.Transport((docker_test_ssh_host(), docker_test_ssh_port()))
-    try:
-        transport.start_client(timeout=10)
-        return transport.get_remote_server_key()
-    finally:
-        transport.close()
+def _bastion_key_line() -> str:
+    """The fixture bastion's ed25519 host key, type and base64, via ssh-keyscan.
+
+    sshd throttles bursts of new connections (MaxStartups), and the suite
+    opens many in a row, so the scan is retried a few times.
+    """
+    for _ in range(10):
+        scan = subprocess.run(
+            ["ssh-keyscan", "-t", "ed25519", "-p", str(docker_test_ssh_port()),
+             docker_test_ssh_host()],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        for line in scan.stdout.splitlines():
+            fields = line.split()
+            if len(fields) >= 3 and fields[1] == "ssh-ed25519":
+                return f"{fields[1]} {fields[2]}"
+        time.sleep(0.5)
+    raise AssertionError("no ed25519 host key from ssh-keyscan after retries")
+
+
+def _recorded(known_hosts, name: str) -> bool:
+    """Whether ssh finds ``name`` in the file, hashed entries included."""
+    found = subprocess.run(
+        ["ssh-keygen", "-F", name, "-f", str(known_hosts)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return found.returncode == 0 and found.stdout.strip() != ""
 
 
 def _bastion_accepted_logins() -> int:
@@ -505,13 +313,6 @@ def _bastion_accepted_logins() -> int:
         ["docker", "logs", "mcp-ssh-bastion"], capture_output=True, text=True, check=False
     )
     return (log.stdout + log.stderr).count("Accepted ")
-
-
-def _fresh_ca_public_line(tmp_path) -> str:
-    """The public key line of a CA that has signed nothing."""
-    ca = tmp_path / "unrelated_ca"
-    subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(ca)], check=True)
-    return (tmp_path / "unrelated_ca.pub").read_text().strip()
 
 
 def _ca_signed_bastion(tmp_path) -> str:
@@ -546,12 +347,22 @@ def _ca_signed_bastion(tmp_path) -> str:
         ],
         check=True,
     )
+    # sshd re-executes on HUP; wait until it offers the certificate.
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline:
+        scan = subprocess.run(
+            ["ssh-keyscan", "-c", "-t", "ed25519", "-p", str(docker_test_ssh_port()),
+             docker_test_ssh_host()],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if "-cert-v01@openssh.com" in scan.stdout:
+            break
+        time.sleep(0.5)
+    else:
+        raise AssertionError("the fixture sshd did not start offering the host certificate")
     return (tmp_path / "ca.pub").read_text().strip()
-
-
-def _wrong_ed25519_line() -> str:
-    public = Ed25519PrivateKey.generate().public_key()
-    return public.public_bytes(Encoding.OpenSSH, PublicFormat.OpenSSH).decode()
 
 
 def _tunnelled_connector(implementation: str, **ssh_extra):
@@ -580,74 +391,73 @@ def _tunnelled_connector(implementation: str, **ssh_extra):
 @pytest.mark.anyio
 @pytest.mark.parametrize("implementation", ["cli", "python"])
 class TestAgainstBastion:
+    """Both implementations go through ssh, so both see the same behaviour."""
+
     async def test_first_use_records_the_bastion(self, implementation, tmp_path):
         known_hosts = tmp_path / "known_hosts"
-        connector = _tunnelled_connector(
-            implementation, known_hosts_file=str(known_hosts)
-        )
+        connector = _tunnelled_connector(implementation, known_hosts_file=str(known_hosts))
 
         result = await connector.execute_query("SELECT 1 AS one")
 
         assert result.split("\n")[1] == "1"
-        # ssh may hash the name it records (HashKnownHosts), so look it up
-        # rather than reading the first field.
-        assert paramiko.HostKeys(str(known_hosts)).lookup(_bastion_name()) is not None
+        assert _recorded(known_hosts, _bastion_name())
 
     async def test_first_use_creates_the_directory(self, implementation, tmp_path):
         known_hosts = tmp_path / "missing" / "known_hosts"
-        connector = _tunnelled_connector(
-            implementation, known_hosts_file=str(known_hosts)
-        )
+        connector = _tunnelled_connector(implementation, known_hosts_file=str(known_hosts))
 
         await connector.execute_query("SELECT 1")
 
-        assert paramiko.HostKeys(str(known_hosts)).lookup(_bastion_name()) is not None
+        assert _recorded(known_hosts, _bastion_name())
 
     async def test_unwritable_file_fails_closed(self, implementation, tmp_path):
         known_hosts = tmp_path / "known_hosts"
         known_hosts.write_text("")
         known_hosts.chmod(0o400)
-        connector = _tunnelled_connector(
-            implementation, known_hosts_file=str(known_hosts)
-        )
+        connector = _tunnelled_connector(implementation, known_hosts_file=str(known_hosts))
 
         with pytest.raises(ConnectorError, match="(?i)record"):
             await connector.execute_query("SELECT 1")
 
         assert known_hosts.read_text() == ""
 
-    async def test_revoked_key_is_refused_next_to_an_ordinary_pin(
-        self, implementation, tmp_path
-    ):
-        key = _bastion_key()
+    async def test_revoked_key_is_refused_before_authentication(self, implementation, tmp_path):
+        """ssh refuses a revoked key at key exchange, even next to an
+        ordinary pin for the same key; no credential reaches the bastion."""
+        key = _bastion_key_line()
         known_hosts = tmp_path / "known_hosts"
         known_hosts.write_text(
-            f"{_bastion_name()} {key.get_name()} {key.get_base64()}\n"
-            f"@revoked {_bastion_name()} {key.get_name()} {key.get_base64()}\n"
+            f"{_bastion_name()} {key}\n@revoked {_bastion_name()} {key}\n"
         )
-        connector = _tunnelled_connector(
-            implementation, known_hosts_file=str(known_hosts)
-        )
+        connector = _tunnelled_connector(implementation, known_hosts_file=str(known_hosts))
 
         accepted_before = _bastion_accepted_logins()
         with pytest.raises(ConnectorError, match="(?i)revoked"):
             await connector.execute_query("SELECT 1")
         assert _bastion_accepted_logins() == accepted_before, "no credential was sent"
 
-    async def test_ca_only_bastion_is_accepted_and_not_recorded(
-        self, implementation, tmp_path
-    ):
+    async def test_rotation_overlap_with_two_keys_of_one_type(self, implementation, tmp_path):
+        """Two valid entries of the same type, the bastion presenting the
+        first: ssh accepts it and records nothing."""
+        known_hosts = tmp_path / "known_hosts"
+        known_hosts.write_text(
+            f"{_bastion_name()} {_bastion_key_line()}\n"
+            f"{_bastion_name()} {_public_key_line(tmp_path)}\n"
+        )
+        connector = _tunnelled_connector(implementation, known_hosts_file=str(known_hosts))
+
+        result = await connector.execute_query("SELECT 1 AS one")
+
+        assert result.split("\n")[1] == "1"
+        assert len(known_hosts.read_text().splitlines()) == 2
+
+    async def test_ca_only_bastion_is_accepted_and_not_recorded(self, implementation, tmp_path):
         """With only an @cert-authority entry, ssh verifies the host
-        certificate and records no raw key; the tunnel must not be torn down.
-        Paramiko cannot verify certificates and treats the host as new."""
-        if implementation != "cli":
-            pytest.skip("Paramiko cannot verify host certificates")
+        certificate and records no raw key."""
         ca_line = _ca_signed_bastion(tmp_path)
         known_hosts = tmp_path / "known_hosts"
         known_hosts.write_text(f"@cert-authority {_bastion_name()} {ca_line}\n")
-        connector = _tunnelled_connector(
-            implementation, known_hosts_file=str(known_hosts)
-        )
+        connector = _tunnelled_connector(implementation, known_hosts_file=str(known_hosts))
 
         result = await connector.execute_query("SELECT 1 AS one")
 
@@ -659,45 +469,20 @@ class TestAgainstBastion:
     ):
         """With a CA entry from a CA that never signed the bastion, ssh gets
         a key it cannot verify; it must be refused, not recorded."""
-        if implementation != "cli":
-            pytest.skip("Paramiko cannot verify host certificates")
-        line = f"@cert-authority {_bastion_name()} {_fresh_ca_public_line(tmp_path)}\n"
+        line = f"@cert-authority {_bastion_name()} {_public_key_line(tmp_path, 'unrelated_ca')}\n"
         known_hosts = tmp_path / "known_hosts"
         known_hosts.write_text(line)
-        connector = _tunnelled_connector(
-            implementation, known_hosts_file=str(known_hosts)
-        )
+        connector = _tunnelled_connector(implementation, known_hosts_file=str(known_hosts))
 
         with pytest.raises(ConnectorError, match="(?i)host key"):
             await connector.execute_query("SELECT 1")
 
         assert known_hosts.read_text() == line
 
-    async def test_rotation_overlap_with_two_keys_of_one_type(self, implementation, tmp_path):
-        """Two valid entries of the same type, the bastion presenting the
-        first: ssh accepts it, and so must the Paramiko tunnel."""
-        key = _bastion_key()
-        assert key.get_name() == "ssh-ed25519"
-        known_hosts = tmp_path / "known_hosts"
-        known_hosts.write_text(
-            f"{_bastion_name()} {key.get_name()} {key.get_base64()}\n"
-            f"{_bastion_name()} {_wrong_ed25519_line()}\n"
-        )
-        connector = _tunnelled_connector(
-            implementation, known_hosts_file=str(known_hosts)
-        )
-
-        result = await connector.execute_query("SELECT 1 AS one")
-
-        assert result.split("\n")[1] == "1"
-        assert len(known_hosts.read_text().splitlines()) == 2, "nothing recorded"
-
     async def test_changed_key_is_refused(self, implementation, tmp_path):
         known_hosts = tmp_path / "known_hosts"
-        known_hosts.write_text(f"{_bastion_name()} {_wrong_ed25519_line()}\n")
-        connector = _tunnelled_connector(
-            implementation, known_hosts_file=str(known_hosts)
-        )
+        known_hosts.write_text(f"{_bastion_name()} {_public_key_line(tmp_path)}\n")
+        connector = _tunnelled_connector(implementation, known_hosts_file=str(known_hosts))
 
         with pytest.raises(ConnectorError, match="(?i)host key"):
             await connector.execute_query("SELECT 1")

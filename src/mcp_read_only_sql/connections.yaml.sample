@@ -140,7 +140,7 @@
 
 # SSH tunnel using only ssh-agent identities (no inline credentials).
 # Useful with short-lived certs from tools like Skotty: omit `private_key`
-# and `password` and let paramiko / system ssh discover the agent identity.
+# and `password` and let ssh discover the agent identity.
 - connection_name: remote_postgres_ssh_agent
   description: Remote PostgreSQL via SSH using ssh-agent
   type: postgresql

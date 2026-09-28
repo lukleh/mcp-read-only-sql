@@ -1,10 +1,13 @@
+import logging
 from abc import ABC, abstractmethod
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from ..config import Connection, Server
-from ..utils.ssh_tunnel import SSHTunnel
+from ..utils.ssh_tunnel_cli import CLISSHTunnel
 from ..utils.timeout_wrapper import with_hard_timeout
+
+logger = logging.getLogger(__name__)
 
 
 class ConnectionTimeoutError(Exception):
@@ -15,8 +18,8 @@ class ConnectionTimeoutError(Exception):
 class BaseConnector(ABC):
     """Base class for database connectors"""
 
-    # Default SSH timeout (used when not in Connection config)
-    DEFAULT_SSH_TIMEOUT = 5  # seconds (SSH connection)
+    # Default SSH tunnel startup allowance (used when not in Connection config)
+    DEFAULT_SSH_TIMEOUT = CLISSHTunnel.DEFAULT_SSH_TIMEOUT
 
     def __init__(self, connection: Connection):
         """
@@ -56,11 +59,12 @@ class BaseConnector(ABC):
             server: Optional server specification to tunnel to
         """
         if self.ssh_config:
-            # Get the server to connect to
+            if self.ssh_config.password and self.ssh_config.private_key:
+                logger.info(
+                    "SSH tunnel configuration includes both key and password; defaulting to key-based authentication."
+                )
             selected_server = self._select_server(server)
-
-            # Pass SSHTunnelConfig and remote server info to tunnel
-            tunnel = SSHTunnel(
+            tunnel = CLISSHTunnel(
                 self.ssh_config, selected_server.host, selected_server.port
             )
             local_port = await tunnel.start()

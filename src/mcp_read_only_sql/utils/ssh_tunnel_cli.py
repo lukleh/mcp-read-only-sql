@@ -4,28 +4,136 @@ Supports key-based authentication and password authentication (via sshpass).
 """
 
 import asyncio
+import base64
+import binascii
+import hashlib
+import hmac
 import logging
 import os
+import re
 import shutil
 import signal
 import socket
 from contextlib import closing
 
 from ..errors import ConnectorError
-from .ssh_tunnel import (
-    DEFAULT_KNOWN_HOSTS_FILE,
-    GLOBAL_KNOWN_HOSTS_FILE,
-    KnownHosts,
-    known_hosts_name,
-)
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_KNOWN_HOSTS_FILE = "~/.ssh/known_hosts"
+# Read as well, never written: the file ssh consults before the user's.
+GLOBAL_KNOWN_HOSTS_FILE = "/etc/ssh/ssh_known_hosts"
+
+
+def known_hosts_name(host: str, port: int) -> str:
+    """The name ssh records a host under: ``[host]:port`` off port 22."""
+    return host if port == 22 else f"[{host}]:{port}"
+
+
+def _pattern_matches(pattern: str, hostname: str) -> bool:
+    """An OpenSSH known_hosts host pattern: ``*`` and ``?`` wildcards."""
+    regex = "".join(
+        ".*" if char == "*" else "." if char == "?" else re.escape(char)
+        for char in pattern
+    )
+    return re.fullmatch(regex, hostname, re.IGNORECASE) is not None
+
+
+def _hashed_matches(name: str, hostname: str) -> bool:
+    """A hashed name, ``|1|salt|hash`` with HMAC-SHA1 of the hostname."""
+    try:
+        _, _, salt, digest = name.split("|", 3)
+        salt_bytes, digest_bytes = base64.b64decode(salt), base64.b64decode(digest)
+    except (ValueError, binascii.Error):
+        return False
+    computed = hmac.new(salt_bytes, hostname.encode(), hashlib.sha1).digest()
+    return hmac.compare_digest(computed, digest_bytes)
+
+
+def _entry_names(hostnames, hostname: str) -> bool:
+    """True when an entry's host list names ``hostname`` the way ssh reads it.
+
+    Plain names and patterns with ``*`` and ``?`` match case-insensitively, a
+    hashed name matches when the hash of ``hostname`` is equal, and a negated
+    pattern (``!name``) excludes the entry when it matches.
+    """
+    matched = False
+    for name in hostnames:
+        if name.startswith("!"):
+            if _pattern_matches(name[1:], hostname):
+                return False
+        elif name.startswith("|1|"):
+            if _hashed_matches(name, hostname):
+                matched = True
+        elif _pattern_matches(name, hostname):
+            matched = True
+    return matched
+
+
+class KnownHosts:
+    """Which hosts the known_hosts files ssh reads say something about.
+
+    Verifying keys is ssh's job; this only answers whether a host is pinned
+    by an entry (of any key type), or covered by a certificate authority
+    entry, so the tunnel knows what to expect after ssh connects. Wildcard
+    patterns, negation, hashed names and the ``@revoked`` and
+    ``@cert-authority`` markers are read as ssh reads them; a revoked entry
+    pins nothing.
+    """
+
+    def __init__(self):
+        self.files: list[str] = []
+        self.pins: list[tuple[str, ...]] = []
+        self.cert_authorities: list[tuple[str, ...]] = []
+
+    def load(self, path: str) -> None:
+        """Read ``path`` if it exists."""
+        self.files.append(path)
+        try:
+            with open(path, encoding="utf-8") as handle:
+                lines = handle.read().splitlines()
+        except OSError:
+            return
+        for raw in lines:
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            marker = None
+            if line.startswith("@"):
+                marker, _, line = line.partition(" ")
+            fields = line.split()
+            if len(fields) < 3:
+                continue
+            hostnames = tuple(fields[0].split(","))
+            if marker == "@cert-authority":
+                self.cert_authorities.append(hostnames)
+            elif marker is None:
+                self.pins.append(hostnames)
+
+    def pinned_any(self, hostname: str) -> bool:
+        """Whether a host-key entry of any type names ``hostname``."""
+        return any(_entry_names(names, hostname) for names in self.pins)
+
+    def certified(self, hostname: str) -> bool:
+        """Whether a certificate authority entry names ``hostname``.
+
+        Such an entry lets ssh verify a host certificate, but does not by
+        itself prove that a given connection used one: under accept-new ssh
+        would still take a raw key from that host. The tunnel therefore runs
+        strictly in that case.
+        """
+        return any(_entry_names(names, hostname) for names in self.cert_authorities)
+
 
 class CLISSHTunnel:
-    """SSH tunnel using system SSH command"""
+    """SSH tunnel through the system ``ssh`` command.
 
-    DEFAULT_SSH_TIMEOUT = 30  # seconds — generous CLI-only default to accommodate
+    Used by every connector. ``ssh`` brings its own host-key verification,
+    agent and certificate support, and configuration; the tunnel only
+    chooses options and checks afterwards that a first-use key was recorded.
+    """
+
+    DEFAULT_SSH_TIMEOUT = 30  # seconds — generous default to accommodate
     # system ssh interactive auth (Skotty fingerprint scan, hardware tokens,
     # etc.) before the first SSH cert lands in the agent.
 
@@ -109,7 +217,7 @@ class CLISSHTunnel:
         must_record = False
         if host_key_checking == "no":
             # Legacy mode: trust everything and record nothing, whatever file
-            # is configured, matching the Paramiko tunnel.
+            # is configured.
             known_hosts_file: str | None = "/dev/null"
         else:
             known_hosts_file = self.ssh_config.known_hosts_file

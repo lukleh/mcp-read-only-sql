@@ -18,27 +18,26 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
   changes. `yes` refuses unrecorded bastions; `no` restores the previous
   behaviour and records nothing. Known keys are read from
   `/etc/ssh/ssh_known_hosts` and `~/.ssh/known_hosts`, and new ones recorded
-  in the latter, unless `ssh_tunnel.known_hosts_file` names another file;
-  the Paramiko tunnel reads those files the way `ssh` does (wildcard
-  patterns, negated and hashed names, `@revoked` entries; `@cert-authority`
-  entries are skipped because Paramiko cannot verify host certificates) and
-  appends new keys in OpenSSH's line format, so `ssh` and both
-  implementations share one record. Both create the directory of the
-  known_hosts file when it is missing, and a first-use key that could not be
-  recorded fails the connection: `ssh` only warns when it cannot write the
-  file and would treat every later connection as first use, so the
-  system-ssh tunnel checks that the bastion is pinned once the tunnel is up.
-  The Paramiko tunnel hands Paramiko only the keys pinned for the bastion
-  that are not revoked, so a revoked key always reaches the policy, which
-  refuses it after key exchange and before any credential is sent. A bastion
-  covered only by an `@cert-authority` entry is connected to strictly by the
-  system-ssh tunnel: a valid host certificate connects, a raw key from that
-  host is refused rather than recorded, since nothing else could tell the
-  two apart. Several valid entries of one key type, as during a host-key
-  rotation, are all accepted by the Paramiko tunnel.
+  in the latter, unless `ssh_tunnel.known_hosts_file` names another file,
+  whose directory is created when missing. Beyond what `ssh` does on its
+  own: a first-use key that `ssh` could not record fails the connection
+  instead of leaving the next one unverified, and a bastion covered only by
+  an `@cert-authority` entry is connected to with `StrictHostKeyChecking=yes`,
+  so a valid host certificate connects and a raw key is refused rather than
+  recorded.
 
 ### Changed
 
+- Every connector tunnels through the system `ssh`. The Python
+  implementations used a Paramiko tunnel, whose host-key handling matched
+  names literally, knew no `@revoked` or `@cert-authority` markers, held one
+  key per host and type, and could not verify host certificates; each of
+  those had to be re-implemented by hand. `ssh` does all of it. Consequences
+  for the Python implementations: `ssh` must be installed,
+  `ssh_tunnel.password` needs `sshpass` as it already did for the CLI
+  implementations, tunnel startup allows 30 seconds instead of 5 for
+  interactive prompts, and host certificates and `~/.ssh/config` now apply.
+  Paramiko is no longer a dependency.
 - A bastion whose host key changed, or one not yet recorded under
   `host_key_checking: yes`, is refused with an `SSH:` error. Existing
   configurations keep working: their bastions are recorded on the next

@@ -1,6 +1,6 @@
 """
 SSH tunnel tests for CLI connectors
-Tests that CLI connectors can properly use SSH tunnels via Paramiko
+Tests that CLI connectors can properly use SSH tunnels via system ssh
 """
 
 import asyncio
@@ -164,17 +164,13 @@ class TestCLISSHTunnels:
         connector = PostgreSQLCLIConnector(config)
 
         # SSH authentication should fail, raising an exception
-        from paramiko.ssh_exception import AuthenticationException
-
-        with pytest.raises((AuthenticationException, RuntimeError)) as exc_info:
+        with pytest.raises(RuntimeError) as exc_info:
             await connector.execute_query("SELECT 1")
 
-        # Should get SSH auth failure
-        if isinstance(exc_info.value, RuntimeError):
-            assert (
-                "auth" in str(exc_info.value).lower()
-                or "ssh" in str(exc_info.value).lower()
-            )
+        assert (
+            "auth" in str(exc_info.value).lower()
+            or "ssh" in str(exc_info.value).lower()
+        )
 
     async def test_cli_ssh_disabled(self):
         """Test CLI connectors work normally when SSH is disabled"""
