@@ -34,13 +34,13 @@ class TestSSHTimeout:
                     "host": "192.0.2.1",  # TEST-NET-1 (RFC 5737) - guaranteed non-routable
                     "port": 22,
                     "user": "tunnel",
-                    "password": "tunnelpass",
+                    "private_key": "/tmp/test_key",
                     "ssh_timeout": 2,  # 2 second timeout for faster test
                 },
             }
         )
 
-        # Test Python implementation
+        # Test Python implementation (tunnels through system ssh as well)
         connector = PostgreSQLPythonConnector(config)
 
         start_time = asyncio.get_event_loop().time()
@@ -94,9 +94,8 @@ class TestSSHTimeout:
         assert elapsed > 1.5, f"SSH timeout too fast {elapsed:.1f}s, expected ~2s"
         assert "SSH: Connection timeout after 2s" in str(exc_info.value)
 
-    @pytest.mark.timeout(10)  # Kill test after 10 seconds
-    async def test_python_default_ssh_timeout(self):
-        """Test that Python SSH default timeout is 5 seconds"""
+    async def test_python_default_ssh_timeout_budget_matches_tunnel(self):
+        """Both implementations share the system-ssh tunnel and its default."""
 
         config = make_connection(
             {
@@ -108,28 +107,16 @@ class TestSSHTimeout:
                 "password": "testpass",
                 "ssh_tunnel": {
                     "enabled": True,
-                    "host": "192.0.2.1",  # TEST-NET-1 (RFC 5737) - guaranteed non-routable
+                    "host": "bastion.example.com",
                     "port": 22,
                     "user": "tunnel",
-                    "password": "tunnelpass",
-                    # No ssh_timeout specified, should use default of 5s
                 },
             }
         )
 
         connector = PostgreSQLPythonConnector(config)
 
-        start_time = asyncio.get_event_loop().time()
-        with pytest.raises(TimeoutError) as exc_info:
-            await connector.execute_query("SELECT 1")
-
-        elapsed = asyncio.get_event_loop().time() - start_time
-
-        # Should timeout in about 5 seconds (default)
-        # Allow some overhead for thread cleanup and asyncio
-        assert elapsed < 7, f"SSH timeout took {elapsed:.1f}s, expected ~5s"
-        assert elapsed > 4, f"SSH timeout too fast {elapsed:.1f}s, expected ~5s"
-        assert "SSH: Connection timeout after 5s" in str(exc_info.value)
+        assert connector.ssh_timeout == CLISSHTunnel.DEFAULT_SSH_TIMEOUT
 
     async def test_cli_default_ssh_timeout_budget_matches_tunnel(self):
         """CLI hard timeout budget should include the CLI tunnel startup default."""

@@ -7,7 +7,6 @@ import sys
 from .. import __version__
 from ..config import load_connections
 from ..runtime_paths import RuntimePaths, resolve_runtime_paths
-from ..utils.ssh_tunnel import SSHTunnel
 from ..utils.ssh_tunnel_cli import CLISSHTunnel
 
 
@@ -87,10 +86,7 @@ async def test_ssh_tunnels(
 
                 tunnel = None
                 try:
-                    if impl == "python":
-                        tunnel = SSHTunnel(ssh_config, remote_host, remote_port)
-                    else:
-                        tunnel = CLISSHTunnel(ssh_config, remote_host, remote_port)
+                    tunnel = CLISSHTunnel(ssh_config, remote_host, remote_port)
                     local_port = await tunnel.start()
 
                     print("    ✅ SSH tunnel established successfully")

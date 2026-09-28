@@ -117,6 +117,14 @@
     private_key: ~/.ssh/id_rsa  # Path to private key
     remote_host: 10.0.1.50  # Optional, defaults to localhost
     remote_port: 5432  # Optional, defaults to server port
+    # Host-key verification, as OpenSSH StrictHostKeyChecking:
+    #   yes        (default) the bastion's key must already be in known_hosts:
+    #              connected to it with ssh before, or ssh-keyscan its key and
+    #              check the fingerprint against a trusted source before appending
+    #   accept-new trust on first use: records the bastion, refuses a changed key
+    #   no         trusts every key and records nothing (previous behaviour)
+    # host_key_checking: yes
+    # known_hosts_file: ~/.ssh/known_hosts  # default; read with /etc/ssh/ssh_known_hosts, shared with ssh
 
 # SSH tunnel with password authentication
 - connection_name: remote_clickhouse_ssh
@@ -134,7 +142,7 @@
 
 # SSH tunnel using only ssh-agent identities (no inline credentials).
 # Useful with short-lived certs from tools like Skotty: omit `private_key`
-# and `password` and let paramiko / system ssh discover the agent identity.
+# and `password` and let ssh discover the agent identity.
 - connection_name: remote_postgres_ssh_agent
   description: Remote PostgreSQL via SSH using ssh-agent
   type: postgresql

@@ -33,9 +33,13 @@ Legend:
   connection by `allowed_functions`. Operators and `TABLESAMPLE` methods
   outside `pg_catalog` are refused too. This is the layer that stops what a
   read-only transaction does not.
-- CLI: the sanitized single statement is wrapped in `BEGIN; SET TRANSACTION
-  READ ONLY; ... COMMIT;`. `psql` always runs with `--single-transaction`,
-  `-v ON_ERROR_STOP=1`, and `PGOPTIONS=-c default_transaction_read_only=on`.
+- CLI: `psql --single-transaction` opens the transaction and the command
+  string starts with `SET TRANSACTION READ ONLY;` before the sanitized single
+  statement. `psql` always runs with `-v ON_ERROR_STOP=1` and
+  `PGOPTIONS=-c default_transaction_read_only=on`. Output is read with `-q`
+  and `--csv` (tab separator), so stdout carries only the header and the
+  rows, fields containing a tab, a quote or a line break are quoted, and no
+  line is filtered client-side.
 - Python: `psycopg2.connect(..., options='-c default_transaction_read_only=on')`
   plus `conn.set_session(readonly=True, autocommit=True)` create a database
   session that refuses writes at the protocol level.
@@ -116,6 +120,20 @@ read.
 - Python: uses `clickhouse_connect.get_client(..., settings={'readonly': 1,
   'max_execution_time': query_timeout})`. Requests are executed via HTTP/HTTPS
   (or tunneled) and ClickHouse enforces read-only semantics.
+- Both: a login whose profile already sets `readonly` (1 or 2) refuses these
+  client-side settings by name (`Cannot modify '<setting>' setting in
+  readonly mode`, or clickhouse-connect's `Setting <name> is readonly`).
+  Each connector probes once per connector instance, without the caller's
+  statement (`SELECT 1` for the CLI, the client construction for
+  clickhouse-connect), drops only the refused setting and remembers the
+  result. A statement is never re-run with weaker settings: its own
+  `SETTINGS` clause produces the same refusal text, and re-running it
+  without `readonly=1` would run it unguarded. Covered by
+  `tests/test_clickhouse_readonly_profiles.py` against fixture users
+  `readonly_user` (readonly=1, with the `URL`, `CREATE TEMPORARY TABLE` and
+  `INSERT` grants so the profile alone is what refuses `url()` and writes)
+  and `readonly2_user`, plus a write with a `SETTINGS` clause on the
+  full-privilege login.
 
 ### Data Manipulation & Mutations
 

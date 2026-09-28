@@ -7,8 +7,36 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Security
+
+- SSH tunnels now verify the bastion's host key. Both implementations
+  trusted any key (`StrictHostKeyChecking=no` with no known_hosts file for
+  system `ssh`, Paramiko `AutoAddPolicy` with no loaded keys), so a spoofed
+  bastion would have received the database credentials. The new
+  `ssh_tunnel.host_key_checking` field takes the OpenSSH values and defaults
+  to `yes`: the bastion's key must already be in `/etc/ssh/ssh_known_hosts`,
+  `~/.ssh/known_hosts`, or the file `ssh_tunnel.known_hosts_file` names.
+  `accept-new` is the explicit trust-on-first-use mode: the bastion is
+  recorded on first use and refused if its key changes. Since `ssh` only
+  warns when it cannot save the key, the tunnel checks the chosen files
+  before and after connecting and fails if a new key was not recorded.
+  It passes those files to `ssh` explicitly; configure `known_hosts_file`
+  to use a custom user file in this mode. A bastion covered only by an
+  `@cert-authority` entry is always connected to strictly. `no` restores
+  the previous behaviour and records nothing.
+
 ### Changed
 
+- Every connector tunnels through the system `ssh`. The Python
+  implementations used a Paramiko tunnel, whose host-key handling matched
+  names literally, knew no `@revoked` or `@cert-authority` markers, held one
+  key per host and type, and could not verify host certificates; each of
+  those had to be re-implemented by hand. `ssh` does all of it. Consequences
+  for the Python implementations: `ssh` must be installed,
+  `ssh_tunnel.password` needs `sshpass` as it already did for the CLI
+  implementations, tunnel startup allows 30 seconds instead of 5 for
+  interactive prompts, and host certificates and `~/.ssh/config` now apply.
+  Paramiko is no longer a dependency.
 - README describes the actual enforcement layers (client-side statement
   policy, database-level read-only, timeouts) and no longer counts result
   files as one. The implementation matrix says that the Python PostgreSQL
@@ -19,6 +47,15 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 
 ### Removed
 
+- The `mcp_read_only_sql.utils.ssh_tunnel` module and its `SSHTunnel`
+  class (the Paramiko tunnel). `mcp_read_only_sql.utils.ssh_tunnel_cli`
+  is the one tunnel.
+- An SSH tunnel to a bastion whose host key is not in a known_hosts file
+  is refused with an `SSH:` error, as is one whose key changed. Bastions you
+  have connected to with `ssh` before are already known; for the others,
+  fetch the key with `ssh-keyscan`, check its fingerprint against a trusted
+  source, and append it, or set `host_key_checking: accept-new` to trust
+  them on first use.
 - Dead code: the `json_serializer` module, `format_as_tsv`,
   `HardTimeoutMixin` and the `hard_timeout` decorator,
   `ConnectionTimeoutError`, the connectors' unused `_get_default_port`
@@ -32,6 +69,50 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
   suppress them), and stale references to a `test_concurrent_queries.py`
   that no longer exists. The test README's Docker instructions name the
   `test` profile, without which no service starts.
+
+### Fixed
+
+- The psql connector no longer drops rows. It parsed psql's output and
+  skipped any line equal to `BEGIN`, `SET`, `DO`, `COMMIT` or `ROLLBACK`,
+  any line shaped like `(N rows)`, and a trailing empty line, so a row with
+  one of those values disappeared and a single-column result whose last row
+  was NULL or empty lost that row. psql now runs with `-q` and `--csv` with
+  a tab separator, which keeps command tags and the row count off stdout, and
+  every line is returned as data. The command string no longer carries its
+  own `BEGIN`/`COMMIT` inside `--single-transaction`, which removed two
+  warnings per query. psql 12 or newer is required for the CSV mode.
+- PostgreSQL values containing a tab or a line break no longer corrupt the
+  result. psql's unaligned mode printed them raw, so a tab shifted the
+  following columns and a line break split the row; CSV mode quotes such
+  values, and the Python connector's formatter now follows the same rules
+  (NULL and the empty string are empty, a value containing a tab, a double
+  quote or a line break is double-quoted with inner quotes doubled), so both
+  implementations produce the same bytes for the same row. The connector
+  also strips only the record terminator, so a value ending in a carriage
+  return keeps it.
+- The Python PostgreSQL connector returns duplicate column names correctly.
+  It used a dict cursor, so `SELECT 1 AS a, 2 AS a` came back as `2 2`; it
+  now uses a plain tuple cursor like psql does.
+- `statement_timeout` is sent as an integer number of milliseconds. A
+  fractional `query_timeout` rendered as `2500.0`, which PostgreSQL 11 and
+  older reject.
+- ClickHouse logins whose profile already enforces `readonly` work again.
+  Both connectors send `readonly=1` and `max_execution_time` with every
+  query, and such a profile refuses them (`Cannot modify '<setting>' setting
+  in readonly mode`; clickhouse-connect refuses them client-side as
+  `Setting <name> is readonly`), so every query failed for exactly the logins
+  the README recommends. Each connector now finds out once, with a probe that
+  does not involve the caller's statement, which settings the login accepts,
+  drops only the refused ones, logs that, and remembers the answer. A
+  statement is never re-run with weaker settings: its own `SETTINGS` clause
+  produces the same refusal text, and re-running it without `readonly=1`
+  would run it unguarded. Fixture users `readonly_user` and `readonly2_user`
+  cover both profile values.
+- The clickhouse-client connector no longer drops a last row that renders
+  empty (an empty string in the only column). It held back each line until
+  the next arrived and discarded the final one when it was empty.
+- clickhouse-client errors no longer start with the `Password for user (x):`
+  prompt that `--ask-password` prints to stderr.
 
 ## [0.5.1] - 2026-09-25
 

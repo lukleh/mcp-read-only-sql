@@ -1,19 +1,16 @@
 """
-SSH Tunnel tests
-Tests SSH tunnel connectivity through bastion host to private databases
+SSH tunnel tests: the Python connectors through the bastion to the private
+databases. Every connector tunnels through system ssh.
 """
 
 import os
-import tempfile
-from unittest.mock import MagicMock, patch
+import shutil
 
-import paramiko
 import pytest
 
 from mcp_read_only_sql.connectors.clickhouse.python import ClickHousePythonConnector
 from mcp_read_only_sql.connectors.postgresql.python import PostgreSQLPythonConnector
 from mcp_read_only_sql.utils.sql_guard import ReadOnlyQueryError
-from mcp_read_only_sql.utils.ssh_tunnel import SSHTunnel
 from tests.conftest import make_connection
 from tests.docker_test_config import (
     docker_test_server,
@@ -42,9 +39,15 @@ def ssh_test_key_path():
     return key_path
 
 
+def _needs_sshpass():
+    if shutil.which("sshpass") is None:
+        pytest.skip("sshpass not installed; password tunnels need it")
+
+
 @pytest.fixture
 def postgres_ssh_password_config():
     """PostgreSQL config with SSH tunnel using password auth"""
+    _needs_sshpass()
     return {
         "connection_name": "postgres_ssh_pass",
         "type": "postgresql",
@@ -73,6 +76,7 @@ def postgres_ssh_key_config(ssh_test_key_path):
 @pytest.fixture
 def clickhouse_ssh_config():
     """ClickHouse config with SSH tunnel - tests port 9000 -> 8123 conversion"""
+    _needs_sshpass()
     return {
         "connection_name": "clickhouse_ssh",
         "type": "clickhouse",
@@ -140,6 +144,7 @@ class TestSSHTunnelConnectivity:
         assert int(lines[1].split("\t")[0]) > 0
 
     async def test_ssh_tunnel_with_wrong_password(self):
+        _needs_sshpass()
         """Test that SSH connection fails gracefully with wrong password"""
         config = {
             "connection_name": "bad_ssh",
@@ -159,6 +164,7 @@ class TestSSHTunnelConnectivity:
         assert "ssh" in error_msg or "authentication" in error_msg
 
     async def test_ssh_tunnel_to_nonexistent_host(self):
+        _needs_sshpass()
         """Test SSH tunnel behavior when target host doesn't exist"""
         config = {
             "connection_name": "bad_host",
@@ -212,6 +218,7 @@ class TestClickHousePortConversion:
     """Test automatic port conversion for ClickHouse Python connector"""
 
     async def test_clickhouse_ssh_native_to_http_conversion(self):
+        _needs_sshpass()
         """Test that port 9000 is automatically converted to 8123 for SSH tunnels"""
         config = {
             "connection_name": "ch_port_test",
@@ -244,6 +251,7 @@ class TestClickHousePortConversion:
         assert values[1] == "8123"  # Actual port used
 
     async def test_clickhouse_ssh_secure_native_to_https_conversion(self):
+        _needs_sshpass()
         """Test that port 9440 is automatically converted to 8443 for SSH tunnels"""
         config = {
             "connection_name": "ch_secure_port_test",
@@ -300,183 +308,3 @@ class TestClickHousePortConversion:
         lines = result.strip().split("\n")
         assert len(lines) == 2
         assert lines[1] == "1"
-
-
-@pytest.mark.anyio
-class TestSSHKeyAutoDetection:
-    """Test automatic SSH key type detection and loading"""
-
-    def test_ed25519_key_loading(self):
-        """Test that Ed25519 keys are correctly auto-detected and loaded"""
-        from mcp_read_only_sql.config import SSHTunnelConfig
-
-        ssh_config = SSHTunnelConfig.from_dict(
-            {
-                "host": "test.example.com",
-                "port": 22,
-                "user": "testuser",
-                "private_key": "/fake/path/to/ed25519_key",
-            }
-        )
-
-        # Mock the key loading to simulate Ed25519 key
-        mock_ed25519_key = MagicMock(spec=paramiko.Ed25519Key)
-
-        with patch(
-            "paramiko.Ed25519Key.from_private_key_file", return_value=mock_ed25519_key
-        ), patch("paramiko.SSHClient"):
-            SSHTunnel(ssh_config, "db.internal", 5432)
-            # The key should be attempted to load when start() is called
-            # We're just testing the key loading logic here
-
-            # Verify Ed25519 is tried first
-            assert paramiko.Ed25519Key in [
-                paramiko.Ed25519Key,
-                paramiko.ECDSAKey,
-                paramiko.RSAKey,
-            ]
-
-    def test_rsa_key_loading(self):
-        """Test that RSA keys are correctly auto-detected and loaded"""
-        from mcp_read_only_sql.config import SSHTunnelConfig
-
-        ssh_config = SSHTunnelConfig.from_dict(
-            {
-                "host": "test.example.com",
-                "port": 22,
-                "user": "testuser",
-                "private_key": "/fake/path/to/rsa_key",
-            }
-        )
-
-        # Mock Ed25519 failing, RSA succeeding
-        mock_rsa_key = MagicMock(spec=paramiko.RSAKey)
-
-        with patch(
-            "paramiko.Ed25519Key.from_private_key_file",
-            side_effect=Exception("Not Ed25519"),
-        ), patch(
-            "paramiko.ECDSAKey.from_private_key_file",
-            side_effect=Exception("Not ECDSA"),
-        ), patch(
-            "paramiko.RSAKey.from_private_key_file", return_value=mock_rsa_key
-        ), patch("paramiko.SSHClient"):
-            SSHTunnel(ssh_config, "db.internal", 5432)
-            # Verify the key type order includes RSA
-            assert paramiko.RSAKey in [
-                paramiko.Ed25519Key,
-                paramiko.ECDSAKey,
-                paramiko.RSAKey,
-            ]
-
-    def test_ecdsa_key_loading(self):
-        """Test that ECDSA keys are correctly auto-detected and loaded"""
-        from mcp_read_only_sql.config import SSHTunnelConfig
-
-        ssh_config = SSHTunnelConfig.from_dict(
-            {
-                "host": "test.example.com",
-                "port": 22,
-                "user": "testuser",
-                "private_key": "/fake/path/to/ecdsa_key",
-            }
-        )
-
-        # Mock Ed25519 failing, ECDSA succeeding
-        mock_ecdsa_key = MagicMock(spec=paramiko.ECDSAKey)
-
-        with patch(
-            "paramiko.Ed25519Key.from_private_key_file",
-            side_effect=Exception("Not Ed25519"),
-        ), patch(
-            "paramiko.ECDSAKey.from_private_key_file", return_value=mock_ecdsa_key
-        ), patch("paramiko.SSHClient"):
-            SSHTunnel(ssh_config, "db.internal", 5432)
-            # Verify the key type order includes ECDSA
-            assert paramiko.ECDSAKey in [
-                paramiko.Ed25519Key,
-                paramiko.ECDSAKey,
-                paramiko.RSAKey,
-            ]
-
-    def test_key_loading_all_types_fail(self):
-        """Test that appropriate error is raised when all key types fail to load"""
-        from mcp_read_only_sql.config import SSHTunnelConfig
-
-        # Create a temporary file to use as the key
-        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix="_key") as f:
-            f.write("INVALID KEY DATA")
-            invalid_key_path = f.name
-
-        try:
-            ssh_config = SSHTunnelConfig.from_dict(
-                {
-                    "host": "test.example.com",
-                    "port": 22,
-                    "user": "testuser",
-                    "private_key": invalid_key_path,
-                }
-            )
-
-            tunnel = SSHTunnel(ssh_config, "db.internal", 5432)
-
-            # Attempting to start should fail with clear error message
-            with pytest.raises((ValueError, RuntimeError)) as exc_info:
-                import asyncio
-
-                asyncio.run(tunnel.start())
-
-            error_msg = str(exc_info.value)
-            # Should mention that it tried different key types
-            assert "could not load" in error_msg.lower() or "key" in error_msg.lower()
-        finally:
-            os.unlink(invalid_key_path)
-
-    def test_key_file_not_found(self):
-        """Test that missing key file raises appropriate error"""
-        from mcp_read_only_sql.config import SSHTunnelConfig
-
-        ssh_config = SSHTunnelConfig.from_dict(
-            {
-                "host": "test.example.com",
-                "port": 22,
-                "user": "testuser",
-                "private_key": "/nonexistent/path/to/key",
-            }
-        )
-
-        tunnel = SSHTunnel(ssh_config, "db.internal", 5432)
-
-        with pytest.raises((ValueError, RuntimeError, FileNotFoundError)) as exc_info:
-            import asyncio
-
-            asyncio.run(tunnel.start())
-
-        error_msg = str(exc_info.value).lower()
-        # Should indicate file/key issue
-        assert "key" in error_msg or "file" in error_msg or "not found" in error_msg
-
-    @pytest.mark.ssh
-    @pytest.mark.docker
-    async def test_real_key_loading_with_ssh_tunnel(self, ssh_test_key_path):
-        """Integration test: Verify real SSH key loading works with actual tunnel"""
-        from mcp_read_only_sql.config import SSHTunnelConfig
-
-        ssh_config = SSHTunnelConfig.from_dict(
-            {
-                "host": docker_test_ssh_tunnel()["host"],
-                "port": docker_test_ssh_tunnel()["port"],
-                "user": "tunnel",
-                "private_key": ssh_test_key_path,
-            }
-        )
-
-        tunnel = SSHTunnel(ssh_config, "mcp-postgres-private", 5432)
-
-        try:
-            # Should successfully load the key and establish tunnel
-            local_port = await tunnel.start()
-            assert isinstance(local_port, int)
-            assert local_port > 0
-        finally:
-            await tunnel.stop()
