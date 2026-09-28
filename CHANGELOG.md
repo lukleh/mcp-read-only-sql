@@ -45,9 +45,10 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
   is the one tunnel.
 - An SSH tunnel to a bastion whose host key is not in a known_hosts file
   is refused with an `SSH:` error, as is one whose key changed. Bastions you
-  have connected to with `ssh` before are already known; for the others run
-  `ssh-keyscan -p <port> <host> >> ~/.ssh/known_hosts` once, or set
-  `host_key_checking: accept-new` to trust them on first use.
+  have connected to with `ssh` before are already known; for the others,
+  fetch the key with `ssh-keyscan`, check its fingerprint against a trusted
+  source, and append it, or set `host_key_checking: accept-new` to trust
+  them on first use.
 
 ## [0.5.1] - 2026-09-25
 

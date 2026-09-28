@@ -24,6 +24,7 @@ from mcp_read_only_sql.errors import ConnectorError
 from mcp_read_only_sql.utils.ssh_tunnel_cli import (
     CLISSHTunnel,
     HostKeySurvey,
+    _split_paths,
     known_hosts_name,
 )
 from tests.conftest import make_connection
@@ -158,6 +159,31 @@ class TestSurvey:
 
         assert survey.name == "jump.alias"
         assert survey.record_file == str(work_file)
+        assert survey.pinned
+
+    @pytest.mark.parametrize(
+        ("value", "paths"),
+        [
+            ("/a/known_hosts /a/known_hosts2", ["/a/known_hosts", "/a/known_hosts2"]),
+            ("/dir with space/known hosts /tmp/plain", ["/dir with space/known hosts", "/tmp/plain"]),
+            ("~/.ssh/known hosts", ["~/.ssh/known hosts"]),
+            ("", []),
+        ],
+    )
+    def test_ssh_g_file_lists_keep_spaces_inside_paths(self, value, paths):
+        assert _split_paths(value) == paths
+
+    def test_known_hosts_path_with_spaces_from_ssh(self, tmp_path):
+        """ssh -G prints the path unquoted; the survey must keep it whole."""
+        folder = tmp_path / "dir with space"
+        folder.mkdir()
+        path = folder / "known hosts"
+        path.write_text(f"bastion.example.com {_public_key_line(tmp_path)}\n")
+        tunnel = CLISSHTunnel(_config(known_hosts_file=str(path)), "db", 1)
+
+        survey = tunnel._survey(["-o", f"UserKnownHostsFile={path}"], "tunnel@bastion.example.com")
+
+        assert survey.record_file == str(path)
         assert survey.pinned
 
     def test_falls_back_to_ssh_defaults_when_ssh_g_fails(self, monkeypatch):

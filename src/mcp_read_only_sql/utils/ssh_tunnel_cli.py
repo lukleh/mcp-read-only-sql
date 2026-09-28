@@ -54,6 +54,24 @@ def _ssh_resolved_config(options: list[str], destination: str) -> dict[str, str]
     return config
 
 
+def _split_paths(value: str) -> list[str]:
+    """The paths in an ``ssh -G`` file list, which is space-separated and unquoted.
+
+    A path may contain spaces, so the split is by where a path can start:
+    every path in ssh configuration is absolute or ``~``-relative, and a word
+    beginning with neither continues the previous path.
+    """
+    paths: list[str] = []
+    for word in value.split(" "):
+        if not word:
+            continue
+        if paths and not word.startswith(("/", "~")):
+            paths[-1] += " " + word
+        else:
+            paths.append(word)
+    return paths
+
+
 def _ssh_keygen_find(name: str, path: str) -> list[str]:
     """The lines of ``path`` that ssh matches for ``name`` and whose key parses.
 
@@ -150,8 +168,8 @@ class CLISSHTunnel:
         what those files say. Blocking; run it off the event loop."""
         resolved = _ssh_resolved_config(ssh_options, destination)
         if resolved:
-            user_files = resolved.get("userknownhostsfile", "").split()
-            global_files = resolved.get("globalknownhostsfile", "").split()
+            user_files = _split_paths(resolved.get("userknownhostsfile", ""))
+            global_files = _split_paths(resolved.get("globalknownhostsfile", ""))
             name = resolved.get("hostkeyalias") or known_hosts_name(
                 resolved.get("hostname", self.ssh_host),
                 int(resolved.get("port", self.ssh_port)),

@@ -118,8 +118,9 @@
     remote_host: 10.0.1.50  # Optional, defaults to localhost
     remote_port: 5432  # Optional, defaults to server port
     # Host-key verification, as OpenSSH StrictHostKeyChecking:
-    #   yes        (default) the bastion's key must already be in known_hosts
-    #              (ssh-keyscan -p 22 bastion.example.com >> ~/.ssh/known_hosts)
+    #   yes        (default) the bastion's key must already be in known_hosts:
+    #              connected to it with ssh before, or ssh-keyscan its key and
+    #              check the fingerprint against a trusted source before appending
     #   accept-new trust on first use: records the bastion, refuses a changed key
     #   no         trusts every key and records nothing (previous behaviour)
     # host_key_checking: yes
