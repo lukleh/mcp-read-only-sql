@@ -7,6 +7,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-29
+
 ### Security
 
 - SSH tunnels now verify the bastion's host key. Both implementations
