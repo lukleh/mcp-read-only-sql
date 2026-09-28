@@ -34,7 +34,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
   covered only by an `@cert-authority` entry is connected to strictly by the
   system-ssh tunnel: a valid host certificate connects, a raw key from that
   host is refused rather than recorded, since nothing else could tell the
-  two apart.
+  two apart. Several valid entries of one key type, as during a host-key
+  rotation, are all accepted by the Paramiko tunnel.
 
 ### Changed
 

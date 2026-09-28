@@ -131,22 +131,35 @@ class KnownHosts:
 
         Paramiko checks its store right after key exchange and before any
         authentication; a changed key is refused there and a stored type is
-        preferred in negotiation. Only keys that are not revoked for the host
-        go in, so a revoked key always falls through to the policy, which
-        refuses it before credentials are sent.
+        preferred in negotiation. The store holds one key per type, so a type
+        with several valid pins (a rotation overlap) is left out and compared
+        by the policy instead, and revoked keys never go in, so they always
+        fall through to the policy, which refuses them before credentials
+        are sent.
         """
-        for entry in self.entries:
-            if _entry_names(entry.hostnames, hostname) and not self.is_revoked(
-                hostname, entry.key
-            ):
-                host_keys.add(hostname, entry.key.get_name(), entry.key)
+        by_type: dict[str, list[paramiko.PKey]] = {}
+        for key in self.pinned_keys(hostname):
+            by_type.setdefault(key.get_name(), []).append(key)
+        for key_type, keys in by_type.items():
+            if len(keys) == 1:
+                host_keys.add(hostname, key_type, keys[0])
 
-    def pinned_key(self, hostname: str, key_type: str):
-        """The recorded key of ``key_type`` for ``hostname``, wildcards included."""
+    def pinned_keys(self, hostname: str, key_type: str | None = None) -> list:
+        """The non-revoked keys recorded for ``hostname``, wildcards included.
+
+        Several keys of one type are valid at once while a host key is being
+        rotated; all of them count.
+        """
+        keys: list[paramiko.PKey] = []
         for entry in self.entries:
-            if entry.key.get_name() == key_type and _entry_names(entry.hostnames, hostname):
-                return entry.key
-        return None
+            if key_type is not None and entry.key.get_name() != key_type:
+                continue
+            if not _entry_names(entry.hostnames, hostname):
+                continue
+            if self.is_revoked(hostname, entry.key) or entry.key in keys:
+                continue
+            keys.append(entry.key)
+        return keys
 
     def pinned_any(self, hostname: str) -> bool:
         """Whether a host-key entry of any type names ``hostname``."""
@@ -187,10 +200,10 @@ class _KnownHostsPolicy(paramiko.MissingHostKeyPolicy):
             raise paramiko.SSHException(
                 f"Host key for {hostname} is revoked in known_hosts"
             )
-        pinned = self.known.pinned_key(hostname, key.get_name())
-        if pinned is not None:
-            if pinned != key:
-                raise paramiko.BadHostKeyException(hostname, key, pinned)
+        pinned = self.known.pinned_keys(hostname, key.get_name())
+        if pinned:
+            if key not in pinned:
+                raise paramiko.BadHostKeyException(hostname, key, pinned[0])
             return
         self.unknown_host(client, hostname, key)
 
