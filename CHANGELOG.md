@@ -30,6 +30,13 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
   cursor in batches of 1000 rows, so a large result streams to the result
   file instead of being loaded into memory first. EXPLAIN and SHOW, which
   cannot be declared as cursors, run on a plain cursor.
+- When a query on that connector times out, the worker is told to stop at
+  its next fetch or row and is waited for, so the result file is not written
+  to after the caller has removed it. The wait is bounded by the connection
+  timeout, so a server that stops answering cannot hold the caller. A
+  statement already running is left to its server-side `statement_timeout`,
+  which is now capped at the hard timeout so the server ends it by the
+  caller's deadline.
 
 ## [0.6.0] - 2026-09-29
 

@@ -4,7 +4,7 @@ import logging
 from collections.abc import Iterator
 from contextlib import contextmanager, suppress
 from pathlib import Path
-from threading import Event, Lock
+from threading import Event
 
 import psycopg2
 from psycopg2 import errors as psycopg_errors
@@ -33,35 +33,32 @@ _CURSOR_NAME = "mcp_read_only_sql"
 
 
 class _QueryCancellation:
-    """Stop an executor worker and its active PostgreSQL statement."""
+    """Stop an executor worker at its next step.
+
+    The worker checks between statements, fetches and rows. A statement
+    already running on the server is left to its ``statement_timeout``,
+    which is capped at the hard timeout so the server ends it by the
+    caller's deadline. ``connection.cancel()`` is not used: psycopg2 holds
+    the GIL while libpq's cancel request connects to the server, with no
+    timeout, so against a server that stops answering it freezes the whole
+    process.
+    """
 
     def __init__(self) -> None:
         self._cancelled = Event()
-        self._lock = Lock()
-        self._connection = None
-
-    def attach(self, conn) -> None:
-        with self._lock:
-            self.check()
-            self._connection = conn
-
-    def detach(self, conn) -> None:
-        with self._lock:
-            if self._connection is conn:
-                self._connection = None
 
     def check(self) -> None:
         if self._cancelled.is_set():
             raise TimeoutError("PostgreSQL: query cancelled")
 
     def cancel(self) -> None:
-        with self._lock:
-            self._cancelled.set()
-            conn = self._connection
-        if conn is not None:
-            # psycopg2 supports cancelling a running query from another thread.
-            with suppress(psycopg2.Error):
-                conn.cancel()
+        self._cancelled.set()
+
+
+def _consume_outcome(future: asyncio.Future) -> None:
+    """Retrieve an abandoned future's outcome so asyncio does not log it."""
+    if not future.cancelled():
+        future.exception()
 
 
 class PostgreSQLPythonConnector(BaseConnector):
@@ -153,16 +150,10 @@ class PostgreSQLPythonConnector(BaseConnector):
                     done, _ = await asyncio.wait({future}, timeout=total_timeout)
                     if done:
                         return await future
-                    cancellation.cancel()
-                    # The result path belongs to the caller. Finish the worker
-                    # before the caller can unlink it after a timeout.
-                    with suppress(Exception):
-                        await future
+                    await self._stop_worker(cancellation, future)
                     raise TimeoutError
                 except asyncio.CancelledError:
-                    cancellation.cancel()
-                    with suppress(Exception):
-                        await future
+                    await self._stop_worker(cancellation, future)
                     raise
 
         except TimeoutError as e:
@@ -184,6 +175,27 @@ class PostgreSQLPythonConnector(BaseConnector):
             logger.error(f"PostgreSQL database error: {e}")
             raise ConnectorError(f"PostgreSQL: {e}")
         # Let other exceptions (programming errors) propagate unchanged
+
+    async def _stop_worker(
+        self, cancellation: _QueryCancellation, future: asyncio.Future
+    ) -> None:
+        """Tell the worker to stop and wait, briefly, for it to finish.
+
+        The result path belongs to the caller, so the worker should be done
+        before the caller can unlink the file after a timeout. But a worker
+        waiting on a server that does not answer cannot be interrupted, so
+        the wait is bounded by the connection timeout. Past that the worker
+        is left to end on its own and the caller gets its error now.
+        """
+        cancellation.cancel()
+        future.add_done_callback(_consume_outcome)
+        done, _ = await asyncio.wait({future}, timeout=self.connection_timeout)
+        if future not in done:
+            logger.warning(
+                "PostgreSQL: the worker did not stop within %ss of the cancel "
+                "request; leaving it to finish on its own",
+                self.connection_timeout,
+            )
 
     def _connect(self, host: str, port: int, database: str):
         """Open the connection, without the startup option if the server rejects it."""
@@ -222,14 +234,17 @@ class PostgreSQLPythonConnector(BaseConnector):
         psycopg2 opens the transaction with the first statement; that
         statement makes it read-only and sets the timeout for it alone, so
         nothing outlives the transaction or depends on session state. The
-        transaction is rolled back when the block ends.
+        statement timeout is the query timeout, capped at the hard timeout:
+        a statement the caller will not wait for is ended by the server.
+        The transaction is rolled back when the block ends.
         """
+        statement_timeout_ms = int(min(self.query_timeout, self.hard_timeout) * 1000)
         if cancellation is not None:
             cancellation.check()
         conn = self._connect(host, port, database)
         try:
             if cancellation is not None:
-                cancellation.attach(conn)
+                cancellation.check()
             conn.autocommit = False
             cursor = conn.cursor()
             try:
@@ -237,7 +252,7 @@ class PostgreSQLPythonConnector(BaseConnector):
                     cancellation.check()
                 cursor.execute(
                     "SET TRANSACTION READ ONLY; "
-                    f"SET LOCAL statement_timeout = {int(self.query_timeout * 1000)}"
+                    f"SET LOCAL statement_timeout = {statement_timeout_ms}"
                 )
                 self._reject_shadowed_names(cursor, shadow_query)
             finally:
@@ -246,8 +261,6 @@ class PostgreSQLPythonConnector(BaseConnector):
                 cancellation.check()
             yield conn
         finally:
-            if cancellation is not None:
-                cancellation.detach(conn)
             with suppress(psycopg2.Error):
                 conn.rollback()
             conn.close()

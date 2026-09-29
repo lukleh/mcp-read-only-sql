@@ -8,6 +8,7 @@ run on a plain cursor. These tests drive the connector with a fake
 connection that records what it was asked to do.
 """
 
+import asyncio
 from threading import Event
 
 import psycopg2
@@ -136,6 +137,20 @@ class TestTransaction:
         assert log[-2:] == [("rollback",), ("close_connection",)]
 
     @pytest.mark.anyio
+    async def test_statement_timeout_is_capped_at_the_hard_timeout(
+        self, postgres_config, monkeypatch
+    ):
+        """A statement the caller will not wait for is ended by the server."""
+        log, _ = _fake_connect(monkeypatch)
+        connector = PostgreSQLPythonConnector(postgres_config)
+        connector.query_timeout = 120
+        connector.hard_timeout = 2
+
+        await connector.execute_query("SELECT 1")
+
+        assert _executed(log)[0].endswith("SET LOCAL statement_timeout = 2000")
+
+    @pytest.mark.anyio
     async def test_startup_option_is_sent_and_dropped_only_when_rejected(
         self, postgres_config, monkeypatch
     ):
@@ -250,10 +265,11 @@ class TestCursors:
     async def test_timeout_stops_fetching_before_returning(
         self, postgres_config, monkeypatch, tmp_path, hard_timeout
     ):
+        """The worker stops at its next step once the caller has timed out."""
         log = []
         fetching = Event()
-        cancelled = Event()
         release = Event()
+        worker_done = Event()
         rows = [(i,) for i in range(2500)]
 
         class BlockingCursor(FakeCursor):
@@ -265,9 +281,7 @@ class TestCursors:
                 self.fetches += 1
                 if self.fetches == (1 if hard_timeout else 2):
                     fetching.set()
-                    release.wait(timeout=2)
-                    if cancelled.is_set():
-                        raise psycopg2.OperationalError("query cancelled")
+                    release.wait(timeout=5)
                 return super().fetchmany(size)
 
         class BlockingConnection(FakeConnection):
@@ -277,10 +291,9 @@ class TestCursors:
             def cursor(self, name=None):
                 return BlockingCursor(name)
 
-            def cancel(self):
-                log.append(("cancel",))
-                cancelled.set()
-                release.set()
+            def close(self):
+                super().close()
+                worker_done.set()
 
         monkeypatch.setattr(psycopg2, "connect", lambda **kwargs: BlockingConnection())
         connector = PostgreSQLPythonConnector(postgres_config)
@@ -305,10 +318,92 @@ class TestCursors:
             release.set()
 
         assert fetching.is_set()
-        assert cancelled.is_set()
-        assert ("cancel",) in log
+        assert worker_done.wait(timeout=5), "the worker never finished"
         assert log[-2:] == [("rollback",), ("close_connection",)]
         if hard_timeout:
             assert not output.exists()
         else:
+            # The header and the first batch; nothing after the timeout.
             assert len(output.read_text().splitlines()) == 1001
+
+    @pytest.mark.anyio
+    async def test_worker_that_stops_in_time_is_waited_for(
+        self, postgres_config, monkeypatch, tmp_path, caplog
+    ):
+        """A responsive server: the worker ends before the caller returns."""
+        log = []
+        release = Event()
+        rows = [(i,) for i in range(2500)]
+
+        class BlockingCursor(FakeCursor):
+            def fetchmany(self, size):
+                if self.log.count(("fetchmany", self.name, size)) == 1:
+                    release.wait(timeout=5)
+                return super().fetchmany(size)
+
+        class BlockingConnection(FakeConnection):
+            def cursor(self, name=None):
+                return BlockingCursor(log, name, rows, [])
+
+        monkeypatch.setattr(
+            psycopg2, "connect", lambda **kwargs: BlockingConnection(log, rows, [])
+        )
+        connector = PostgreSQLPythonConnector(postgres_config)
+        connector.connection_timeout = 0.5
+        connector.query_timeout = 0.05
+        output = tmp_path / "waited.tsv"
+        # The caller's deadline is 0.55s; the server answers at 0.7s, inside
+        # the 0.5s grace period, and the worker stops at its next check.
+        asyncio.get_running_loop().call_later(0.7, release.set)
+
+        with pytest.raises(TimeoutError, match="combined timeout"):
+            await connector.execute_query_to_file("SELECT i FROM t", output)
+
+        assert log[-2:] == [("rollback",), ("close_connection",)]
+        assert "did not stop" not in caplog.text
+        assert len(output.read_text().splitlines()) == 1001
+
+    @pytest.mark.anyio
+    async def test_silent_server_does_not_hold_the_caller(
+        self, postgres_config, monkeypatch, tmp_path, caplog
+    ):
+        """A server that never answers the fetch: the caller gets its timeout
+        after the grace period instead of waiting for the worker."""
+        log = []
+        release = Event()
+        worker_done = Event()
+        rows = [(i,) for i in range(2500)]
+
+        class SilentCursor(FakeCursor):
+            def fetchmany(self, size):
+                if self.log.count(("fetchmany", self.name, size)) == 1:
+                    release.wait(timeout=5)
+                return super().fetchmany(size)
+
+        class SilentConnection(FakeConnection):
+            def cursor(self, name=None):
+                return SilentCursor(log, name, rows, [])
+
+            def close(self):
+                super().close()
+                worker_done.set()
+
+        monkeypatch.setattr(
+            psycopg2, "connect", lambda **kwargs: SilentConnection(log, rows, [])
+        )
+        connector = PostgreSQLPythonConnector(postgres_config)
+        connector.connection_timeout = 0.2
+        connector.query_timeout = 0.05
+        output = tmp_path / "silent.tsv"
+        started = asyncio.get_running_loop().time()
+        try:
+            with pytest.raises(TimeoutError, match="combined timeout"):
+                await connector.execute_query_to_file("SELECT i FROM t", output)
+            elapsed = asyncio.get_running_loop().time() - started
+        finally:
+            release.set()
+
+        assert elapsed < 2, "the caller waited for the silent server"
+        assert "did not stop" in caplog.text
+        assert worker_done.wait(timeout=5), "the worker never finished"
+        assert log[-2:] == [("rollback",), ("close_connection",)]
