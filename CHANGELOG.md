@@ -48,8 +48,10 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
   every object, since the init scripts will have seeded the new database
   before the dump is restored:
   `docker compose --profile dev exec -T postgres pg_dump -U testuser --clean --if-exists testdb > dump.sql`.
-  Then remove the volume (`docker volume rm <project>_postgres_data`),
-  start the new image, and restore in one transaction with errors fatal:
+  Remove the old container without deleting its volume
+  (`docker compose --profile dev rm --stop --force postgres`), then remove
+  the volume (`docker volume rm <project>_postgres_data`). Start the new
+  image and restore in one transaction with errors fatal:
   `docker compose --profile dev exec -T postgres psql -U testuser -d testdb -v ON_ERROR_STOP=1 --single-transaction < dump.sql`.
   A plain dump restored into the seeded database fails on the existing
   tables and rows and leaves your data out. ClickHouse upgrades its
