@@ -169,8 +169,9 @@ FROM events
 GROUP BY user_id;
 
 -- Logins whose profile already enforces read-only. ClickHouse then refuses
--- client-side readonly/max_execution_time settings, so the connectors must
--- fall back to the profile (see connectors/clickhouse/settings.py).
+-- client-side readonly/max_execution_time settings, so the connectors read
+-- system.settings first and send only what the profile leaves changeable
+-- (see connectors/clickhouse/settings.py).
 CREATE USER IF NOT EXISTS readonly_user IDENTIFIED WITH plaintext_password BY 'readonlypass' SETTINGS readonly = 1;
 GRANT SELECT ON *.* TO readonly_user;
 GRANT URL, CREATE TEMPORARY TABLE ON *.* TO readonly_user;
@@ -178,3 +179,8 @@ CREATE USER IF NOT EXISTS readonly2_user IDENTIFIED WITH plaintext_password BY '
 GRANT SELECT ON *.* TO readonly2_user;
 -- INSERT is granted so that only the profile's readonly refuses a write.
 GRANT INSERT ON testdb.* TO readonly_user, readonly2_user;
+-- A profile that locks readonly at 0: the client cannot make this login
+-- read-only and the profile is not, so the connectors refuse to use it.
+CREATE SETTINGS PROFILE IF NOT EXISTS locked_writable SETTINGS readonly = 0 READONLY;
+CREATE USER IF NOT EXISTS locked_user IDENTIFIED WITH plaintext_password BY 'lockedpass' SETTINGS PROFILE 'locked_writable';
+GRANT SELECT ON *.* TO locked_user;

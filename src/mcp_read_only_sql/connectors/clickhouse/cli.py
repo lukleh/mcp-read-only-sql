@@ -12,7 +12,7 @@ from ...utils.sql_guard import ReadOnlyQueryError, sanitize_read_only_sql
 from ...utils.ssh_tunnel_cli import CLISSHTunnel
 from ...utils.tsv_formatter import write_tsv_text_line
 from ..base_cli import BaseCLIConnector
-from .settings import client_settings, without_refused
+from .settings import PROBE_QUERY, decide_client_settings, refuses_sent_setting
 
 logger = logging.getLogger(__name__)
 
@@ -26,39 +26,32 @@ class ClickHouseCLIConnector(BaseCLIConnector):
 
     def __init__(self, connection: Connection):
         super().__init__(connection)
-        # Client-side settings each server accepted when it was probed, keyed
-        # by the selected server. A profile is per server, and one server's
-        # answer says nothing about another (see _probe_settings).
-        self._accepted_settings: dict[tuple[str, int], dict[str, object]] = {}
+        # Client-side settings decided for each server from its
+        # ``system.settings``, keyed by the selected server. A profile is per
+        # server, and one server's answer says nothing about another.
+        self._decided_settings: dict[tuple[str, int], dict[str, object]] = {}
 
-    async def _probe_settings(
-        self, probe: Callable[[dict[str, object]], Awaitable[None]]
+    async def _decide_settings(
+        self, read_probe: Callable[[], Awaitable[list[list[str]]]]
     ) -> dict[str, object]:
-        """Settings this login accepts, found by running ``SELECT 1`` with them.
+        """Settings to send on this server, from its ``system.settings``.
 
-        A profile that already sets ``readonly`` refuses client-side settings
-        by name. Each refused setting is dropped and the probe repeated, so the
-        caller's statement always runs with the strongest accepted settings and
-        is never re-run with weaker ones. Any other failure propagates and
-        nothing is remembered.
+        ``read_probe`` runs ``PROBE_QUERY`` without client-side settings and
+        returns its rows. A setting the profile locks is left out, and a
+        login whose profile locks ``readonly`` at 0 is refused outright, so
+        a statement never runs with weaker settings than the login allows
+        and is never re-run. Any failure propagates and nothing is
+        remembered.
         """
-        settings = client_settings(self.query_timeout)
-        while True:
-            try:
-                await probe(settings)
-                return settings
-            except ConnectorError as exc:
-                reduced = without_refused(settings, str(exc))
-                if reduced is None:
-                    raise
-                logger.warning(
-                    "ClickHouse: the profile of user %s refuses the client-side "
-                    "%s setting; continuing without it (%s)",
-                    self.username,
-                    set(settings) - set(reduced),
-                    exc,
-                )
-                settings = reduced
+        settings = decide_client_settings(await read_probe(), self.query_timeout)
+        if len(settings) < 2:
+            logger.warning(
+                "ClickHouse: the profile of user %s locks the client-side %s "
+                "setting; continuing without it",
+                self.username,
+                {"readonly", "max_execution_time"} - set(settings),
+            )
+        return settings
 
     @asynccontextmanager
     async def _get_ssh_tunnel(self, server: str | None = None):
@@ -156,7 +149,11 @@ class ClickHouseCLIConnector(BaseCLIConnector):
             binary = self._resolve_binary("clickhouse-client")
             env = os.environ.copy()
 
-            def build_command(statement: str, settings: dict[str, object]) -> list[str]:
+            def build_command(
+                statement: str,
+                settings: dict[str, object],
+                fmt: str = "TabSeparatedWithNames",
+            ) -> list[str]:
                 cmd = [binary]
                 if port == 9440:
                     cmd.append("--secure")  # TLS native port
@@ -173,12 +170,12 @@ class ClickHouseCLIConnector(BaseCLIConnector):
                     "--connect_timeout",
                     str(self.connection_timeout),  # Connection timeout
                     "--format",
-                    "TabSeparatedWithNames",  # Use TSV format with headers
+                    fmt,  # TSV, with a header line for statement output
                     "--query",
                     statement,
                 ]
                 # Server-side read-only mode and query timeout, minus whatever
-                # this login's profile refused when it was probed.
+                # this login's profile locks (see _decide_settings).
                 for name, value in settings.items():
                     cmd += [f"--{name}", str(value)]
                 if self.password:
@@ -293,35 +290,38 @@ class ClickHouseCLIConnector(BaseCLIConnector):
                 await stream_output()
                 await finalize_process()
 
-            def discard(_line: str) -> None:
-                return None
+            async def read_probe() -> list[list[str]]:
+                # No client-side settings, so the rows describe the profile.
+                rows: list[list[str]] = []
+                await run_client(
+                    build_command(PROBE_QUERY, {}, fmt="TabSeparated"),
+                    lambda line: rows.append(line.split("\t")),
+                )
+                return rows
 
             server_key = (selected_server.host, selected_server.port)
 
             try:
-                settings = self._accepted_settings.get(server_key)
+                settings = self._decided_settings.get(server_key)
                 if settings is None or "readonly" not in settings:
                     # Unknown, or known to run without readonly=1. The latter
                     # is only safe while this server's profile stays
-                    # read-only, so it is asked again before every statement.
-                    settings = await self._probe_settings(
-                        lambda candidate: run_client(
-                            build_command("SELECT 1", candidate), discard
-                        )
-                    )
-                    self._accepted_settings[server_key] = settings
+                    # read-only, so it is read again before every statement.
+                    settings = await self._decide_settings(read_probe)
+                    self._decided_settings[server_key] = settings
                 cmd = build_command(sanitized_query, settings)
 
                 async def run_statement(emit_line: Callable[[str], None]) -> None:
                     try:
                         await run_client(cmd, emit_line)
                     except ConnectorError as exc:
-                        if without_refused(settings, str(exc)) is not None:
-                            # The server refuses a setting it accepted at the
-                            # probe: a profile change, or the statement's own
-                            # SETTINGS clause naming one of ours. Forget the
-                            # answer so the next statement probes again.
-                            self._accepted_settings.pop(server_key, None)
+                        if refuses_sent_setting(settings, str(exc)):
+                            # The server refuses a setting system.settings
+                            # said was changeable: a profile change, or the
+                            # statement's own SETTINGS clause naming one of
+                            # ours. Forget the answer so the next statement
+                            # reads system.settings again.
+                            self._decided_settings.pop(server_key, None)
                         raise
 
                 if output_path is None:

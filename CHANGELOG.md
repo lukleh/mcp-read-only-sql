@@ -7,6 +7,17 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Both ClickHouse connectors now decide the client-side `readonly=1` and
+  `max_execution_time` settings from `system.settings`, read once per server
+  with no client-side settings, instead of sending them and dropping
+  whichever one the server refused. `system.settings` is readable by every
+  login; a setting the profile locks is left out, and a login whose profile
+  locks `readonly` at 0 is refused outright with a clear error. The
+  clickhouse-connect client is created without settings and receives the
+  decided ones with each query.
+
 ## [0.6.0] - 2026-09-29
 
 ### Security
