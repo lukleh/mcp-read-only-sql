@@ -19,6 +19,7 @@ from mcp_read_only_sql.utils.sql_guard import (
     postgresql_shadow_query,
     postgresql_statement_is_select,
 )
+from mcp_read_only_sql.utils.timeout_wrapper import HardTimeoutError
 
 STARTUP_REJECTION = psycopg2.OperationalError(
     "unsupported startup parameter in options: default_transaction_read_only"
@@ -245,8 +246,9 @@ class TestCursors:
         assert log[-2:] == [("rollback",), ("close_connection",)]
 
     @pytest.mark.anyio
+    @pytest.mark.parametrize("hard_timeout", [False, True], ids=["query", "hard"])
     async def test_timeout_stops_fetching_before_returning(
-        self, postgres_config, monkeypatch, tmp_path
+        self, postgres_config, monkeypatch, tmp_path, hard_timeout
     ):
         log = []
         fetching = Event()
@@ -261,7 +263,7 @@ class TestCursors:
 
             def fetchmany(self, size):
                 self.fetches += 1
-                if self.fetches == 2:
+                if self.fetches == (1 if hard_timeout else 2):
                     fetching.set()
                     release.wait(timeout=2)
                     if cancelled.is_set():
@@ -283,12 +285,22 @@ class TestCursors:
         monkeypatch.setattr(psycopg2, "connect", lambda **kwargs: BlockingConnection())
         connector = PostgreSQLPythonConnector(postgres_config)
         connector.connection_timeout = 0.05
-        connector.query_timeout = 0.05
         output = tmp_path / "timed-out.tsv"
+        if hard_timeout:
+            connector.query_timeout = 1
+            connector.hard_timeout = 0.1
+            run = connector.execute_query_to_file_with_timeout
+            error = HardTimeoutError
+            message = "hard timeout"
+        else:
+            connector.query_timeout = 0.05
+            run = connector.execute_query_to_file
+            error = TimeoutError
+            message = "combined timeout"
 
         try:
-            with pytest.raises(TimeoutError, match="combined timeout"):
-                await connector.execute_query_to_file("SELECT i FROM t", output)
+            with pytest.raises(error, match=message):
+                await run("SELECT i FROM t", output)
         finally:
             release.set()
 
@@ -296,4 +308,7 @@ class TestCursors:
         assert cancelled.is_set()
         assert ("cancel",) in log
         assert log[-2:] == [("rollback",), ("close_connection",)]
-        assert len(output.read_text().splitlines()) == 1001
+        if hard_timeout:
+            assert not output.exists()
+        else:
+            assert len(output.read_text().splitlines()) == 1001

@@ -150,16 +150,19 @@ class PostgreSQLPythonConnector(BaseConnector):
 
                 future = loop.run_in_executor(None, job)
                 try:
-                    return await asyncio.wait_for(
-                        asyncio.shield(future), timeout=total_timeout
-                    )
-                except (TimeoutError, asyncio.CancelledError):
-                    if not future.done():
-                        cancellation.cancel()
-                        # The result path belongs to the caller. Finish the worker
-                        # before the caller can unlink it after a timeout.
-                        with suppress(Exception):
-                            await asyncio.shield(future)
+                    done, _ = await asyncio.wait({future}, timeout=total_timeout)
+                    if done:
+                        return await future
+                    cancellation.cancel()
+                    # The result path belongs to the caller. Finish the worker
+                    # before the caller can unlink it after a timeout.
+                    with suppress(Exception):
+                        await future
+                    raise TimeoutError
+                except asyncio.CancelledError:
+                    cancellation.cancel()
+                    with suppress(Exception):
+                        await future
                     raise
 
         except TimeoutError as e:
