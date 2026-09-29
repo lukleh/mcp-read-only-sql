@@ -1,7 +1,10 @@
 import asyncio
 import functools
 import logging
+from collections.abc import Iterator
+from contextlib import contextmanager, suppress
 from pathlib import Path
+from threading import Event
 
 import psycopg2
 from psycopg2 import errors as psycopg_errors
@@ -12,6 +15,7 @@ from ...utils.sql_guard import (
     SHADOW_GUARD_SUFFIX,
     ReadOnlyQueryError,
     postgresql_shadow_query,
+    postgresql_statement_is_select,
     sanitize_postgresql_read_only_sql,
 )
 from ...utils.tsv_formatter import format_tsv_line, write_tsv_text_line
@@ -19,9 +23,56 @@ from ..base import BaseConnector
 
 logger = logging.getLogger(__name__)
 
+# Startup option, the same one the psql connector passes as PGOPTIONS. A
+# pooler in transaction mode may reject it; the transaction below is then
+# the only read-only layer, and it is a per-transaction one on purpose.
+_STARTUP_OPTIONS = "-c default_transaction_read_only=on"
+# Rows fetched per round trip from the server-side cursor.
+_FETCH_SIZE = 1000
+_CURSOR_NAME = "mcp_read_only_sql"
+
+
+class _QueryCancellation:
+    """Stop an executor worker at its next step.
+
+    The worker checks between statements, fetches and rows. A statement
+    already running on the server is left to its ``statement_timeout``,
+    which is capped at the hard timeout so the server ends it by the
+    caller's deadline. ``connection.cancel()`` is not used: psycopg2 holds
+    the GIL while libpq's cancel request connects to the server, with no
+    timeout, so against a server that stops answering it freezes the whole
+    process.
+    """
+
+    def __init__(self) -> None:
+        self._cancelled = Event()
+
+    def check(self) -> None:
+        if self._cancelled.is_set():
+            raise TimeoutError("PostgreSQL: query cancelled")
+
+    def cancel(self) -> None:
+        self._cancelled.set()
+
+
+def _consume_outcome(future: asyncio.Future) -> None:
+    """Retrieve an abandoned future's outcome so asyncio does not log it."""
+    if not future.cancelled():
+        future.exception()
+
 
 class PostgreSQLPythonConnector(BaseConnector):
-    """PostgreSQL connector using psycopg2"""
+    """PostgreSQL connector using psycopg2.
+
+    Every statement runs inside one explicit transaction, the same shape the
+    psql connector uses: ``SET TRANSACTION READ ONLY`` and ``SET LOCAL
+    statement_timeout`` first, then the shadow-name check, then the query.
+    Nothing is session state, so the guarantees hold behind a transaction
+    pooler such as PgBouncer, where consecutive statements outside a
+    transaction may run on different server connections. SELECT-shaped
+    statements are read through a server-side cursor, so a large result is
+    streamed to the result file instead of being loaded into memory.
+    """
 
     async def execute_query(
         self, query: str, database: str | None = None, server: str | None = None
@@ -63,6 +114,7 @@ class PostgreSQLPythonConnector(BaseConnector):
         shadow_query = postgresql_shadow_query(
             query, self.connection.allowed_functions
         )
+        streams = postgresql_statement_is_select(sanitized_query)
         selected_server = self._select_server(server)
 
         try:
@@ -84,14 +136,25 @@ class PostgreSQLPythonConnector(BaseConnector):
                 worker_args = [host, port, db_name, sanitized_query]
                 if output_path is not None:
                     worker_args.append(output_path)
+                cancellation = _QueryCancellation()
                 job = functools.partial(
-                    worker, *worker_args, shadow_query=shadow_query
+                    worker,
+                    *worker_args,
+                    shadow_query=shadow_query,
+                    streams=streams,
+                    cancellation=cancellation,
                 )
 
-                return await asyncio.wait_for(
-                    loop.run_in_executor(None, job),
-                    timeout=total_timeout,
-                )
+                future = loop.run_in_executor(None, job)
+                try:
+                    done, _ = await asyncio.wait({future}, timeout=total_timeout)
+                    if done:
+                        return await future
+                    await self._stop_worker(cancellation, future)
+                    raise TimeoutError
+                except asyncio.CancelledError:
+                    await self._stop_worker(cancellation, future)
+                    raise
 
         except TimeoutError as e:
             # Re-raise SSH timeout as-is
@@ -113,72 +176,94 @@ class PostgreSQLPythonConnector(BaseConnector):
             raise ConnectorError(f"PostgreSQL: {e}")
         # Let other exceptions (programming errors) propagate unchanged
 
-    def _execute_sync_query(
+    async def _stop_worker(
+        self, cancellation: _QueryCancellation, future: asyncio.Future
+    ) -> None:
+        """Tell the worker to stop and wait, briefly, for it to finish.
+
+        The result path belongs to the caller, so the worker should be done
+        before the caller can unlink the file after a timeout. But a worker
+        waiting on a server that does not answer cannot be interrupted, so
+        the wait is bounded by the connection timeout. Past that the worker
+        is left to end on its own and the caller gets its error now.
+        """
+        cancellation.cancel()
+        future.add_done_callback(_consume_outcome)
+        done, _ = await asyncio.wait({future}, timeout=self.connection_timeout)
+        if future not in done:
+            logger.warning(
+                "PostgreSQL: the worker did not stop within %ss of the cancel "
+                "request; leaving it to finish on its own",
+                self.connection_timeout,
+            )
+
+    def _connect(self, host: str, port: int, database: str):
+        """Open the connection, without the startup option if the server rejects it."""
+        kwargs: dict[str, object] = {
+            "host": host,
+            "port": port,
+            "database": database,
+            "user": self.username,
+            "password": self.password,
+            "connect_timeout": self.connection_timeout,
+            "options": _STARTUP_OPTIONS,
+        }
+        try:
+            return psycopg2.connect(**kwargs)
+        except psycopg2.OperationalError as exc:
+            if "unsupported startup parameter" not in str(exc).lower():
+                raise
+            logger.warning(
+                "psycopg2: remote server rejected default_transaction_read_only; "
+                "retrying without startup options"
+            )
+            del kwargs["options"]
+            return psycopg2.connect(**kwargs)
+
+    @contextmanager
+    def _read_only_transaction(
         self,
         host: str,
         port: int,
         database: str,
-        query: str,
-        output_path: str | None = None,
-        *,
-        shadow_query: str | None = None,
-    ) -> str:
-        """Execute query synchronously and return TSV output."""
-        if output_path is not None:
-            self._execute_sync_query_to_file(
-                host, port, database, query, output_path, shadow_query=shadow_query
-            )
-            return ""
+        shadow_query: str | None,
+        cancellation: _QueryCancellation | None = None,
+    ):
+        """One transaction, read-only and time-limited before anything else runs.
 
-        conn = None
-        cursor = None
+        psycopg2 opens the transaction with the first statement; that
+        statement makes it read-only and sets the timeout for it alone, so
+        nothing outlives the transaction or depends on session state. The
+        statement timeout is the query timeout, capped at the hard timeout:
+        a statement the caller will not wait for is ended by the server.
+        The transaction is rolled back when the block ends.
+        """
+        statement_timeout_ms = int(min(self.query_timeout, self.hard_timeout) * 1000)
+        if cancellation is not None:
+            cancellation.check()
+        conn = self._connect(host, port, database)
         try:
-            conn = psycopg2.connect(
-                host=host,
-                port=port,
-                database=database,
-                user=self.username,
-                password=self.password,
-                connect_timeout=self.connection_timeout,
-                options="-c default_transaction_read_only=on",  # Force read-only mode
-            )
-
-            # Set session to read-only
-            conn.set_session(readonly=True, autocommit=True)
-
-            # Plain tuple cursor: a dict cursor collapses duplicate column
-            # names (SELECT 1 AS a, 2 AS a) into one value.
+            if cancellation is not None:
+                cancellation.check()
+            conn.autocommit = False
             cursor = conn.cursor()
-            cursor.execute(
-                f"SET statement_timeout = {int(self.query_timeout * 1000)}"
-            )  # Convert to milliseconds
-            self._reject_shadowed_names(cursor, shadow_query)
-
-            # Execute the actual query
-            cursor.execute(query)
-
-            columns = (
-                [desc[0] for desc in cursor.description] if cursor.description else []
-            )
-            lines = []
-
-            if columns:
-                lines.append(format_tsv_line(columns))
-
-            fetch_size = 100
-            while True:
-                batch = cursor.fetchmany(fetch_size)
-                if not batch:
-                    break
-                for row in batch:
-                    lines.append(format_tsv_line(list(row)))
-
-            return "\n".join(lines)
-        finally:
-            if cursor:
+            try:
+                if cancellation is not None:
+                    cancellation.check()
+                cursor.execute(
+                    "SET TRANSACTION READ ONLY; "
+                    f"SET LOCAL statement_timeout = {statement_timeout_ms}"
+                )
+                self._reject_shadowed_names(cursor, shadow_query)
+            finally:
                 cursor.close()
-            if conn:
-                conn.close()
+            if cancellation is not None:
+                cancellation.check()
+            yield conn
+        finally:
+            with suppress(psycopg2.Error):
+                conn.rollback()
+            conn.close()
 
     @staticmethod
     def _reject_shadowed_names(cursor, shadow_query: str | None) -> None:
@@ -192,6 +277,75 @@ class PostgreSQLPythonConnector(BaseConnector):
                 f"{SHADOW_GUARD_PREFIX} {', '.join(shadows)} {SHADOW_GUARD_SUFFIX}"
             )
 
+    @staticmethod
+    def _rows(
+        conn, query: str, streams: bool, cancellation: _QueryCancellation | None = None
+    ) -> Iterator[list]:
+        """Yield the column names, then every row, inside the open transaction.
+
+        A SELECT-shaped statement is declared as a server-side cursor and
+        fetched in batches; EXPLAIN and SHOW cannot be, and run on a plain
+        cursor. A plain tuple cursor is used either way: a dict cursor
+        collapses duplicate column names (SELECT 1 AS a, 2 AS a) into one.
+        """
+        cursor = conn.cursor(name=_CURSOR_NAME) if streams else conn.cursor()
+        try:
+            if streams:
+                cursor.itersize = _FETCH_SIZE
+            if cancellation is not None:
+                cancellation.check()
+            cursor.execute(query)
+            # A server-side cursor learns its columns from the first FETCH.
+            batch = cursor.fetchmany(_FETCH_SIZE)
+            if cancellation is not None:
+                cancellation.check()
+            yield [desc[0] for desc in cursor.description or []]
+            while batch:
+                for row in batch:
+                    if cancellation is not None:
+                        cancellation.check()
+                    yield list(row)
+                if cancellation is not None:
+                    cancellation.check()
+                batch = cursor.fetchmany(_FETCH_SIZE)
+        finally:
+            cursor.close()
+
+    def _execute_sync_query(
+        self,
+        host: str,
+        port: int,
+        database: str,
+        query: str,
+        output_path: str | None = None,
+        *,
+        shadow_query: str | None = None,
+        streams: bool = True,
+        cancellation: _QueryCancellation | None = None,
+    ) -> str:
+        """Execute query synchronously and return TSV output."""
+        if output_path is not None:
+            self._execute_sync_query_to_file(
+                host,
+                port,
+                database,
+                query,
+                output_path,
+                shadow_query=shadow_query,
+                streams=streams,
+                cancellation=cancellation,
+            )
+            return ""
+
+        with self._read_only_transaction(
+            host, port, database, shadow_query, cancellation
+        ) as conn:
+            rows = self._rows(conn, query, streams, cancellation)
+            columns = next(rows)
+            lines = [format_tsv_line(columns)] if columns else []
+            lines.extend(format_tsv_line(row) for row in rows)
+            return "\n".join(lines)
+
     def _execute_sync_query_to_file(
         self,
         host: str,
@@ -201,50 +355,24 @@ class PostgreSQLPythonConnector(BaseConnector):
         output_path: str,
         *,
         shadow_query: str | None = None,
+        streams: bool = True,
+        cancellation: _QueryCancellation | None = None,
     ) -> None:
         """Execute query synchronously and stream TSV output to a file."""
-        conn = None
-        cursor = None
-        try:
-            conn = psycopg2.connect(
-                host=host,
-                port=port,
-                database=database,
-                user=self.username,
-                password=self.password,
-                connect_timeout=self.connection_timeout,
-                options="-c default_transaction_read_only=on",
-            )
-
-            conn.set_session(readonly=True, autocommit=True)
-
-            cursor = conn.cursor()
-            cursor.execute(f"SET statement_timeout = {int(self.query_timeout * 1000)}")
-            self._reject_shadowed_names(cursor, shadow_query)
-            cursor.execute(query)
-
-            columns = (
-                [desc[0] for desc in cursor.description] if cursor.description else []
-            )
+        with self._read_only_transaction(
+            host, port, database, shadow_query, cancellation
+        ) as conn:
+            rows = self._rows(conn, query, streams, cancellation)
+            columns = next(rows)
             wrote_content = False
-
+            if cancellation is not None:
+                cancellation.check()
             with Path(output_path).open("w", encoding="utf-8", newline="") as handle:
                 if columns:
                     wrote_content = write_tsv_text_line(
                         handle, format_tsv_line(columns), wrote_content
                     )
-
-                fetch_size = 100
-                while True:
-                    batch = cursor.fetchmany(fetch_size)
-                    if not batch:
-                        break
-                    for row in batch:
-                        wrote_content = write_tsv_text_line(
-                            handle, format_tsv_line(list(row)), wrote_content
-                        )
-        finally:
-            if cursor:
-                cursor.close()
-            if conn:
-                conn.close()
+                for row in rows:
+                    wrote_content = write_tsv_text_line(
+                        handle, format_tsv_line(row), wrote_content
+                    )

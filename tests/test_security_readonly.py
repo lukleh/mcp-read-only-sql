@@ -478,69 +478,6 @@ async def test_clickhouse_cli_blocks_kill_statements(
         await connector.execute_query(statement)
 
 
-def test_postgresql_python_sets_readonly_options(monkeypatch, postgres_config):
-    """psycopg2 connection should be created with session-level read-only guards."""
-
-    captured = {}
-
-    class DummyCursor:
-        def __init__(self):
-            self.description = None
-            self._rows = []
-
-        def execute(self, sql):
-            captured.setdefault("executed", []).append(sql)
-            if sql.startswith("SET statement_timeout"):
-                return
-            self.description = [("col",)]
-            self._rows = [(1,)]
-
-        def fetchmany(self, _size):
-            if self._rows:
-                rows = self._rows
-                self._rows = []
-                return rows
-            return []
-
-        def close(self):
-            return None
-
-    class DummyConnection:
-        def __init__(self, **kwargs):
-            captured["connect_kwargs"] = kwargs
-            self.session_args = None
-
-        def set_session(self, readonly, autocommit):
-            self.session_args = (readonly, autocommit)
-            captured["session_args"] = (readonly, autocommit)
-
-        def cursor(self, cursor_factory=None):
-            return DummyCursor()
-
-        def close(self):
-            captured["closed"] = True
-
-    def fake_connect(**kwargs):
-        return DummyConnection(**kwargs)
-
-    monkeypatch.setattr(psycopg2, "connect", fake_connect)
-
-    connector = PostgreSQLPythonConnector(postgres_config)
-    output = connector._execute_sync_query(
-        host="localhost",
-        port=5432,
-        database="testdb",
-        query="SELECT 1",
-    )
-
-    assert output == "col\n1"
-    assert (
-        captured["connect_kwargs"]["options"] == "-c default_transaction_read_only=on"
-    )
-    assert captured["session_args"] == (True, True)
-    assert any("SET statement_timeout" in sql for sql in captured["executed"])
-
-
 @pytest.mark.anyio
 @pytest.mark.parametrize("statement", POSTGRESQL_PYTHON_BLOCKED_STATEMENTS)
 async def test_postgresql_python_blocks_write_statements(

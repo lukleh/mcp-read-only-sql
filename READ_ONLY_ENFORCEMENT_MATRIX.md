@@ -40,9 +40,18 @@ Legend:
   and `--csv` (tab separator), so stdout carries only the header and the
   rows, fields containing a tab, a quote or a line break are quoted, and no
   line is filtered client-side.
-- Python: `psycopg2.connect(..., options='-c default_transaction_read_only=on')`
-  plus `conn.set_session(readonly=True, autocommit=True)` create a database
-  session that refuses writes at the protocol level.
+- Python: psycopg2 runs every statement inside one transaction whose first
+  statement is `SET TRANSACTION READ ONLY; SET LOCAL statement_timeout = ...`,
+  followed by the shadow-name check and then the query, the same shape as
+  the CLI. Nothing is session state, so a transaction pooler that hands
+  consecutive statements to different server connections cannot separate
+  the guard from the query. The connection also asks for
+  `options='-c default_transaction_read_only=on'` at startup and, like the
+  CLI, retries without it when a pooler rejects the startup parameter.
+  SELECT-shaped statements are declared as a server-side cursor and fetched
+  1000 rows at a time; EXPLAIN and SHOW cannot be declared as cursors and
+  run on a plain cursor. Covered by
+  `tests/test_postgresql_python_transaction.py`.
 
 **What the read-only transaction alone does not stop.** For a role with the
 matching privilege (a superuser has all of them), `COPY ... TO PROGRAM`,
