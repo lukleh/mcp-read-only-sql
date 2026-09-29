@@ -37,6 +37,12 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
   statement already running is left to its server-side `statement_timeout`,
   which is now capped at the hard timeout so the server ends it by the
   caller's deadline.
+- The Docker test fixtures run PostgreSQL 17 and ClickHouse 26.3, the
+  versions the connectors are used against, instead of PostgreSQL 16 and
+  ClickHouse 24.8.
+- The psql connector's `statement_timeout` is capped at the hard timeout, so
+  a statement psql is killed away from at the hard timeout is ended by the
+  server by then as well.
 
 ## [0.6.0] - 2026-09-29
 

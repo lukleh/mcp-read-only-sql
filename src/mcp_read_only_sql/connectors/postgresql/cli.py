@@ -79,10 +79,13 @@ class PostgreSQLCLIConnector(BaseCLIConnector):
 
             # Build psql command with read-only enforcement. psql's
             # --single-transaction opens the transaction; the command string
-            # makes it read-only before the statement runs.
+            # makes it read-only before the statement runs. The statement
+            # timeout is capped at the hard timeout: when psql is killed at
+            # the hard timeout, the server ends the statement by then too.
+            statement_timeout_ms = int(min(self.query_timeout, self.hard_timeout) * 1000)
             wrapped_query = f"""
                 SET TRANSACTION READ ONLY;
-                SET LOCAL statement_timeout = {int(self.query_timeout * 1000)};
+                SET LOCAL statement_timeout = {statement_timeout_ms};
                 {shadow_guard}
                 {sanitized_query};
             """
