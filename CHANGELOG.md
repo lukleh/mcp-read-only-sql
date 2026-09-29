@@ -41,12 +41,20 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
   versions the connectors are used against, instead of PostgreSQL 16 and
   ClickHouse 24.8. The test profile keeps its data on tmpfs, so nothing
   carries over. The dev and prod profiles keep a `postgres_data` volume,
-  and a PostgreSQL 16 data directory does not start on 17: remove that
-  volume (`docker volume rm <project>_postgres_data`) before starting those
-  profiles again. ClickHouse upgrades its `clickhouse_data` volume in place.
+  and a PostgreSQL 16 data directory does not start on 17. That volume
+  holds the seeded sample data, which the init scripts recreate; if you
+  added data of your own, dump it first with the old image
+  (`docker compose --profile dev exec postgres pg_dump -U testuser testdb >
+  dump.sql`), then remove the volume (`docker volume rm
+  <project>_postgres_data`), start the new image and restore the dump.
+  ClickHouse upgrades its `clickhouse_data` volume in place.
 - The psql connector's `statement_timeout` is capped at the hard timeout, so
   a statement psql is killed away from at the hard timeout is ended by the
   server by then as well.
+- Both CLI connectors now kill and reap their client process when the call
+  is cancelled, which is what the hard timeout does. Before, psql or
+  clickhouse-client kept running the statement after the caller had
+  already returned an error.
 
 ## [0.6.0] - 2026-09-29
 

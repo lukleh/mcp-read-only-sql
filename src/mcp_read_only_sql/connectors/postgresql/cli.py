@@ -139,6 +139,16 @@ class PostgreSQLCLIConnector(BaseCLIConnector):
                 loop = asyncio.get_event_loop()
                 deadline = loop.time() + self.query_timeout
 
+                async def terminate() -> None:
+                    """Kill psql and reap it; the server then drops the statement."""
+                    with suppress(ProcessLookupError):
+                        process.kill()
+                    stderr_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await stderr_task
+                    with suppress(asyncio.TimeoutError):
+                        await asyncio.wait_for(process.wait(), timeout=1.0)
+
                 async def stream_output(emit_line: Callable[[str], None]) -> None:
                     # Every stdout line is data: the header, then the rows. An
                     # empty line is a row whose only column is NULL or empty,
@@ -163,12 +173,7 @@ class PostgreSQLCLIConnector(BaseCLIConnector):
                             )
                     except TimeoutError:
                         logger.warning("Query timeout - terminating psql process")
-                        process.kill()
-                        with suppress(asyncio.CancelledError):
-                            stderr_task.cancel()
-                            await stderr_task
-                        with suppress(asyncio.TimeoutError):
-                            await asyncio.wait_for(process.wait(), timeout=1.0)
+                        await terminate()
                         raise TimeoutError(
                             f"psql: Query timeout after {self.query_timeout}s"
                         )
@@ -204,24 +209,30 @@ class PostgreSQLCLIConnector(BaseCLIConnector):
                         logger.error(f"psql error: {error_msg}")
                         raise ConnectorError(f"psql: {error_msg}")
 
-                if output_path is None:
-                    await stream_output(lines.append)
-                    await finalize_process()
-                    return "\n".join(lines)
+                try:
+                    if output_path is None:
+                        await stream_output(lines.append)
+                        await finalize_process()
+                        return "\n".join(lines)
 
-                wrote_content = False
+                    wrote_content = False
 
-                def emit_file_line(line: str) -> None:
-                    nonlocal wrote_content
-                    wrote_content = write_tsv_text_line(handle, line, wrote_content)
+                    def emit_file_line(line: str) -> None:
+                        nonlocal wrote_content
+                        wrote_content = write_tsv_text_line(handle, line, wrote_content)
 
-                assert output_path is not None
-                with Path(output_path).open(  # noqa: ASYNC230 -- local file writes are fast; async file IO would add a dependency for no benefit
-                    "w", encoding="utf-8", newline=""
-                ) as handle:
-                    await stream_output(emit_file_line)
-                    await finalize_process()
-                return None
+                    with Path(output_path).open(  # noqa: ASYNC230 -- local file writes are fast; async file IO would add a dependency for no benefit
+                        "w", encoding="utf-8", newline=""
+                    ) as handle:
+                        await stream_output(emit_file_line)
+                        await finalize_process()
+                    return None
+                except asyncio.CancelledError:
+                    # The caller gave up (its hard timeout, or a cancelled
+                    # call). Without this psql, and the statement on the
+                    # server, would run on until the statement timeout.
+                    await terminate()
+                    raise
 
             use_pgoptions = getattr(self.connection, "cli_requires_pgoptions", True)
             attempts = [True] if not use_pgoptions else [True, False]
