@@ -40,7 +40,7 @@ TIMEOUT_LOCKED_PROFILE = [["max_execution_time", "0", "1"], ["readonly", "0", "0
 # What a readonly=1 profile answers to a client-side setting.
 PROFILE_REFUSAL = (
     "Password for user (readonly_user): Received exception from server "
-    "(version 24.8.14):\nCode: 164. DB::Exception: Received from localhost:9000. "
+    "(version 26.3.35):\nCode: 164. DB::Exception: Received from localhost:9000. "
     "DB::Exception: Cannot modify 'max_execution_time' setting in readonly mode. "
     "(READONLY)\n"
 )

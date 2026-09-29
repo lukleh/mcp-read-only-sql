@@ -39,7 +39,11 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
   caller's deadline.
 - The Docker test fixtures run PostgreSQL 17 and ClickHouse 26.3, the
   versions the connectors are used against, instead of PostgreSQL 16 and
-  ClickHouse 24.8.
+  ClickHouse 24.8. The test profile keeps its data on tmpfs, so nothing
+  carries over. The dev and prod profiles keep a `postgres_data` volume,
+  and a PostgreSQL 16 data directory does not start on 17: remove that
+  volume (`docker volume rm <project>_postgres_data`) before starting those
+  profiles again. ClickHouse upgrades its `clickhouse_data` volume in place.
 - The psql connector's `statement_timeout` is capped at the hard timeout, so
   a statement psql is killed away from at the hard timeout is ended by the
   server by then as well.
