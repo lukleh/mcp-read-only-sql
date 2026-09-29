@@ -7,6 +7,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-29
+
 ### Changed
 
 - Both ClickHouse connectors now decide the client-side `readonly=1` and
