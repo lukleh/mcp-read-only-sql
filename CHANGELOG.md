@@ -42,12 +42,18 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
   ClickHouse 24.8. The test profile keeps its data on tmpfs, so nothing
   carries over. The dev and prod profiles keep a `postgres_data` volume,
   and a PostgreSQL 16 data directory does not start on 17. That volume
-  holds the seeded sample data, which the init scripts recreate; if you
-  added data of your own, dump it first with the old image
-  (`docker compose --profile dev exec postgres pg_dump -U testuser testdb >
-  dump.sql`), then remove the volume (`docker volume rm
-  <project>_postgres_data`), start the new image and restore the dump.
-  ClickHouse upgrades its `clickhouse_data` volume in place.
+  holds the seeded sample data, which the init scripts recreate on a
+  fresh volume; if you added data of your own, carry it over like this.
+  With the old image still running, take a dump that drops and recreates
+  every object, since the init scripts will have seeded the new database
+  before the dump is restored:
+  `docker compose --profile dev exec -T postgres pg_dump -U testuser --clean --if-exists testdb > dump.sql`.
+  Then remove the volume (`docker volume rm <project>_postgres_data`),
+  start the new image, and restore in one transaction with errors fatal:
+  `docker compose --profile dev exec -T postgres psql -U testuser -d testdb -v ON_ERROR_STOP=1 --single-transaction < dump.sql`.
+  A plain dump restored into the seeded database fails on the existing
+  tables and rows and leaves your data out. ClickHouse upgrades its
+  `clickhouse_data` volume in place.
 - The psql connector's `statement_timeout` is capped at the hard timeout, so
   a statement psql is killed away from at the hard timeout is ended by the
   server by then as well.
