@@ -4,6 +4,7 @@ import logging
 from collections.abc import Iterator
 from contextlib import contextmanager, suppress
 from pathlib import Path
+from threading import Event, Lock
 
 import psycopg2
 from psycopg2 import errors as psycopg_errors
@@ -29,6 +30,38 @@ _STARTUP_OPTIONS = "-c default_transaction_read_only=on"
 # Rows fetched per round trip from the server-side cursor.
 _FETCH_SIZE = 1000
 _CURSOR_NAME = "mcp_read_only_sql"
+
+
+class _QueryCancellation:
+    """Stop an executor worker and its active PostgreSQL statement."""
+
+    def __init__(self) -> None:
+        self._cancelled = Event()
+        self._lock = Lock()
+        self._connection = None
+
+    def attach(self, conn) -> None:
+        with self._lock:
+            self.check()
+            self._connection = conn
+
+    def detach(self, conn) -> None:
+        with self._lock:
+            if self._connection is conn:
+                self._connection = None
+
+    def check(self) -> None:
+        if self._cancelled.is_set():
+            raise TimeoutError("PostgreSQL: query cancelled")
+
+    def cancel(self) -> None:
+        with self._lock:
+            self._cancelled.set()
+            conn = self._connection
+        if conn is not None:
+            # psycopg2 supports cancelling a running query from another thread.
+            with suppress(psycopg2.Error):
+                conn.cancel()
 
 
 class PostgreSQLPythonConnector(BaseConnector):
@@ -106,17 +139,28 @@ class PostgreSQLPythonConnector(BaseConnector):
                 worker_args = [host, port, db_name, sanitized_query]
                 if output_path is not None:
                     worker_args.append(output_path)
+                cancellation = _QueryCancellation()
                 job = functools.partial(
                     worker,
                     *worker_args,
                     shadow_query=shadow_query,
                     streams=streams,
+                    cancellation=cancellation,
                 )
 
-                return await asyncio.wait_for(
-                    loop.run_in_executor(None, job),
-                    timeout=total_timeout,
-                )
+                future = loop.run_in_executor(None, job)
+                try:
+                    return await asyncio.wait_for(
+                        asyncio.shield(future), timeout=total_timeout
+                    )
+                except (TimeoutError, asyncio.CancelledError):
+                    if not future.done():
+                        cancellation.cancel()
+                        # The result path belongs to the caller. Finish the worker
+                        # before the caller can unlink it after a timeout.
+                        with suppress(Exception):
+                            await asyncio.shield(future)
+                    raise
 
         except TimeoutError as e:
             # Re-raise SSH timeout as-is
@@ -163,7 +207,12 @@ class PostgreSQLPythonConnector(BaseConnector):
 
     @contextmanager
     def _read_only_transaction(
-        self, host: str, port: int, database: str, shadow_query: str | None
+        self,
+        host: str,
+        port: int,
+        database: str,
+        shadow_query: str | None,
+        cancellation: _QueryCancellation | None = None,
     ):
         """One transaction, read-only and time-limited before anything else runs.
 
@@ -172,11 +221,17 @@ class PostgreSQLPythonConnector(BaseConnector):
         nothing outlives the transaction or depends on session state. The
         transaction is rolled back when the block ends.
         """
+        if cancellation is not None:
+            cancellation.check()
         conn = self._connect(host, port, database)
         try:
+            if cancellation is not None:
+                cancellation.attach(conn)
             conn.autocommit = False
             cursor = conn.cursor()
             try:
+                if cancellation is not None:
+                    cancellation.check()
                 cursor.execute(
                     "SET TRANSACTION READ ONLY; "
                     f"SET LOCAL statement_timeout = {int(self.query_timeout * 1000)}"
@@ -184,8 +239,12 @@ class PostgreSQLPythonConnector(BaseConnector):
                 self._reject_shadowed_names(cursor, shadow_query)
             finally:
                 cursor.close()
+            if cancellation is not None:
+                cancellation.check()
             yield conn
         finally:
+            if cancellation is not None:
+                cancellation.detach(conn)
             with suppress(psycopg2.Error):
                 conn.rollback()
             conn.close()
@@ -203,7 +262,9 @@ class PostgreSQLPythonConnector(BaseConnector):
             )
 
     @staticmethod
-    def _rows(conn, query: str, streams: bool) -> Iterator[list]:
+    def _rows(
+        conn, query: str, streams: bool, cancellation: _QueryCancellation | None = None
+    ) -> Iterator[list]:
         """Yield the column names, then every row, inside the open transaction.
 
         A SELECT-shaped statement is declared as a server-side cursor and
@@ -215,13 +276,21 @@ class PostgreSQLPythonConnector(BaseConnector):
         try:
             if streams:
                 cursor.itersize = _FETCH_SIZE
+            if cancellation is not None:
+                cancellation.check()
             cursor.execute(query)
             # A server-side cursor learns its columns from the first FETCH.
             batch = cursor.fetchmany(_FETCH_SIZE)
+            if cancellation is not None:
+                cancellation.check()
             yield [desc[0] for desc in cursor.description or []]
             while batch:
                 for row in batch:
+                    if cancellation is not None:
+                        cancellation.check()
                     yield list(row)
+                if cancellation is not None:
+                    cancellation.check()
                 batch = cursor.fetchmany(_FETCH_SIZE)
         finally:
             cursor.close()
@@ -236,6 +305,7 @@ class PostgreSQLPythonConnector(BaseConnector):
         *,
         shadow_query: str | None = None,
         streams: bool = True,
+        cancellation: _QueryCancellation | None = None,
     ) -> str:
         """Execute query synchronously and return TSV output."""
         if output_path is not None:
@@ -247,11 +317,14 @@ class PostgreSQLPythonConnector(BaseConnector):
                 output_path,
                 shadow_query=shadow_query,
                 streams=streams,
+                cancellation=cancellation,
             )
             return ""
 
-        with self._read_only_transaction(host, port, database, shadow_query) as conn:
-            rows = self._rows(conn, query, streams)
+        with self._read_only_transaction(
+            host, port, database, shadow_query, cancellation
+        ) as conn:
+            rows = self._rows(conn, query, streams, cancellation)
             columns = next(rows)
             lines = [format_tsv_line(columns)] if columns else []
             lines.extend(format_tsv_line(row) for row in rows)
@@ -267,12 +340,17 @@ class PostgreSQLPythonConnector(BaseConnector):
         *,
         shadow_query: str | None = None,
         streams: bool = True,
+        cancellation: _QueryCancellation | None = None,
     ) -> None:
         """Execute query synchronously and stream TSV output to a file."""
-        with self._read_only_transaction(host, port, database, shadow_query) as conn:
-            rows = self._rows(conn, query, streams)
+        with self._read_only_transaction(
+            host, port, database, shadow_query, cancellation
+        ) as conn:
+            rows = self._rows(conn, query, streams, cancellation)
             columns = next(rows)
             wrote_content = False
+            if cancellation is not None:
+                cancellation.check()
             with Path(output_path).open("w", encoding="utf-8", newline="") as handle:
                 if columns:
                     wrote_content = write_tsv_text_line(

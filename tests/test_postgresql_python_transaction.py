@@ -8,6 +8,8 @@ run on a plain cursor. These tests drive the connector with a fake
 connection that records what it was asked to do.
 """
 
+from threading import Event
+
 import psycopg2
 import pytest
 
@@ -241,3 +243,57 @@ class TestCursors:
             ("fetchmany", "mcp_read_only_sql", 1000)
         ] * 3
         assert log[-2:] == [("rollback",), ("close_connection",)]
+
+    @pytest.mark.anyio
+    async def test_timeout_stops_fetching_before_returning(
+        self, postgres_config, monkeypatch, tmp_path
+    ):
+        log = []
+        fetching = Event()
+        cancelled = Event()
+        release = Event()
+        rows = [(i,) for i in range(2500)]
+
+        class BlockingCursor(FakeCursor):
+            def __init__(self, name):
+                super().__init__(log, name, rows, [])
+                self.fetches = 0
+
+            def fetchmany(self, size):
+                self.fetches += 1
+                if self.fetches == 2:
+                    fetching.set()
+                    release.wait(timeout=2)
+                    if cancelled.is_set():
+                        raise psycopg2.OperationalError("query cancelled")
+                return super().fetchmany(size)
+
+        class BlockingConnection(FakeConnection):
+            def __init__(self):
+                super().__init__(log, rows, [])
+
+            def cursor(self, name=None):
+                return BlockingCursor(name)
+
+            def cancel(self):
+                log.append(("cancel",))
+                cancelled.set()
+                release.set()
+
+        monkeypatch.setattr(psycopg2, "connect", lambda **kwargs: BlockingConnection())
+        connector = PostgreSQLPythonConnector(postgres_config)
+        connector.connection_timeout = 0.05
+        connector.query_timeout = 0.05
+        output = tmp_path / "timed-out.tsv"
+
+        try:
+            with pytest.raises(TimeoutError, match="combined timeout"):
+                await connector.execute_query_to_file("SELECT i FROM t", output)
+        finally:
+            release.set()
+
+        assert fetching.is_set()
+        assert cancelled.is_set()
+        assert ("cancel",) in log
+        assert log[-2:] == [("rollback",), ("close_connection",)]
+        assert len(output.read_text().splitlines()) == 1001
