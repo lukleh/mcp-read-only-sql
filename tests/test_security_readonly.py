@@ -183,6 +183,29 @@ async def test_postgresql_cli_includes_readonly_flags(postgres_config, monkeypat
 
 
 @pytest.mark.anyio
+async def test_postgresql_cli_caps_statement_timeout_at_hard_timeout(
+    postgres_config, monkeypatch
+):
+    """A statement psql will be killed away from is ended by the server too."""
+
+    captured = {}
+
+    async def fake_create_subprocess_exec(*cmd, **kwargs):
+        captured["cmd"] = list(cmd)
+        return FakeCLIProcess(["col\n"])
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    connector = PostgreSQLCLIConnector(postgres_config)
+    connector.query_timeout = 120
+    connector.hard_timeout = 2
+    await connector.execute_query("SELECT 1")
+
+    command_string = captured["cmd"][captured["cmd"].index("-c") + 1]
+    assert "SET LOCAL statement_timeout = 2000;" in command_string
+
+
+@pytest.mark.anyio
 @pytest.mark.parametrize("statement", POSTGRESQL_DML_STATEMENTS)
 async def test_postgresql_cli_blocks_write_statements(
     statement, postgres_config, monkeypatch

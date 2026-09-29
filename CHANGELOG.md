@@ -37,6 +37,32 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
   statement already running is left to its server-side `statement_timeout`,
   which is now capped at the hard timeout so the server ends it by the
   caller's deadline.
+- The Docker test fixtures run PostgreSQL 17 and ClickHouse 26.3, the
+  versions the connectors are used against, instead of PostgreSQL 16 and
+  ClickHouse 24.8. The test profile keeps its data on tmpfs, so nothing
+  carries over. The dev and prod profiles keep a `postgres_data` volume,
+  and a PostgreSQL 16 data directory does not start on 17. That volume
+  holds the seeded sample data, which the init scripts recreate on a
+  fresh volume; if you added data of your own, carry it over like this.
+  With the old image still running, take a dump that drops and recreates
+  every object, since the init scripts will have seeded the new database
+  before the dump is restored:
+  `docker compose --profile dev exec -T postgres pg_dump -U testuser --clean --if-exists testdb > dump.sql`.
+  Remove the old container without deleting its volume
+  (`docker compose --profile dev rm --stop --force postgres`), then remove
+  the volume (`docker volume rm <project>_postgres_data`). Start the new
+  image and restore in one transaction with errors fatal:
+  `docker compose --profile dev exec -T postgres psql -U testuser -d testdb -v ON_ERROR_STOP=1 --single-transaction < dump.sql`.
+  A plain dump restored into the seeded database fails on the existing
+  tables and rows and leaves your data out. ClickHouse upgrades its
+  `clickhouse_data` volume in place.
+- The psql connector's `statement_timeout` is capped at the hard timeout, so
+  a statement psql is killed away from at the hard timeout is ended by the
+  server by then as well.
+- Both CLI connectors now kill and reap their client process when the call
+  is cancelled, which is what the hard timeout does. Before, psql or
+  clickhouse-client kept running the statement after the caller had
+  already returned an error.
 
 ## [0.6.0] - 2026-09-29
 

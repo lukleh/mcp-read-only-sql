@@ -222,6 +222,16 @@ class ClickHouseCLIConnector(BaseCLIConnector):
                 loop = asyncio.get_event_loop()
                 deadline = loop.time() + self.query_timeout
 
+                async def terminate() -> None:
+                    """Kill clickhouse-client and reap it; the server then drops the query."""
+                    with suppress(ProcessLookupError):
+                        process.kill()
+                    stderr_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await stderr_task
+                    with suppress(asyncio.TimeoutError):
+                        await asyncio.wait_for(process.wait(), timeout=1.0)
+
                 async def stream_output() -> None:
                     # Every stdout line is data: the header, then one line per
                     # row. An empty line is a row whose only column is empty.
@@ -243,13 +253,7 @@ class ClickHouseCLIConnector(BaseCLIConnector):
                         logger.warning(
                             "Query timeout - terminating clickhouse-client process"
                         )
-                        process.kill()
-                        with suppress(asyncio.CancelledError):
-                            stderr_task.cancel()
-                            await stderr_task
-                        # Wait for process to clean up subprocess transport
-                        with suppress(asyncio.TimeoutError):
-                            await asyncio.wait_for(process.wait(), timeout=1.0)
+                        await terminate()
                         raise TimeoutError(
                             f"clickhouse-client: Query timeout after {self.query_timeout}s"
                         )
@@ -287,8 +291,15 @@ class ClickHouseCLIConnector(BaseCLIConnector):
                         logger.error(f"clickhouse-client error: {error_msg}")
                         raise ConnectorError(f"clickhouse-client: {error_msg}")
 
-                await stream_output()
-                await finalize_process()
+                try:
+                    await stream_output()
+                    await finalize_process()
+                except asyncio.CancelledError:
+                    # The caller gave up (its hard timeout, or a cancelled
+                    # call). Without this clickhouse-client, and the query on
+                    # the server, would run on until max_execution_time.
+                    await terminate()
+                    raise
 
             async def read_probe() -> list[list[str]]:
                 # No client-side settings, so the rows describe the profile.
