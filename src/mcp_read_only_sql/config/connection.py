@@ -1,5 +1,6 @@
 """Connection configuration classes with validation."""
 
+import math
 import os
 from dataclasses import dataclass
 from typing import Any, Optional
@@ -18,9 +19,22 @@ def _normalize_positive_timeout(value: Any, field_name: str) -> float:
     """Validate numeric timeout values used at runtime."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"Field '{field_name}' must be a positive number")
-    if value <= 0:
+    if not math.isfinite(value) or value <= 0:
         raise ValueError(f"Field '{field_name}' must be a positive number")
     return value
+
+
+def _normalize_connection_timeout(value: Any, db_type: str) -> float:
+    """Keep PostgreSQL's libpq timeout in its required whole-second form."""
+    timeout = _normalize_positive_timeout(value, "connection_timeout")
+    if db_type == "postgresql":
+        if timeout != int(timeout):
+            raise ValueError(
+                "Field 'connection_timeout' must be a positive whole number of "
+                "seconds for postgresql"
+            )
+        return int(timeout)
+    return timeout
 
 
 def _normalize_database_list(value: Any, field_name: str) -> list[str]:
@@ -348,9 +362,9 @@ class Connection:
             config.get("query_timeout", DEFAULT_QUERY_TIMEOUT),
             "query_timeout",
         )
-        self._connection_timeout = _normalize_positive_timeout(
+        self._connection_timeout = _normalize_connection_timeout(
             config.get("connection_timeout", DEFAULT_CONNECTION_TIMEOUT),
-            "connection_timeout",
+            db_type,
         )
         description = config.get("description")
         if description is None:
