@@ -128,6 +128,7 @@ class DBeaverImporter:
         connections: list[dict[str, Any]] = []
         imported_names: list[str] = []
         seen_names: list[str] = []
+        source_names: dict[str, str] = {}
         connections_data = data_sources.get("connections", {})
         if not isinstance(connections_data, dict):
             connections_data = {}
@@ -136,6 +137,14 @@ class DBeaverImporter:
             if not isinstance(conn_data, dict):
                 continue
             original_name = conn_data.get("name", conn_id)
+            if conn_data.get("provider") in {"postgresql", "clickhouse"}:
+                name = self._sanitize_name(original_name)
+                if name in source_names:
+                    raise ValueError(
+                        f"DBeaver connections '{source_names[name]}' and '{conn_id}' "
+                        f"both map to connection_name '{name}'; rename one before importing"
+                    )
+                source_names[name] = conn_id
             if only_set and original_name not in only_set:
                 continue
             if only_set:

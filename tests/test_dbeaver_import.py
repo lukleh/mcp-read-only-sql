@@ -3,6 +3,7 @@ import stat
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 from mcp_read_only_sql.config.dbeaver_import import DBeaverImporter, main
@@ -210,3 +211,22 @@ def test_merge_clusters_keeps_distinct_password_groups():
         ("clickhouse-1.example.com:8123",),
         ("clickhouse-2.example.com:8123",),
     }
+
+
+@pytest.mark.parametrize("only", [[], ["--only", "prod.db"]])
+def test_name_collision_never_replaces_existing_config(tmp_path, monkeypatch, only):
+    workspace = _write_dbeaver_workspace(
+        tmp_path,
+        [
+            {"id": "c1", "name": "prod.db", "configuration": {"host": "alpha.example", "port": "8123"}},
+            {"id": "c2", "name": "prod_db", "configuration": {"host": "beta.example", "port": "8123"}},
+        ],
+    )
+    output = tmp_path / "connections.yaml"
+    original = "- connection_name: retained\n"
+    output.write_text(original)
+    with pytest.raises(SystemExit) as failure:
+        _run_import(monkeypatch, [str(workspace), "--output", str(output), *only])
+    assert failure.value.code == 1
+    assert output.read_bytes() == original.encode()
+    assert not list(tmp_path.glob("connections.yaml.bak.*"))
