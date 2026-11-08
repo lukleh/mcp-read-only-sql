@@ -157,6 +157,7 @@ class CLISSHTunnel:
         self.ssh_timeout = ssh_config.ssh_timeout or self.DEFAULT_SSH_TIMEOUT
         self.ssh_process = None
         self.local_port = None
+        self._stop_task: asyncio.Task[None] | None = None
 
     def _user_known_hosts_files(self) -> tuple[str, ...]:
         if self.ssh_config.known_hosts_file is not None:
@@ -382,26 +383,50 @@ class CLISSHTunnel:
             raise
 
     async def stop(self):
-        """Stop SSH tunnel"""
-        if self.ssh_process:
-            try:
-                # Kill the entire process group
-                if self.ssh_process.pid:
-                    with suppress(ProcessLookupError):
-                        os.killpg(os.getpgid(self.ssh_process.pid), signal.SIGTERM)
-
-                # Wait for process to terminate
+        """Keep ownership until reaping, even when cleanup is cancelled again."""
+        process = self.ssh_process
+        if process is None:
+            return
+        if self._stop_task is None or self._stop_task.done():
+            self._stop_task = asyncio.create_task(self._stop_process(process))
+        cleanup = self._stop_task
+        try:
+            await asyncio.shield(cleanup)
+        except asyncio.CancelledError:
+            # A surrounding deadline must not wait out the graceful-stop
+            # allowance, and must not discard the child before it is reaped.
+            while not cleanup.done():
+                self._signal_process(process, signal.SIGKILL)
                 try:
-                    await asyncio.wait_for(self.ssh_process.wait(), timeout=5.0)
-                except TimeoutError:
-                    # Force kill if it doesn't terminate
-                    with suppress(ProcessLookupError):
-                        os.killpg(os.getpgid(self.ssh_process.pid), signal.SIGKILL)
-                    await self.ssh_process.wait()
+                    await asyncio.shield(cleanup)
+                except asyncio.CancelledError:
+                    continue
+            cleanup.result()
+            raise
+        finally:
+            if cleanup.done() and self._stop_task is cleanup:
+                self._stop_task = None
 
-                logger.debug(f"SSH tunnel stopped (local port {self.local_port})")
-            except Exception as e:
-                logger.error(f"Error stopping SSH tunnel: {e}")
-            finally:
+    @staticmethod
+    def _signal_process(process, sig: int) -> None:
+        if process.pid:
+            with suppress(ProcessLookupError):
+                os.killpg(os.getpgid(process.pid), sig)
+
+    async def _stop_process(self, process) -> None:
+        reaped = False
+        try:
+            self._signal_process(process, signal.SIGTERM)
+            try:
+                await asyncio.wait_for(process.wait(), timeout=5.0)
+            except TimeoutError:
+                self._signal_process(process, signal.SIGKILL)
+                await process.wait()
+            reaped = True
+            logger.debug(f"SSH tunnel stopped (local port {self.local_port})")
+        except Exception as exc:
+            logger.error(f"Error stopping SSH tunnel: {exc}")
+        finally:
+            if reaped and self.ssh_process is process:
                 self.ssh_process = None
                 self.local_port = None

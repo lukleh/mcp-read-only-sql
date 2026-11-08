@@ -1,5 +1,6 @@
 import asyncio
 import os
+import signal
 import sys
 from threading import Event
 
@@ -7,6 +8,7 @@ import pytest
 
 from mcp_read_only_sql.config.connection import SSHTunnelConfig
 from mcp_read_only_sql.utils.ssh_tunnel_cli import CLISSHTunnel, HostKeySurvey
+from mcp_read_only_sql.utils.timeout_wrapper import HardTimeoutError, with_hard_timeout
 
 
 @pytest.mark.anyio
@@ -172,3 +174,65 @@ async def test_stop_reaps_already_exited_child(monkeypatch):
     await tunnel.stop()
     assert process.waited
     assert tunnel.ssh_process is None
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("nested_timeout", [False, True])
+async def test_repeated_startup_cancellation_force_kills_and_reaps(monkeypatch, nested_timeout):
+    """An outer deadline interrupts graceful cleanup without orphaning a child."""
+    config = SSHTunnelConfig.from_dict({
+        "host": "bastion", "user": "tunnel", "ssh_timeout": 1 if nested_timeout else 30,
+    })
+    tunnel = CLISSHTunnel(config, "db.internal", 5432)
+    spawn = asyncio.create_subprocess_exec
+    killpg = os.killpg
+    reached = asyncio.Event()
+    terminated = asyncio.Event()
+    processes = []
+
+    async def fake_exec(*args, **kwargs):
+        process = await spawn(
+            sys.executable, "-u", "-c",
+            "import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); print('ready'); time.sleep(60)",
+            stdout=asyncio.subprocess.PIPE, preexec_fn=os.setsid,
+        )
+        assert await process.stdout.readline() == b"ready\n"
+        processes.append(process)
+        return process
+
+    async def blocked_open(host, port):
+        reached.set()
+        await asyncio.Event().wait()
+
+    def observe_signal(pgid, sig):
+        killpg(pgid, sig)
+        if sig == signal.SIGTERM:
+            terminated.set()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.setattr(asyncio, "open_connection", blocked_open)
+    monkeypatch.setattr(os, "killpg", observe_signal)
+    started = asyncio.get_running_loop().time()
+    call = with_hard_timeout(tunnel.start(), 2) if nested_timeout else tunnel.start()
+    task = asyncio.create_task(call)
+    try:
+        await asyncio.wait_for(reached.wait(), 5)
+        if nested_timeout:
+            with pytest.raises(HardTimeoutError):
+                await task
+        else:
+            task.cancel()
+            await asyncio.wait_for(terminated.wait(), 1)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(task, 1)
+        assert asyncio.get_running_loop().time() - started < 3
+        assert len(processes) == 1
+        assert processes[0].returncode == -signal.SIGKILL
+        assert tunnel.ssh_process is None
+        assert tunnel._stop_task is None
+    finally:
+        for process in processes:
+            if process.returncode is None:
+                process.kill()
+                await process.wait()
