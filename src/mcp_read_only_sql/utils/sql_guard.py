@@ -24,7 +24,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 
-from pglast import ast, parser, visitors
+from pglast import ast, enums, parser, visitors
 
 from .pg_catalog_functions import PG_CATALOG_NON_VOLATILE_FUNCTIONS
 
@@ -127,6 +127,15 @@ PG_CATALOG_ALLOWED_FUNCTIONS: frozenset[str] = (
 _ALLOWED_TABLESAMPLE_METHODS = frozenset({"system", "bernoulli"})
 
 _OPERATOR_NAME = re.compile(r"^[-+*/<>=~!@#%^&|`?]+$")
+
+# PostgreSQL inserts these comparisons while transforming the raw parse tree.
+# They therefore have no operator identifier for visit_A_Expr to inspect.
+_BETWEEN_OPERATORS = {
+    enums.A_Expr_Kind.AEXPR_BETWEEN: (">=", "<="),
+    enums.A_Expr_Kind.AEXPR_BETWEEN_SYM: (">=", "<="),
+    enums.A_Expr_Kind.AEXPR_NOT_BETWEEN: ("<", ">"),
+    enums.A_Expr_Kind.AEXPR_NOT_BETWEEN_SYM: ("<", ">"),
+}
 
 _STATEMENT_LABELS = {
     "CallStmt": "CALL",
@@ -345,7 +354,23 @@ class _ReadOnlyPolicy(visitors.Visitor):
                 self.pinned_schemas.add((name, schema))
 
     def visit_A_Expr(self, ancestors, node):
+        self.bare_operators.update(_BETWEEN_OPERATORS.get(node.kind, ()))
         self._check_operator([str(part.sval) for part in node.name or ()])
+
+    def visit_JoinExpr(self, ancestors, node):
+        if node.usingClause or node.isNatural:
+            self.bare_operators.add("=")
+
+    def visit_CaseExpr(self, ancestors, node):
+        if node.arg is not None:
+            self.bare_operators.add("=")
+
+    def visit_SubLink(self, ancestors, node):
+        if node.operName:
+            self._check_operator([str(part.sval) for part in node.operName])
+        elif node.subLinkType == enums.SubLinkType.ANY_SUBLINK:
+            # IN (SELECT ...) is an ANY sublink with an implicit equals sign.
+            self.bare_operators.add("=")
 
     def visit_SortBy(self, ancestors, node):
         # ORDER BY ... USING <op> sorts through the operator's btree opclass,

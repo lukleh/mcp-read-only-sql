@@ -243,7 +243,40 @@ def test_shadow_query_is_skipped_when_nothing_resolves_through_search_path():
     assert postgresql_shadow_query("SELECT 1") is None
     assert postgresql_shadow_query("SELECT pg_catalog.length('x')") is None
     assert postgresql_shadow_query("SELECT 1 OPERATOR(pg_catalog.+) 2") is None
-    assert postgresql_shadow_query("SELECT * FROM t WHERE a BETWEEN 1 AND 2") is None
+    assert postgresql_shadow_query("SELECT CASE WHEN true THEN 1 ELSE 2 END") is None
+
+
+@pytest.mark.security
+@pytest.mark.parametrize(
+    ("query", "operators"),
+    [
+        ("SELECT 5 BETWEEN 1 AND 10", "ARRAY['<=', '>=']"),
+        ("SELECT 5 BETWEEN SYMMETRIC 1 AND 10", "ARRAY['<=', '>=']"),
+        ("SELECT 5 NOT BETWEEN 1 AND 10", "ARRAY['<', '>']"),
+        ("SELECT 5 NOT BETWEEN SYMMETRIC 1 AND 10", "ARRAY['<', '>']"),
+        ("SELECT 1 FROM a JOIN b USING (id)", "ARRAY['=']"),
+        ("SELECT 1 FROM a JOIN b USING (id) AS joined", "ARRAY['=']"),
+        ("SELECT 1 FROM a NATURAL LEFT JOIN b", "ARRAY['=']"),
+        ("SELECT CASE 1 WHEN 2 THEN true ELSE false END", "ARRAY['=']"),
+        ("SELECT 1 IN (SELECT 2)", "ARRAY['=']"),
+        ("SELECT 1 NOT IN (SELECT 2)", "ARRAY['=']"),
+        ("SELECT 1 <= ALL (SELECT 2)", "ARRAY['<=']"),
+        ("SELECT 1 >= ANY (SELECT 2)", "ARRAY['>=']"),
+    ],
+)
+def test_shadow_query_covers_synthesized_and_sublink_operators(query, operators):
+    shadow = postgresql_shadow_query(query)
+    assert shadow is not None
+    assert operators + "::pg_catalog.name[]" in shadow
+
+
+@pytest.mark.security
+def test_sublink_operator_qualification_is_checked():
+    query = "SELECT 1 OPERATOR(pg_catalog.<=) ALL (SELECT 2)"
+    assert sanitize_postgresql_read_only_sql(query) == query
+    assert postgresql_shadow_query(query) is None
+    with pytest.raises(ReadOnlyQueryError, match="Operator public.<="):
+        sanitize_postgresql_read_only_sql("SELECT 1 OPERATOR(public.<=) ALL (SELECT 2)")
 
 
 @pytest.mark.security
