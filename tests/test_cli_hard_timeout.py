@@ -23,7 +23,7 @@ class _HangingStdout:
     def __init__(self, released: asyncio.Event):
         self._released = released
 
-    async def readline(self) -> bytes:
+    async def read(self, size=-1) -> bytes:
         await self._released.wait()
         return b""
 

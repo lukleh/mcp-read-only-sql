@@ -1,11 +1,9 @@
-import asyncio
 import logging
 import os
-from collections.abc import Callable
-from contextlib import suppress
 from pathlib import Path
 
 from ...errors import ConnectorError
+from ...utils.cli_process import stream_cli_process
 from ...utils.sql_guard import (
     SHADOW_GUARD_PREFIX,
     ReadOnlyQueryError,
@@ -13,7 +11,6 @@ from ...utils.sql_guard import (
     postgresql_shadow_query,
     sanitize_postgresql_read_only_sql,
 )
-from ...utils.tsv_formatter import write_tsv_text_line
 from ..base_cli import BaseCLIConnector
 
 logger = logging.getLogger(__name__)
@@ -120,119 +117,24 @@ class PostgreSQLCLIConnector(BaseCLIConnector):
             ]
 
             async def run_psql(env_vars: dict[str, str]) -> str | None:
-                process = await asyncio.create_subprocess_exec(
-                    *cmd,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    env=env_vars,
-                )
-
-                stdout = process.stdout
-                stderr_stream = process.stderr
-                if stdout is None or stderr_stream is None:
-                    process.kill()
-                    await process.wait()
-                    raise ConnectorError("psql: failed to create subprocess pipes")
-
-                stderr_task = asyncio.create_task(stderr_stream.read())
-                lines: list[str] = []
-                loop = asyncio.get_event_loop()
-                deadline = loop.time() + self.query_timeout
-
-                async def terminate() -> None:
-                    """Kill psql and reap it; the server then drops the statement."""
-                    with suppress(ProcessLookupError):
-                        process.kill()
-                    stderr_task.cancel()
-                    with suppress(asyncio.CancelledError):
-                        await stderr_task
-                    with suppress(asyncio.TimeoutError):
-                        await asyncio.wait_for(process.wait(), timeout=1.0)
-
-                async def stream_output(emit_line: Callable[[str], None]) -> None:
-                    # Every stdout line is data: the header, then the rows. An
-                    # empty line is a row whose only column is NULL or empty,
-                    # and a quoted field may continue on the next line; only
-                    # the record terminator is removed, so joining the lines
-                    # with "\n" reproduces psql's output exactly.
-                    async def read_line_with_timeout() -> bytes:
-                        remaining = deadline - loop.time()
-                        if remaining <= 0:
-                            raise TimeoutError
-                        return await asyncio.wait_for(
-                            stdout.readline(), timeout=remaining
-                        )
-
-                    try:
-                        while True:
-                            line_bytes = await read_line_with_timeout()
-                            if not line_bytes:
-                                break
-                            emit_line(
-                                line_bytes.decode(errors="replace").removesuffix("\n")
-                            )
-                    except TimeoutError:
-                        logger.warning("Query timeout - terminating psql process")
-                        await terminate()
-                        raise TimeoutError(
-                            f"psql: Query timeout after {self.query_timeout}s"
-                        )
-
-                async def finalize_process() -> None:
-                    try:
-                        await asyncio.wait_for(process.wait(), timeout=1.0)
-                    except TimeoutError:
-                        logger.error("psql process did not terminate cleanly")
-                        process.kill()
-                        await process.wait()
-
-                    try:
-                        stderr = (
-                            await stderr_task
-                            if not stderr_task.done()
-                            else stderr_task.result()
-                        )
-                    except asyncio.CancelledError:
-                        stderr = b""
-                    returncode = process.returncode
-                    if returncode is None:
-                        logger.debug(
-                            "psql process still running after wait(); treating as successful termination"
-                        )
-                    if returncode not in (0, None):
-                        error_msg = stderr.decode() if stderr else "Unknown error"
+                async def run(emit):
+                    result = await stream_cli_process(
+                        cmd, env=env_vars, timeout=self.query_timeout, label="psql", emit=emit
+                    )
+                    if result.returncode not in (0, None):
+                        error_msg = result.stderr.decode() if result.stderr else "Unknown error"
                         if SHADOW_GUARD_PREFIX in error_msg:
                             start = error_msg.index(SHADOW_GUARD_PREFIX)
-                            raise ReadOnlyQueryError(
-                                error_msg[start:].splitlines()[0].strip()
-                            )
-                        logger.error(f"psql error: {error_msg}")
+                            raise ReadOnlyQueryError(error_msg[start:].splitlines()[0].strip())
                         raise ConnectorError(f"psql: {error_msg}")
 
-                try:
-                    if output_path is None:
-                        await stream_output(lines.append)
-                        await finalize_process()
-                        return "\n".join(lines)
-
-                    wrote_content = False
-
-                    def emit_file_line(line: str) -> None:
-                        nonlocal wrote_content
-                        wrote_content = write_tsv_text_line(handle, line, wrote_content)
-
-                    with Path(output_path).open(  # noqa: ASYNC230 -- local file writes are fast; async file IO would add a dependency for no benefit
-                        "w", encoding="utf-8", newline=""
-                    ) as handle:
-                        await stream_output(emit_file_line)
-                        await finalize_process()
-                    return None
-                except asyncio.CancelledError:
-                    # The caller gave up (its hard timeout, or a cancelled
-                    # call). Without this psql, and the statement on the
-                    # server, would run on until the statement timeout.
-                    await terminate()
-                    raise
+                if output_path is None:
+                    chunks: list[str] = []
+                    await run(chunks.append)
+                    return "".join(chunks)
+                with Path(output_path).open("w", encoding="utf-8", newline="") as handle:  # noqa: ASYNC230 -- local managed-file writes
+                    await run(handle.write)
+                return None
 
             use_pgoptions = getattr(self.connection, "cli_requires_pgoptions", True)
             attempts = [True] if not use_pgoptions else [True, False]

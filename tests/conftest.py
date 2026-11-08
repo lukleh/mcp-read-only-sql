@@ -59,7 +59,7 @@ class _FakeCLIStdout:
     def __init__(self, lines):
         self._lines = [line.encode() for line in lines]
 
-    async def readline(self) -> bytes:
+    async def read(self, size=-1) -> bytes:
         return self._lines.pop(0) if self._lines else b""
 
 
@@ -75,7 +75,7 @@ class _FakeCLIStderr:
 class FakeCLIProcess:
     """Stand-in for the asyncio subprocess that runs psql or clickhouse-client.
 
-    ``stdout_lines`` are served one per ``readline`` call, newline included
+    ``stdout_lines`` are served one per ``read`` call, newline included
     when the test wants one; ``stderr_text`` is returned once by ``read``.
     """
 
