@@ -191,6 +191,38 @@ def test_allowed_functions_extend_the_policy_per_connection():
 
 
 @pytest.mark.security
+@pytest.mark.parametrize(
+    "query",
+    [
+        'SELECT "public.helper"()',
+        'SELECT public."other.helper"()',
+        'SELECT "public.helper".other()',
+    ],
+)
+def test_qualified_allowance_does_not_flatten_quoted_function_names(query):
+    with pytest.raises(ReadOnlyQueryError):
+        sanitize_postgresql_read_only_sql(query, ["public.helper"])
+
+
+@pytest.mark.security
+def test_qualified_allowances_preserve_catalog_spelling_and_schema_dots():
+    query = 'SELECT "SafeSchema"."MixedCase"()'
+    assert sanitize_postgresql_read_only_sql(query, ["SafeSchema.MixedCase"]) == query
+    assert postgresql_shadow_query(query, ["SafeSchema.MixedCase"]) is None
+    with pytest.raises(ReadOnlyQueryError):
+        sanitize_postgresql_read_only_sql('SELECT "SafeSchema.MixedCase"()', ["SafeSchema.MixedCase"])
+
+    # Entries have always split at the last dot, so a dotted schema remains
+    # supported without authorizing a differently partitioned function name.
+    query = 'SELECT "schema.with.dot".helper()'
+    assert sanitize_postgresql_read_only_sql(query, ["schema.with.dot.helper"]) == query
+    with pytest.raises(ReadOnlyQueryError):
+        sanitize_postgresql_read_only_sql(
+            'SELECT schema."with.dot.helper"()', ["schema.with.dot.helper"]
+        )
+
+
+@pytest.mark.security
 def test_function_rejection_names_the_config_key():
     with pytest.raises(ReadOnlyQueryError) as exc_info:
         sanitize_postgresql_read_only_sql("SELECT pg_reload_conf()")
