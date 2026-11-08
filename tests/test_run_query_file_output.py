@@ -140,6 +140,20 @@ def test_build_result_path_sanitizes_special_connection_names(tmp_path):
     assert fallback_path.suffix == ".tsv"
 
 
+def test_long_connection_names_create_distinct_private_result_files(tmp_path):
+    runtime_paths = make_runtime_paths(tmp_path)
+    server = build_stub_server(make_stub_connector(), runtime_paths)
+    prefix = "warehouse-" * 100
+    first = server._create_result_file(prefix + "east")
+    second = server._create_result_file(prefix + "west")
+
+    assert first.exists() and second.exists()
+    assert first.parent != second.parent
+    assert len(first.parent.name.encode("ascii")) <= 255
+    assert S_IMODE(first.stat().st_mode) == 0o600
+    assert S_IMODE(first.parent.stat().st_mode) == 0o700
+
+
 def test_create_result_file_fails_when_output_path_is_unwritable(tmp_path, monkeypatch):
     runtime_paths = make_runtime_paths(tmp_path)
     connector = make_stub_connector()
