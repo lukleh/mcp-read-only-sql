@@ -132,6 +132,13 @@ class DBeaverImporter:
         connections_data = data_sources.get("connections", {})
         if not isinstance(connections_data, dict):
             connections_data = {}
+        selected_names = {
+            self._sanitize_name(data.get("name", conn_id))
+            for conn_id, data in connections_data.items()
+            if isinstance(data, dict)
+            and data.get("provider") in {"postgresql", "clickhouse"}
+            and (only_set is None or data.get("name", conn_id) in only_set)
+        }
 
         for conn_id, conn_data in connections_data.items():
             if not isinstance(conn_data, dict):
@@ -139,7 +146,7 @@ class DBeaverImporter:
             original_name = conn_data.get("name", conn_id)
             if conn_data.get("provider") in {"postgresql", "clickhouse"}:
                 name = self._sanitize_name(original_name)
-                if name in source_names:
+                if name in source_names and name in selected_names:
                     raise ValueError(
                         f"DBeaver connections '{source_names[name]}' and '{conn_id}' "
                         f"both map to connection_name '{name}'; rename one before importing"

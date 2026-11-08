@@ -230,3 +230,18 @@ def test_name_collision_never_replaces_existing_config(tmp_path, monkeypatch, on
     assert failure.value.code == 1
     assert output.read_bytes() == original.encode()
     assert not list(tmp_path.glob("connections.yaml.bak.*"))
+
+
+@pytest.mark.parametrize("wanted_first", [False, True])
+def test_subset_import_ignores_unselected_name_collisions(tmp_path, monkeypatch, wanted_first):
+    collisions = [
+        {"id": "c1", "name": "prod.db", "configuration": {"host": "alpha.example", "port": "8123"}},
+        {"id": "c2", "name": "prod_db", "configuration": {"host": "beta.example", "port": "8123"}},
+    ]
+    wanted = {"id": "wanted", "name": "wanted", "configuration": {"host": "wanted.example", "port": "8123"}}
+    connections = [wanted, *collisions] if wanted_first else [*collisions, wanted]
+    workspace = _write_dbeaver_workspace(tmp_path, connections)
+    output = tmp_path / "connections.yaml"
+    _run_import(monkeypatch, [str(workspace), "--only", "wanted", "--output", str(output)])
+    result = yaml.safe_load(output.read_text())
+    assert [conn["connection_name"] for conn in result] == ["wanted"]
