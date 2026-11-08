@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from mcp_read_only_sql.config import load_connections
 from mcp_read_only_sql.config.dbeaver_import import DBeaverImporter, main
 
 
@@ -230,6 +231,40 @@ def test_subset_import_retains_unselected_cluster_servers(tmp_path, monkeypatch)
     assert len(updated) == 1
     assert updated[0]["servers"] == ["node1.example:8123", "node2.example:8123"]
     assert output.read_bytes() == initial
+
+
+@pytest.mark.parametrize("mixed_forms", [False, True])
+def test_subset_import_retains_mapping_servers_without_duplicates(tmp_path, monkeypatch, mixed_forms):
+    workspace = _write_dbeaver_workspace(tmp_path, [{
+        "id": "c1", "name": "node 1", "configuration": {"host": "node1.example", "port": "8123"},
+    }])
+    monkeypatch.setattr(DBeaverImporter, "_decrypt_credentials", lambda self: (
+        {"c1": {"user": "reader", "password": "shared-secret"}}, {},
+    ))
+    servers = [
+        {"host": "node1.example", "port": 8123},
+        "node2.example:8123" if mixed_forms else {"host": "node2.example", "port": 8123},
+    ]
+    previous = [{
+        "connection_name": "node_1", "type": "clickhouse", "db": "default",
+        "username": "reader", "password": "shared-secret", "implementation": "cli",
+        "servers": servers, "description": "cluster",
+    }]
+    output = tmp_path / "connections.yaml"
+    output.write_text(yaml.safe_dump(previous, sort_keys=False))
+    original = output.read_bytes()
+    assert original[-1:] == b"\n" and original[-2:-1] != b"\n"
+    assert len(load_connections(output)["node_1"].servers) == 2
+    _run_import(monkeypatch, [str(workspace), "--only", "node 1", "--output", str(output)])
+    assert yaml.safe_load(output.read_text())[0]["servers"] == servers
+    loaded = load_connections(output)["node_1"].servers
+    assert len(loaded) == 2
+    assert {(server.host, server.port) for server in loaded} == {
+        ("node1.example", 8123), ("node2.example", 8123),
+    }
+    assert yaml.safe_load(output.read_text()) == previous
+    updated = output.read_bytes()
+    assert updated[-1:] == b"\n" and updated[-2:-1] != b"\n"
 
 
 def test_full_import_can_remove_cluster_members(tmp_path, monkeypatch):

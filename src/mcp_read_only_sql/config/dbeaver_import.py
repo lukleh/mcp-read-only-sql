@@ -10,6 +10,7 @@ from typing import Any
 from .. import __version__
 from ..runtime_paths import resolve_runtime_paths
 from ..utils.connection_utils import get_connection_target
+from .connection import Server
 
 logger = logging.getLogger(__name__)
 
@@ -311,12 +312,13 @@ class DBeaverImporter:
         digit_re = re.compile(r"\d+")
         return digit_re.sub("#", host), port
 
-    def _group_key(self, conn: dict[str, Any]) -> tuple:
-        """Generate a grouping key for connection merging"""
+    @staticmethod
+    def _shared_settings(conn: dict[str, Any]) -> tuple:
+        """Connection-wide settings that must stay separate across servers."""
         ssh_tunnel = conn.get("ssh_tunnel") or {}
         ssh_serialized = json.dumps(ssh_tunnel, sort_keys=True)
 
-        fields_part = (
+        return (
             conn.get("type"),
             conn.get("db", ""),  # Single database, not list
             conn.get("username"),
@@ -324,10 +326,12 @@ class DBeaverImporter:
             ssh_serialized,
         )
 
+    def _group_key(self, conn: dict[str, Any]) -> tuple:
+        """Generate a grouping key for connection merging"""
         servers = conn.get("servers", []) or []
         patterns = tuple(sorted(self._host_pattern(server) for server in servers))
 
-        return fields_part, patterns
+        return self._shared_settings(conn), patterns
 
     def _merge_cluster_connections(
         self, connections: list[dict[str, Any]]
@@ -643,7 +647,7 @@ def main() -> None:
                     previous_servers = conn.get("servers", [])
                     if isinstance(previous_servers, list) and len(previous_servers) > 1:
                         if (
-                            importer._group_key(conn)[0] != importer._group_key(replacement)[0]
+                            importer._shared_settings(conn) != importer._shared_settings(replacement)
                             or conn.get("implementation", "cli") != replacement.get("implementation", "cli")
                         ):
                             raise ValueError(
@@ -654,9 +658,15 @@ def main() -> None:
                         # members. Retain those endpoints rather than deleting
                         # them; a full import is authoritative for removals.
                         servers = list(previous_servers)
+                        endpoints = [
+                            Server.from_dict(server, conn["type"], conn.get("implementation", "cli"))
+                            for server in previous_servers
+                        ]
                         for server in replacement.get("servers", []):
-                            if server not in servers:
+                            endpoint = Server.from_dict(server, conn["type"], conn.get("implementation", "cli"))
+                            if endpoint not in endpoints:
                                 servers.append(server)
+                                endpoints.append(endpoint)
                         replacement["servers"] = servers
                         if "description" in conn:
                             replacement["description"] = conn["description"]
