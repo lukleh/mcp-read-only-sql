@@ -37,6 +37,7 @@ from .runtime_paths import (
 )
 from .tools import test_connection, test_ssh_tunnel, validate_config
 from .utils.timeout_wrapper import HardTimeoutError
+from .utils.tsv_formatter import format_tsv_line
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -353,7 +354,7 @@ class ReadOnlySQLServer:
                     ",".join(conn.get("databases", [])),
                     conn.get("user", ""),
                 ]
-                rows.append("\t".join(row))
+                rows.append(format_tsv_line(row))
 
             return "\n".join(rows)
 
