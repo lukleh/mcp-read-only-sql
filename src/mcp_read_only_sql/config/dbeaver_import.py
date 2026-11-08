@@ -22,6 +22,25 @@ def _write_text_file_secure(path: Path, content: str) -> None:
     os.chmod(path, 0o600)
 
 
+def _extract_credentials(
+    data: Any,
+) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+    """Read the same database and SSH sections from either credential format."""
+    credentials: dict[str, dict[str, Any]] = {}
+    ssh_credentials: dict[str, dict[str, Any]] = {}
+    if isinstance(data, dict):
+        for conn_id, conn_data in data.items():
+            if not isinstance(conn_data, dict):
+                continue
+            database = conn_data.get("#connection")
+            ssh = conn_data.get("network/ssh_tunnel")
+            if isinstance(database, dict):
+                credentials[conn_id] = database
+            if isinstance(ssh, dict):
+                ssh_credentials[conn_id] = ssh
+    return credentials, ssh_credentials
+
+
 class DBeaverImporter:
     def __init__(self, dbeaver_path: str):
         self.dbeaver_path = Path(dbeaver_path)
@@ -66,17 +85,7 @@ class DBeaverImporter:
             decrypted = result.stdout[16:]
             credentials_data = json.loads(decrypted)
 
-            # Extract both connection and SSH credentials
-            credentials: dict[str, dict[str, Any]] = {}
-            ssh_credentials: dict[str, dict[str, Any]] = {}
-            for conn_id, conn_data in credentials_data.items():
-                if isinstance(conn_data, dict):
-                    db_connection = conn_data.get("#connection")
-                    if isinstance(db_connection, dict):
-                        credentials[conn_id] = db_connection
-                    ssh_connection = conn_data.get("network/ssh_tunnel")
-                    if isinstance(ssh_connection, dict):
-                        ssh_credentials[conn_id] = ssh_connection
+            credentials, ssh_credentials = _extract_credentials(credentials_data)
 
             logger.info(
                 f"Successfully decrypted credentials for {len(credentials)} connections"
@@ -107,13 +116,9 @@ class DBeaverImporter:
             try:
                 with self.credentials_path.open("r", encoding="utf-8") as handle:
                     cred_data = json.load(handle)
-                    if isinstance(cred_data, dict):
-                        for conn_id, conn_creds in cred_data.items():
-                            if not isinstance(conn_creds, dict):
-                                continue
-                            db_connection = conn_creds.get("#connection")
-                            if isinstance(db_connection, dict):
-                                credentials[conn_id] = db_connection
+                    database, ssh = _extract_credentials(cred_data)
+                    credentials.update(database)
+                    ssh_credentials.update(ssh)
                     logger.info("Credentials file was not encrypted")
             except (json.JSONDecodeError, UnicodeDecodeError):
                 logger.warning(
