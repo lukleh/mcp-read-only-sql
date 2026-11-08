@@ -642,6 +642,14 @@ def main() -> None:
                     replacement = dict(new_by_name[name])
                     previous_servers = conn.get("servers", [])
                     if isinstance(previous_servers, list) and len(previous_servers) > 1:
+                        if (
+                            importer._group_key(conn)[0] != importer._group_key(replacement)[0]
+                            or conn.get("implementation", "cli") != replacement.get("implementation", "cli")
+                        ):
+                            raise ValueError(
+                                f"Cannot partially change shared settings for cluster '{name}'; "
+                                "run a full import to keep each server's settings separate"
+                            )
                         # A subset carries no identity for unselected cluster
                         # members. Retain those endpoints rather than deleting
                         # them; a full import is authoritative for removals.

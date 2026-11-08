@@ -155,6 +155,8 @@ That writes `connections.yaml` with any decrypted passwords stored directly in t
 When `--only` updates an entry containing multiple cluster servers, existing
 servers are retained so an unselected member cannot disappear. Use a full import
 to remove obsolete cluster endpoints.
+Partial updates that change shared login, database, SSH, or implementation
+settings are refused; run a full import so affected servers can be regrouped.
 
 > `connections.yaml` contains credentials. Keep it private, do not commit it, and restart the MCP process after editing it so changes take effect.
 
