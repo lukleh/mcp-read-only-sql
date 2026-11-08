@@ -95,6 +95,14 @@ def sanitize_clickhouse_read_only_sql(query: str) -> str:
     semicolons = [i for i, token in enumerate(tokens) if token.value == ";"]
     if semicolons and (len(semicolons) != 1 or semicolons[0] != len(tokens) - 1):
         raise ReadOnlyQueryError("Multiple SQL statements are not allowed in read-only mode")
+    # ClickHouse's output parser requires a string literal after INTO OUTFILE.
+    # Without that operand, the words can be a column and its implicit alias.
+    # Quoted identifiers are rejected as a conservative filename boundary too.
+    for first, second, path in zip(tokens, tokens[1:], tokens[2:]):
+        if first.value == "INTO" and second.value == "OUTFILE" and path.kind in ("string", "identifier"):
+            raise ReadOnlyQueryError(
+                "ClickHouse INTO OUTFILE is not allowed; results use managed files"
+            )
     # INSERT's FORMAT describes input data, not client output. The database's
     # readonly setting refuses the statement as before.
     if tokens and tokens[0].value == "INSERT":
