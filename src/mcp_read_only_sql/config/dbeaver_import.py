@@ -4,6 +4,8 @@ import logging
 import os
 import re
 import subprocess
+import tempfile
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
@@ -15,11 +17,18 @@ logger = logging.getLogger(__name__)
 
 
 def _write_text_file_secure(path: Path, content: str) -> None:
-    """Write a text file and restrict it to user-only permissions."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as handle:
-        handle.write(content)
-    os.chmod(path, 0o600)
+    """Replace a file atomically with content private from its first byte."""
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        with suppress(FileNotFoundError):
+            os.unlink(temporary)
 
 
 class DBeaverImporter:
