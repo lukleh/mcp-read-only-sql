@@ -29,6 +29,7 @@ dependencies = [
     "psycopg2-binary>=2.9.0",
     "clickhouse-connect>=0.7.0",
     "pglast>=8,<9",
+    "sqlglot>=30.30,<30.31",
 ]
 
 [project.urls]
