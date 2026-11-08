@@ -155,9 +155,9 @@ class ClickHouseCLIConnector(BaseCLIConnector):
                 fmt: str = "TabSeparatedWithNames",
             ) -> list[str]:
                 cmd = [binary]
-                if port == 9440:
+                if selected_server.port in (8443, 9440):
                     cmd.append("--secure")  # TLS native port
-                    logger.debug("Adding --secure flag for TLS port 9440")
+                    logger.debug("Adding --secure flag for the configured TLS endpoint")
                 cmd += [
                     "--host",
                     host,
