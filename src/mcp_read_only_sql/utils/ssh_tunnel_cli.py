@@ -201,14 +201,28 @@ class CLISSHTunnel:
         if self.ssh_process:
             raise RuntimeError("SSH tunnel already running")
 
+        startup = asyncio.create_task(self._start_tunnel())
         try:
             return await asyncio.wait_for(
-                self._start_tunnel(), timeout=self.ssh_timeout
+                startup, timeout=self.ssh_timeout
             )
         except TimeoutError:
             # Clean up if timeout occurs
             await self.stop()
             raise TimeoutError(f"SSH: Connection timeout after {self.ssh_timeout}s")
+        except asyncio.CancelledError:
+            # Python 3.11's wait_for can stop awaiting its child's cleanup
+            # after another cancellation without forwarding it to that child.
+            # Keep startup owned and interrupt its graceful stop explicitly.
+            startup.cancel()
+            while not startup.done():
+                try:
+                    await asyncio.shield(startup)
+                except asyncio.CancelledError:
+                    startup.cancel()
+            with suppress(asyncio.CancelledError):
+                startup.result()
+            raise
 
     async def _start_tunnel(self) -> int:
         """Actually start the SSH tunnel"""
