@@ -68,6 +68,14 @@ class Server:
     host: str
     port: int
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.host, str) or not self.host.strip():
+            raise ValueError("Server field 'host' must be a non-empty string")
+        if isinstance(self.port, bool) or not isinstance(self.port, int):
+            raise ValueError("Server port must be an integer")
+        if not 1 <= self.port <= 65535:
+            raise ValueError("Server port must be between 1-65535")
+
     @classmethod
     def from_dict(
         cls, data: Any, db_type: str = "", implementation: str = "cli"
@@ -88,7 +96,7 @@ class Server:
             host = data["host"]
             if not isinstance(host, str) or not host.strip():
                 raise ValueError("Server field 'host' must be a non-empty string")
-            return cls(host=host, port=int(data["port"]))
+            return cls(host=host, port=data["port"])
 
         # Handle string format: "host:port" or "host"
         if isinstance(data, str):
@@ -131,6 +139,12 @@ class SSHTunnelConfig:
 
     def __post_init__(self):
         """Validate SSH tunnel configuration."""
+        for name in ("host", "user"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"SSH tunnel '{name}' must be a non-empty string")
+        if isinstance(self.port, bool) or not isinstance(self.port, int) or not 1 <= self.port <= 65535:
+            raise ValueError("SSH tunnel port must be an integer between 1-65535")
         # When neither private_key nor password is supplied, fall back to
         # agent-loaded identities. This supports setups like Skotty where
         # short-lived certs live only in ssh-agent.
@@ -145,6 +159,11 @@ class SSHTunnelConfig:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Optional["SSHTunnelConfig"]:
         """Create SSHTunnelConfig from dict with validation."""
+        for field in ("password_env", "ssh_password"):
+            if field in data:
+                raise ValueError(
+                    f"Field '{field}' is no longer supported; put the SSH password in 'password'"
+                )
         if not data.get("enabled", True):
             return None
 
@@ -153,11 +172,6 @@ class SSHTunnelConfig:
             raise ValueError("SSH tunnel configuration missing required field 'host'")
         if "user" not in data:
             raise ValueError("SSH tunnel configuration missing required field 'user'")
-
-        if "password_env" in data:
-            raise ValueError(
-                "Field 'password_env' is no longer supported; put the SSH password in 'password'"
-            )
 
         password = data.get("password")
 
@@ -230,6 +244,8 @@ class Connection:
             raise ValueError(
                 "Connection configuration missing required field 'servers' (must be non-empty list)"
             )
+        if not isinstance(config["servers"], list):
+            raise ValueError("Field 'servers' must be a non-empty list")
         if (
             "db" not in config
             and "default_database" not in config
