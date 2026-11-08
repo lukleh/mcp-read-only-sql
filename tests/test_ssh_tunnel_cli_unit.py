@@ -236,3 +236,58 @@ async def test_repeated_startup_cancellation_force_kills_and_reaps(monkeypatch, 
             if process.returncode is None:
                 process.kill()
                 await process.wait()
+
+
+@pytest.mark.anyio
+async def test_cancellation_after_startup_completion_reaps_child(monkeypatch):
+    """The caller can be cancelled after readiness but before owning the tunnel."""
+    config = SSHTunnelConfig.from_dict({"host": "bastion", "user": "tunnel"})
+    tunnel = CLISSHTunnel(config, "db.internal", 5432)
+    spawn = asyncio.create_subprocess_exec
+    wait_for = asyncio.wait_for
+    processes = []
+    completed = False
+
+    async def fake_exec(*args, **kwargs):
+        process = await spawn(
+            sys.executable, "-c", "import time; time.sleep(60)", preexec_fn=os.setsid
+        )
+        processes.append(process)
+        return process
+
+    class Writer:
+        def close(self):
+            pass
+
+        async def wait_closed(self):
+            pass
+
+    async def ready_open(host, port):
+        return object(), Writer()
+
+    async def interrupt_completed_startup(future, timeout):
+        nonlocal completed
+        result = await wait_for(future, timeout)
+        if timeout == tunnel.ssh_timeout:
+            assert future.done() and not future.cancelled()
+            assert result == tunnel.local_port
+            completed = True
+            raise asyncio.CancelledError
+        return result
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.setattr(asyncio, "open_connection", ready_open)
+    monkeypatch.setattr(asyncio, "wait_for", interrupt_completed_startup)
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            await tunnel.start()
+        assert completed
+        assert len(processes) == 1
+        assert processes[0].returncode is not None
+        assert tunnel.ssh_process is None
+        assert tunnel._stop_task is None
+    finally:
+        for process in processes:
+            if process.returncode is None:
+                process.kill()
+                await process.wait()

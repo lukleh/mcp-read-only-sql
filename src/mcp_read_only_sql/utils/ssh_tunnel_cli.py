@@ -222,6 +222,7 @@ class CLISSHTunnel:
                     startup.cancel()
             with suppress(asyncio.CancelledError):
                 startup.result()
+            await self.stop()
             raise
 
     async def _start_tunnel(self) -> int:
