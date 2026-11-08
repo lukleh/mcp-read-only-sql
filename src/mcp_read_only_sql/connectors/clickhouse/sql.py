@@ -21,6 +21,7 @@ _WORD = re.compile(r"[A-Za-z0-9_$]+")
 class _Token:
     kind: str
     value: str
+    end: int
 
 
 def _tokens(query: str) -> list[_Token]:
@@ -64,7 +65,7 @@ def _tokens(query: str) -> list[_Token]:
                     i += 1
             else:
                 raise ReadOnlyQueryError("Unterminated ClickHouse quoted value")
-            tokens.append(_Token("string" if quote == "'" else "identifier", ""))
+            tokens.append(_Token("string" if quote == "'" else "identifier", "", i))
         elif ch == "$" and (match := _HEREDOC.match(query, i)):
             tag = match.group()
             end = query.find(tag, match.end())
@@ -72,16 +73,16 @@ def _tokens(query: str) -> list[_Token]:
                 # An unmatched $tag$ prefix can instead be an identifier.
                 word = _WORD.match(query, i)
                 assert word is not None
-                tokens.append(_Token("word", word.group().upper()))
+                tokens.append(_Token("word", word.group().upper(), word.end()))
                 i = word.end()
             else:
-                tokens.append(_Token("string", ""))
+                tokens.append(_Token("string", "", end + len(tag)))
                 i = end + len(tag)
         elif match := _WORD.match(query, i):
-            tokens.append(_Token("word", match.group().upper()))
+            tokens.append(_Token("word", match.group().upper(), match.end()))
             i = match.end()
         else:
-            tokens.append(_Token("symbol", ch))
+            tokens.append(_Token("symbol", ch, i + 1))
             i += 1
     return tokens
 
@@ -112,7 +113,11 @@ def sanitize_clickhouse_read_only_sql(query: str) -> str:
         # an output clause from a column, alias, or function with that name.
         # Queries without the token remain entirely in ClickHouse's grammar.
         try:
-            trees = sqlglot.parse(stripped, read="clickhouse")
+            # The lexer has already checked the optional trailing semicolon.
+            # Parse only through the last SQL token, excluding that semicolon
+            # and trailing comments, including ClickHouse's // syntax.
+            last_token = tokens[-2] if semicolons else tokens[-1]
+            trees = sqlglot.parse(stripped[:last_token.end], read="clickhouse")
         except SqlglotError as exc:
             raise ReadOnlyQueryError(
                 "Cannot validate ClickHouse FORMAT usage; quote identifiers named FORMAT "
@@ -122,8 +127,14 @@ def sanitize_clickhouse_read_only_sql(query: str) -> str:
             isinstance(node, exp.Command) for node in trees[0].walk()
         ):
             raise ReadOnlyQueryError("Cannot validate ClickHouse FORMAT usage")
+        # Formatting functions also use a "format" argument for input data;
+        # only query modifiers and file-format properties control output.
         if any(
-            node.args.get("format") is not None or isinstance(node, exp.FileFormatProperty)
+            isinstance(node, exp.FileFormatProperty)
+            or (
+                isinstance(node, (exp.Query, exp.Table, exp.TableFromRows, exp.Values))
+                and node.args.get("format") is not None
+            )
             for node in trees[0].walk()
         ):
             raise ReadOnlyQueryError(
