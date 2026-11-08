@@ -10,6 +10,7 @@ from typing import Any
 from .. import __version__
 from ..runtime_paths import resolve_runtime_paths
 from ..utils.connection_utils import get_connection_target
+from .connection import Server
 
 logger = logging.getLogger(__name__)
 
@@ -188,7 +189,8 @@ class DBeaverImporter:
         port = config.get("port", "5432" if provider == "postgresql" else "8123")
 
         # Handle servers
-        connection["servers"] = [f"{host}:{port}"]
+        display_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
+        connection["servers"] = [f"{display_host}:{port}"]
 
         # Extract database - use actual database name, not asterisk
         database = config.get("database", "")
@@ -307,7 +309,8 @@ class DBeaverImporter:
 
     def _host_pattern(self, server: str) -> tuple[str, str]:
         """Extract pattern from host for grouping (replaces digits with #)"""
-        host, _, port = server.partition(":")
+        parsed = Server.from_dict(server, "postgresql")
+        host, port = parsed.host, str(parsed.port)
         digit_re = re.compile(r"\d+")
         return digit_re.sub("#", host), port
 

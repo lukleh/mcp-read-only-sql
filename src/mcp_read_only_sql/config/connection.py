@@ -2,6 +2,7 @@
 
 import os
 from dataclasses import dataclass
+from ipaddress import IPv6Address
 from typing import Any, Optional
 
 # Default values
@@ -71,6 +72,11 @@ class Server:
     def __post_init__(self) -> None:
         if not isinstance(self.host, str) or not self.host.strip():
             raise ValueError("Server field 'host' must be a non-empty string")
+        if self.host.startswith("[") and self.host.endswith("]"):
+            IPv6Address(self.host[1:-1])
+            self.host = self.host[1:-1]
+        if ":" in self.host:
+            IPv6Address(self.host)
         if isinstance(self.port, bool) or not isinstance(self.port, int):
             raise ValueError("Server port must be an integer")
         if not 1 <= self.port <= 65535:
@@ -100,21 +106,32 @@ class Server:
 
         # Handle string format: "host:port" or "host"
         if isinstance(data, str):
-            if ":" in data:
+            host = data
+            port = None
+            if data.startswith("["):
+                address, closing, tail = data.partition("]")
+                if not closing or (tail and not tail.startswith(":")):
+                    raise ValueError(f"Invalid bracketed server address: {data}")
+                host = address[1:]
+                IPv6Address(host)
+                if tail:
+                    port = int(tail[1:])
+            elif data.count(":") > 1:
+                # A bare IPv6 address never carries an unbracketed port.
+                IPv6Address(data)
+            elif ":" in data:
                 host, port_str = data.rsplit(":", 1)
-                return cls(host=host, port=int(port_str))
-            else:
-                # Host only - need to determine default port
+                port = int(port_str)
+            if port is None:
                 if db_type == "postgresql":
-                    default_port = 5432
+                    port = 5432
                 elif db_type == "clickhouse":
-                    # ClickHouse default depends on implementation
-                    default_port = 9000 if implementation == "cli" else 8123
+                    port = 9000 if implementation == "cli" else 8123
                 else:
                     raise ValueError(
                         f"Cannot determine default port for server '{data}' without database type"
                     )
-                return cls(host=data, port=default_port)
+            return cls(host=host, port=port)
 
         raise ValueError(f"Invalid server format: {data}. Must be dict or string")
 

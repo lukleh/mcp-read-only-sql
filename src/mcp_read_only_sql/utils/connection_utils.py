@@ -4,6 +4,8 @@ Utilities for handling database connections
 
 from typing import Any
 
+from ..config.connection import Server
+
 
 def get_connection_target(config: dict[str, Any]) -> dict[str, Any]:
     """
@@ -38,19 +40,13 @@ def get_connection_target(config: dict[str, Any]) -> dict[str, Any]:
             # If server is a dict, host is required
             if "host" not in server:
                 raise ValueError("Server configuration missing required field 'host'")
-            db_host = server["host"]
-            db_port = server.get("port", 5432 if db_type == "postgresql" else 8123)
-        elif isinstance(server, str):
-            # Parse "host:port" string
-            if ":" in server:
-                db_host, port_str = server.rsplit(":", 1)
-                db_port = int(port_str)
-            else:
-                db_host = server
-                db_port = 5432 if db_type == "postgresql" else 8123
-        else:
-            db_host = "localhost"
-            db_port = 5432 if db_type == "postgresql" else 8123
+            server = {"port": 5432 if db_type == "postgresql" else 8123, **server}
+        elif not isinstance(server, str):
+            server = "localhost"
+        # This display helper historically defaults ClickHouse to HTTP when
+        # no implementation is supplied; explicit modes follow runtime parsing.
+        parsed = Server.from_dict(server, db_type, config.get("implementation", "python"))
+        db_host, db_port = parsed.host, parsed.port
     else:
         db_host = "localhost"
         db_port = 5432 if db_type == "postgresql" else 8123
@@ -62,7 +58,7 @@ def get_connection_target(config: dict[str, Any]) -> dict[str, Any]:
             raise ValueError("SSH tunnel configuration missing required field 'host'")
         ssh_host = ssh_config["host"]
 
-        if db_host in ["localhost", "127.0.0.1"]:
+        if db_host in ["localhost", "127.0.0.1", "::1"]:
             # SSH tunnel where DB is on the SSH host itself
             return {
                 "host": ssh_host,
