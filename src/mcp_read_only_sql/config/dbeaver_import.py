@@ -639,7 +639,20 @@ def main() -> None:
             for conn in existing_connections:
                 name = conn.get("connection_name") if isinstance(conn, dict) else None
                 if name in new_by_name:
-                    merged_connections.append(new_by_name[name])
+                    replacement = dict(new_by_name[name])
+                    previous_servers = conn.get("servers", [])
+                    if isinstance(previous_servers, list) and len(previous_servers) > 1:
+                        # A subset carries no identity for unselected cluster
+                        # members. Retain those endpoints rather than deleting
+                        # them; a full import is authoritative for removals.
+                        servers = list(previous_servers)
+                        for server in replacement.get("servers", []):
+                            if server not in servers:
+                                servers.append(server)
+                        replacement["servers"] = servers
+                        if "description" in conn:
+                            replacement["description"] = conn["description"]
+                    merged_connections.append(replacement)
                     used.add(name)
                 else:
                     merged_connections.append(conn)

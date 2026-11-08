@@ -152,6 +152,9 @@ uvx --from . mcp-read-only-sql import-dbeaver \
 ```
 
 That writes `connections.yaml` with any decrypted passwords stored directly in the file. The importer writes user-only permissions and keeps timestamped backups when it overwrites an existing file.
+When `--only` updates an entry containing multiple cluster servers, existing
+servers are retained so an unselected member cannot disappear. Use a full import
+to remove obsolete cluster endpoints.
 
 > `connections.yaml` contains credentials. Keep it private, do not commit it, and restart the MCP process after editing it so changes take effect.
 

@@ -210,3 +210,36 @@ def test_merge_clusters_keeps_distinct_password_groups():
         ("clickhouse-1.example.com:8123",),
         ("clickhouse-2.example.com:8123",),
     }
+
+
+def test_subset_import_retains_unselected_cluster_servers(tmp_path, monkeypatch):
+    workspace = _write_dbeaver_workspace(
+        tmp_path,
+        [
+            {"id": "c1", "name": "node 1", "configuration": {"host": "node1.example", "port": "8123"}},
+            {"id": "c2", "name": "node 2", "configuration": {"host": "node2.example", "port": "8123"}},
+        ],
+    )
+    output = tmp_path / "connections.yaml"
+    _run_import(monkeypatch, [str(workspace), "--output", str(output)])
+    initial = output.read_bytes()
+    assert initial[-1:] == b"\n" and initial[-2:-1] != b"\n"
+    _run_import(monkeypatch, [str(workspace), "--output", str(output), "--only", "node 1"])
+    updated = yaml.safe_load(output.read_text())
+    assert len(updated) == 1
+    assert updated[0]["servers"] == ["node1.example:8123", "node2.example:8123"]
+    assert output.read_bytes() == initial
+
+
+def test_full_import_can_remove_cluster_members(tmp_path, monkeypatch):
+    workspace = _write_dbeaver_workspace(
+        tmp_path,
+        [{"id": "c1", "name": "node 1", "configuration": {"host": "node1.example", "port": "8123"}}],
+    )
+    output = tmp_path / "connections.yaml"
+    output.write_text(yaml.safe_dump([{
+        "connection_name": "node_1", "type": "clickhouse", "db": "default", "username": "reader",
+        "servers": ["node1.example:8123", "node2.example:8123"],
+    }]))
+    _run_import(monkeypatch, [str(workspace), "--output", str(output)])
+    assert yaml.safe_load(output.read_text())[0]["servers"] == ["node1.example:8123"]
