@@ -1,4 +1,7 @@
 import asyncio
+import os
+import sys
+from threading import Event
 
 import pytest
 
@@ -74,3 +77,98 @@ async def test_cli_tunnel_waits_until_forwarded_port_accepts_connections(monkeyp
     assert ssh_args[0] == "ssh"
     assert "-i" not in ssh_args
     assert "tunnel@bastion.example.com" in ssh_args
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("stage", ["readiness", "host_key_survey"])
+async def test_cancelled_startup_reaps_child(tmp_path, monkeypatch, stage):
+    """Cancellation owns cleanup before the connector's context is entered."""
+    config = SSHTunnelConfig.from_dict(
+        {
+            "host": "bastion.example.com",
+            "user": "tunnel",
+            "host_key_checking": "accept-new" if stage == "host_key_survey" else "yes",
+            "known_hosts_file": str(tmp_path / "known_hosts"),
+        }
+    )
+    tunnel = CLISSHTunnel(config, "db.internal", 5432)
+    spawn = asyncio.create_subprocess_exec
+    reached = asyncio.Event()
+    release_survey = Event()
+    processes = []
+    surveys = 0
+
+    async def fake_exec(*args, **kwargs):
+        process = await spawn(
+            sys.executable, "-c", "import time; time.sleep(60)", preexec_fn=os.setsid
+        )
+        processes.append(process)
+        return process
+
+    class Writer:
+        def close(self):
+            pass
+
+        async def wait_closed(self):
+            pass
+
+    async def fake_open(host, port):
+        if stage == "readiness":
+            reached.set()
+            await asyncio.Event().wait()
+        return object(), Writer()
+
+    loop = asyncio.get_running_loop()
+
+    def survey(options, destination):
+        nonlocal surveys
+        surveys += 1
+        if surveys == 2:
+            loop.call_soon_threadsafe(reached.set)
+            release_survey.wait(5)
+        return HostKeySurvey("bastion.example.com", str(tmp_path / "known_hosts"), False, False)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.setattr(asyncio, "open_connection", fake_open)
+    monkeypatch.setattr(tunnel, "_survey", survey)
+    task = asyncio.create_task(tunnel.start())
+    try:
+        await asyncio.wait_for(reached.wait(), timeout=5)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert len(processes) == 1
+        assert processes[0].returncode is not None
+        assert tunnel.ssh_process is None
+    finally:
+        release_survey.set()
+        await tunnel.stop()
+        for process in processes:
+            if process.returncode is None:
+                process.kill()
+                await process.wait()
+
+
+@pytest.mark.anyio
+async def test_stop_reaps_already_exited_child(monkeypatch):
+    config = SSHTunnelConfig.from_dict({"host": "bastion", "user": "tunnel"})
+    tunnel = CLISSHTunnel(config, "db.internal", 5432)
+
+    class ExitedProcess:
+        pid = 12345
+        waited = False
+
+        async def wait(self):
+            self.waited = True
+            return 0
+
+    process = ExitedProcess()
+    tunnel.ssh_process = process
+
+    def missing_process(pid):
+        raise ProcessLookupError
+
+    monkeypatch.setattr(os, "getpgid", missing_process)
+    await tunnel.stop()
+    assert process.waited
+    assert tunnel.ssh_process is None

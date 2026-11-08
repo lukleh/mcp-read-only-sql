@@ -10,7 +10,7 @@ import shutil
 import signal
 import socket
 import subprocess
-from contextlib import closing
+from contextlib import closing, suppress
 from dataclasses import dataclass
 
 from ..errors import ConnectorError
@@ -376,8 +376,8 @@ class CLISSHTunnel:
             await self.stop()
             logger.error(f"Failed to establish SSH tunnel: {e}")
             raise ConnectorError(f"SSH: {e}") from e
-        except Exception:
-            # Clean up, then let ConnectorError and unexpected errors propagate
+        except BaseException:
+            # Caller cancellation also owns the child once startup has spawned it.
             await self.stop()
             raise
 
@@ -387,20 +387,19 @@ class CLISSHTunnel:
             try:
                 # Kill the entire process group
                 if self.ssh_process.pid:
-                    os.killpg(os.getpgid(self.ssh_process.pid), signal.SIGTERM)
+                    with suppress(ProcessLookupError):
+                        os.killpg(os.getpgid(self.ssh_process.pid), signal.SIGTERM)
 
                 # Wait for process to terminate
                 try:
                     await asyncio.wait_for(self.ssh_process.wait(), timeout=5.0)
                 except TimeoutError:
                     # Force kill if it doesn't terminate
-                    os.killpg(os.getpgid(self.ssh_process.pid), signal.SIGKILL)
+                    with suppress(ProcessLookupError):
+                        os.killpg(os.getpgid(self.ssh_process.pid), signal.SIGKILL)
                     await self.ssh_process.wait()
 
                 logger.debug(f"SSH tunnel stopped (local port {self.local_port})")
-            except ProcessLookupError:
-                # Process already terminated
-                pass
             except Exception as e:
                 logger.error(f"Error stopping SSH tunnel: {e}")
             finally:
