@@ -7,13 +7,97 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-09
+
 ### Changed
 
-- Runtime configuration loading now enforces the same structural rules as
-  `validate-config`: use integer database/SSH ports and nonempty string SSH
-  identities, and remove obsolete credential keys from enabled and disabled
-  tunnels. Configurations previously accepted only by runtime must be corrected
-  before upgrading. The validator retains the inferred-default-database warning.
+- Runtime configuration loading now uses the same structural rules as
+  `validate-config`. Database/SSH mapping ports must be integer YAML values,
+  SSH identities must be nonempty strings, and obsolete `password_env` and
+  `ssh_password` keys must be removed even from disabled tunnels. Use the
+  `password` field instead. The validator retains the inferred-default-database
+  warning and reports the first structural error per connection.
+- Connection timeouts now require positive whole seconds consistently across
+  both databases and implementations. Integer-valued floats such as `10.0`
+  normalize to integers; fractional values are refused. PostgreSQL connection
+  timeouts are limited to 2,147,483,647 seconds. Query deadlines still accept
+  positive fractions, and cancellation includes the time needed for cleanup.
+- IPv6 addresses are canonicalized while preserving scope IDs. Explicit ports
+  use `[address]:port`; ambiguous bare strings are refused with bracket/mapping
+  guidance instead of silently selecting a destination.
+- ClickHouse output `FORMAT` clauses and client-side `INTO OUTFILE` are refused
+  before connection. The common lexer handles native quotes, encoded literals,
+  whitespace, and comments; empty queries and FORMAT combinations outside the
+  parser's lexical contract are refused without rewriting SQL. Quote identifiers
+  named `FORMAT` or use ASCII syntax as documented.
+- PostgreSQL function allowances match exact catalog identifier components and
+  case. Schema pins apply only to bare calls; explicitly excluded catalog
+  functions cannot be re-enabled. Operator-shadow checks now include implicit
+  comparisons in `BETWEEN`, `IN`, `CASE`, `JOIN USING`, and `NATURAL JOIN` while
+  retaining conservative name-based matching and actionable guidance.
+- Native ClickHouse TLS through SSH requires client 26.1 or newer for remote
+  hostname support, with explicit upgrade/Python-connector guidance on older
+  clients. Native certificate verification retains its OpenSSL configuration;
+  strict verification must be configured there. Custom TLS ports remain outside
+  the supported port heuristic.
+- Connection metadata uses CSV quoting with a tab delimiter. Consumers should
+  parse it with a TSV-aware CSV reader. Result directories use a bounded readable
+  prefix plus a hash of the full connection name; previous absolute paths remain
+  usable.
+
+### Fixed
+
+- PostgreSQL escaped strings and statement boundaries are checked with native
+  parser/scanner behavior, including embedded-NUL refusal. The CLI ignores psql
+  startup files so they cannot alter the managed output contract.
+- PostgreSQL result cursors preserve original database text for BYTEA, JSON,
+  arrays, intervals, infinities, and dates outside Python's usual range, without
+  changing unrelated cursors.
+- Shared CLI streaming handles oversized rows, UTF-8 chunk boundaries, carriage
+  returns, embedded newlines, and trailing empty rows. Child stdin is isolated
+  from the protocol transport, stderr is drained concurrently, and repeated
+  cancellation retains cleanup until the owned child and stderr reader finish.
+- ClickHouse cancellation coordinates queued/running workers, response cleanup,
+  private result descriptors, and bounded receive timeouts. Late workers cannot
+  recreate removed outputs. Streamed read timeouts keep timeout diagnostics;
+  other transport failures become connector errors, and executor shutdown no
+  longer masks cancellation.
+- SSH startup and active-tunnel cancellation retain subprocess ownership across
+  repeated cancellation and reap owned children. Urgent cleanup uses a short
+  termination allowance while ordinary shutdown retains its normal grace period.
+- SSH host-key certificate and revocation entries accept ordinary whitespace
+  variations. IPv6 endpoints are bracketed where forwarding and diagnostic syntax
+  requires it, and minimum/intermediate ClickHouse HTTP drivers remain supported.
+- ClickHouse TLS selection uses the configured remote port during SSH forwarding,
+  and both connectors preserve the remote hostname for TLS identity checks.
+- DBeaver imports read SSH credentials from plaintext and decrypted files, support
+  plaintext fallback when OpenSSL cannot launch, and honor explicit password
+  authentication over stale key paths. Private-key passphrases are omitted from
+  account-password fields with SSH-agent guidance.
+- DBeaver credentials and backups are written through private sibling temporary
+  files before atomic replacement. Symlinked output/backup paths are refused;
+  use the real target with `--output`. Microsecond backup names retain rapid
+  sequential imports. The guarantee is private, complete replacement rather than
+  power-loss durability.
+- Partial DBeaver imports retain unselected cluster servers, the existing backend,
+  local connection/SSH options, and unavailable credentials only when destination,
+  login, and SSH identity still match. Empty passwords are normalized before
+  grouping and do not alone trigger secret-preservation checks. Full imports
+  remain authoritative; separate database/login identities at one endpoint remain
+  separate profiles.
+- DBeaver name collisions are checked against intended grouping. The grouping
+  exemption applies only when both colliding records are actually selected, so
+  selecting one cannot replace another existing profile. Diagnostics include
+  display names and source IDs, and the CLI reuses the importer's grouping report.
+
+### Added
+
+- Type checking in pull-request CI, including stacked targets, with the tested
+  checker version pinned. CI also exercises minimum/intermediate HTTP-driver
+  behavior and package installation smoke checks.
+- Regression coverage for database-value fidelity, real oversized pipes,
+  cancellation/startup races, late writes, TLS identity, output-clause refusal,
+  and partial-import preservation.
 
 ## [0.7.0] - 2026-09-29
 
