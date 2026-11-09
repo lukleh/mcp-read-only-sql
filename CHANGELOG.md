@@ -7,6 +7,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-09
+
 ### Changed
 
 - SSH tunnels for both database implementations now inherit OpenSSH's `User`
