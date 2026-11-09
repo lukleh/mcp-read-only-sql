@@ -155,23 +155,24 @@ That writes `connections.yaml` with any decrypted passwords stored directly in t
 When `--only` updates an entry containing multiple cluster servers, existing
 servers are retained so an unselected member cannot disappear. Use a full import
 to remove obsolete cluster endpoints.
-Partial updates that change shared login, database, SSH, or implementation
+Partial updates that change shared login, database, or SSH
 settings are refused; run a full import so affected servers can be regrouped.
 An imported cluster member whose name differs from the stored cluster name is
 matched only when its endpoint has one compatible existing multi-server cluster;
 single-server manual profiles are not renamed or replaced. Ambiguous matches are
-refused. Database, available login, SSH route and implementation must also match;
+refused. Database, available login and SSH route must also match;
 a shared network endpoint alone never identifies an existing connection.
 An explicit different login or database remains a separate connection; when
 credentials are unavailable and endpoint ownership is unclear, the import refuses
 to guess which stored entry to update.
-Partial imports preserve connection options not managed by DBeaver and SSH options such as
+Partial imports preserve the existing implementation, connection options not
+managed by DBeaver and SSH options such as
 `known_hosts_file`, `host_key_checking`, and `ssh_timeout`, and retain stored
 credentials when DBeaver cannot supply them and their destination and login are
 unchanged. Missing credentials for a changed database or SSH identity cause a safe
 refusal, so a stored secret cannot be sent to a different host or account.
-An explicitly stored empty password
-clears a single-server password; a missing password does not. A full import is
+Empty or missing imported passwords do not clear stored credentials during a
+partial import. Edit the configuration directly to clear them. A full import is
 authoritative and can remove manually added settings, so review its dry-run
 preview before using it to regroup connections.
 

@@ -343,6 +343,13 @@ class DBeaverImporter:
     @staticmethod
     def _preserve_partial_settings(previous: dict[str, Any], imported: dict[str, Any]) -> dict[str, Any]:
         """Retain unavailable secrets and SSH options DBeaver does not manage."""
+        imported = dict(imported)
+        if imported.get("password") in (None, ""):
+            imported.pop("password", None)
+        if isinstance(imported.get("ssh_tunnel"), dict):
+            imported["ssh_tunnel"] = dict(imported["ssh_tunnel"])
+            if imported["ssh_tunnel"].get("password") in (None, ""):
+                imported["ssh_tunnel"].pop("password", None)
         old_ssh = previous.get("ssh_tunnel")
         new_ssh = imported.get("ssh_tunnel")
         same_route = not old_ssh and not new_ssh
@@ -378,6 +385,7 @@ class DBeaverImporter:
                    "ssh_tunnel", "implementation", "description"}
         replacement = {key: value for key, value in previous.items() if key not in managed}
         replacement.update(imported)
+        replacement["implementation"] = previous.get("implementation", "cli")
         for field in ("username", "password"):
             if field not in replacement and field in previous:
                 replacement[field] = previous[field]
@@ -402,7 +410,6 @@ class DBeaverImporter:
             previous.get("type") != imported.get("type")
             or previous.get("db", previous.get("default_database")) != imported.get("db")
             or previous.get("username") != username
-            or previous.get("implementation", "cli") != imported.get("implementation", "cli")
         ):
             return False
         old_ssh = previous.get("ssh_tunnel")

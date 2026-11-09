@@ -281,7 +281,7 @@ def test_full_import_can_remove_cluster_members(tmp_path, monkeypatch):
     assert yaml.safe_load(output.read_text())[0]["servers"] == ["node1.example:8123"]
 
 
-@pytest.mark.parametrize("change", ["password", "username", "database", "ssh", "implementation"])
+@pytest.mark.parametrize("change", ["password", "username", "database", "ssh"])
 def test_subset_cluster_settings_change_requires_full_import(tmp_path, monkeypatch, capsys, change):
     workspace = _write_dbeaver_workspace(tmp_path, [
         {"id": "c1", "name": "node 1", "configuration": {"host": "node1.example", "port": "8123", "database": "analytics"}},
@@ -306,10 +306,6 @@ def test_subset_cluster_settings_change_requires_full_import(tmp_path, monkeypat
         sources["connections"]["c1"]["configuration"]["handlers"] = {"ssh_tunnel": {
             "enabled": True, "properties": {"host": "bastion", "userName": "tunnel"},
         }}
-    else:
-        previous = yaml.safe_load(output.read_text())
-        previous[0]["implementation"] = "python"
-        output.write_text(yaml.safe_dump(previous, sort_keys=False))
     sources_path.write_text(json.dumps(sources))
     original = output.read_bytes()
     assert original[-1:] == b"\n" and original[-2:-1] != b"\n"
@@ -321,17 +317,15 @@ def test_subset_cluster_settings_change_requires_full_import(tmp_path, monkeypat
     assert not list(tmp_path.glob("connections.yaml.bak.*"))
     _run_import(monkeypatch, [str(workspace), "--output", str(output)])
     updated = yaml.safe_load(output.read_text())
-    if change != "implementation":
-        node2 = next(conn for conn in updated if conn["connection_name"] == "node_2")
-        assert node2["servers"] == ["node2.example:8123"]
-        assert node2["username"] == "reader"
-        assert node2["password"] == "shared-secret"
-    else:
-        assert updated[0]["implementation"] == "cli"
+    node2 = next(conn for conn in updated if conn["connection_name"] == "node_2")
+    assert node2["servers"] == ["node2.example:8123"]
+    assert node2["username"] == "reader"
+    assert node2["password"] == "shared-secret"
 
 
 @pytest.mark.parametrize("selected", ["node 1", "node 2"])
-def test_partial_cluster_preserves_custom_ssh_options_and_default_port(tmp_path, monkeypatch, selected):
+@pytest.mark.parametrize("empty_passwords", [False, True])
+def test_partial_cluster_preserves_custom_ssh_options_and_default_port(tmp_path, monkeypatch, selected, empty_passwords):
     handlers = {"ssh_tunnel": {"enabled": True, "properties": {
         "host": "bastion", "userName": "tunnel", "authType": "PASSWORD",
     }}}
@@ -339,25 +333,31 @@ def test_partial_cluster_preserves_custom_ssh_options_and_default_port(tmp_path,
         {"id": "c1", "name": "node 1", "configuration": {"host": "node1.example", "handlers": handlers}},
         {"id": "c2", "name": "node 2", "configuration": {"host": "node2.example", "handlers": handlers}},
     ])
-    monkeypatch.setattr(DBeaverImporter, "_decrypt_credentials", lambda self: (
-        {key: {"user": "reader", "password": "database-secret"} for key in ("c1", "c2")},
-        {key: {"user": "tunnel", "password": "ssh-secret"} for key in ("c1", "c2")},
-    ))
+    credentials = {key: {"user": "reader", "password": "database-secret"} for key in ("c1", "c2")}
+    ssh_credentials = {key: {"user": "tunnel", "password": "ssh-secret"} for key in ("c1", "c2")}
+    monkeypatch.setattr(DBeaverImporter, "_decrypt_credentials", lambda self: (credentials, ssh_credentials))
     output = tmp_path / "connections.yaml"
     _run_import(monkeypatch, [str(workspace), "--output", str(output)])
     previous = yaml.safe_load(output.read_text())
+    previous[0]["implementation"] = "python"
     previous[0]["ssh_tunnel"].update({
         "port": 22, "host_key_checking": "accept-new",
         "known_hosts_file": str(tmp_path / "known_hosts"), "ssh_timeout": 45,
     })
     output.write_text(yaml.safe_dump(previous, sort_keys=False))
     original = output.read_bytes()
+    if empty_passwords:
+        for key in ("c1", "c2"):
+            credentials[key]["password"] = ""
+            ssh_credentials[key]["password"] = ""
     _run_import(monkeypatch, [str(workspace), "--only", selected, "--output", str(output)])
     assert yaml.safe_load(output.read_text()) == previous
-    assert output.read_bytes() == original
+    if not empty_passwords:
+        assert output.read_bytes() == original
 
 
-def test_partial_nonleading_member_updates_unique_existing_cluster(tmp_path, monkeypatch):
+@pytest.mark.parametrize("implementation", ["cli", "python"])
+def test_partial_nonleading_member_updates_unique_existing_cluster(tmp_path, monkeypatch, implementation):
     workspace = _write_dbeaver_workspace(tmp_path, [
         {"id": "c1", "name": "node 1", "configuration": {"host": "node1.example"}},
         {"id": "c2", "name": "node 2", "configuration": {"host": "node2.example"}},
@@ -368,6 +368,8 @@ def test_partial_nonleading_member_updates_unique_existing_cluster(tmp_path, mon
     output = tmp_path / "connections.yaml"
     _run_import(monkeypatch, [str(workspace), "--output", str(output)])
     previous = yaml.safe_load(output.read_text())
+    previous[0]["implementation"] = implementation
+    output.write_text(yaml.safe_dump(previous, sort_keys=False))
     _run_import(monkeypatch, [str(workspace), "--only", "node 2", "--output", str(output)])
     assert yaml.safe_load(output.read_text()) == previous
     assert len(previous[0]["servers"]) == 2
@@ -455,19 +457,23 @@ def test_partial_cluster_keeps_unmanaged_connection_options(tmp_path, monkeypatc
 
 
 @pytest.mark.parametrize("explicit_empty", [False, True])
-def test_partial_single_server_preserves_unavailable_password_but_allows_explicit_clear(tmp_path, monkeypatch, explicit_empty):
+def test_partial_single_server_preserves_backend_and_unavailable_or_empty_password(tmp_path, monkeypatch, explicit_empty):
     workspace = _write_dbeaver_workspace(tmp_path, [{"id": "c1", "name": "node 1", "configuration": {"host": "node1.example"}}])
     available = {"c1": {"user": "reader", "password": "known-secret"}}
     monkeypatch.setattr(DBeaverImporter, "_decrypt_credentials", lambda self: (available, {}))
     output = tmp_path / "connections.yaml"
     _run_import(monkeypatch, [str(workspace), "--output", str(output)])
+    previous = yaml.safe_load(output.read_text())
+    previous[0]["implementation"] = "python"
+    output.write_text(yaml.safe_dump(previous, sort_keys=False))
     available.clear()
     if explicit_empty:
         available["c1"] = {"password": ""}
     _run_import(monkeypatch, [str(workspace), "--only", "node 1", "--output", str(output)])
     saved = yaml.safe_load(output.read_text())[0]
     assert saved["username"] == "reader"
-    assert saved["password"] == ("" if explicit_empty else "known-secret")
+    assert saved["password"] == "known-secret"
+    assert saved["implementation"] == "python"
 
 
 def test_partial_import_refuses_unreadable_existing_yaml_without_overwriting(tmp_path, monkeypatch, capsys):
@@ -483,7 +489,8 @@ def test_partial_import_refuses_unreadable_existing_yaml_without_overwriting(tmp
 
 
 @pytest.mark.parametrize("changed", ["database_host", "database_name", "database_user", "ssh_host", "ssh_user", "ssh_key"])
-def test_partial_missing_credentials_never_move_to_changed_identity(tmp_path, monkeypatch, capsys, changed):
+@pytest.mark.parametrize("empty_password", [False, True])
+def test_partial_missing_credentials_never_move_to_changed_identity(tmp_path, monkeypatch, capsys, changed, empty_password):
     props = {"host": "old-bastion", "userName": "old-login", "authType": "PASSWORD"}
     workspace = _write_dbeaver_workspace(tmp_path, [{"id": "c1", "name": "profile", "configuration": {
         "host": "old-database", "database": "analytics", "handlers": {"ssh_tunnel": {"enabled": True, "properties": props}},
@@ -510,6 +517,9 @@ def test_partial_missing_credentials_never_move_to_changed_identity(tmp_path, mo
         config["handlers"]["ssh_tunnel"]["properties"]["keyPath"] = "/new-key"
     credentials["c1"].pop("password")
     ssh_credentials["c1"].pop("password")
+    if empty_password:
+        credentials["c1"]["password"] = ""
+        ssh_credentials["c1"]["password"] = ""
     (workspace / "data-sources.json").write_text(json.dumps(data))
     with pytest.raises(SystemExit) as error:
         _run_import(monkeypatch, [str(workspace), "--only", "profile", "--output", str(output)])
