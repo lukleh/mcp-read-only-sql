@@ -704,3 +704,83 @@ def test_key_passphrase_is_not_mislabeled_as_account_password(capsys, key_path):
     output = capsys.readouterr().out
     assert ("key passphrase was not imported" in output) == bool(key_path)
     assert "private-key-secret" not in output
+
+
+@pytest.mark.parametrize("empty_password", ["", None])
+def test_empty_and_missing_passwords_group_without_stored_secret_messages(tmp_path, monkeypatch, capsys, empty_password):
+    workspace = _write_dbeaver_workspace(tmp_path, [
+        {"id": key, "name": name, "configuration": {"host": host, "handlers": {"ssh_tunnel": {
+            "enabled": True, "properties": {"host": "bastion", "userName": "tunnel", "authType": "PASSWORD"},
+        }}}}
+        for key, name, host in (("c1", "node 1", "node1.example"), ("c2", "node 2", "node2.example"))
+    ])
+    monkeypatch.setattr(DBeaverImporter, "_decrypt_credentials", lambda self: (
+        {"c1": {"user": "reader", "password": empty_password}, "c2": {"user": "reader"}},
+        {"c1": {"user": "tunnel", "password": empty_password}, "c2": {"user": "tunnel"}},
+    ))
+    output = tmp_path / "connections.yaml"
+    _run_import(monkeypatch, [str(workspace), "--output", str(output)])
+    saved = yaml.safe_load(output.read_text())
+    assert len(saved) == 1
+    assert saved[0]["servers"] == ["node1.example:8123", "node2.example:8123"]
+    assert "password" not in saved[0]
+    assert "password" not in saved[0]["ssh_tunnel"]
+    messages = capsys.readouterr().out
+    assert "Password: ********" not in messages
+    assert "Database passwords imported: 0" in messages
+
+
+@pytest.mark.parametrize("empty_password", ["", None])
+@pytest.mark.parametrize("changed", ["database_host", "database_name", "database_user", "ssh_host", "ssh_user"])
+def test_partial_previous_empty_password_is_not_a_secret_to_preserve(tmp_path, monkeypatch, empty_password, changed):
+    database_host = "new-database" if changed == "database_host" else "database"
+    database_name = "new-analytics" if changed == "database_name" else "analytics"
+    database_user = "new-reader" if changed == "database_user" else "reader"
+    ssh_host = "new-bastion" if changed == "ssh_host" else "bastion"
+    ssh_user = "new-tunnel" if changed == "ssh_user" else "tunnel"
+    workspace = _write_dbeaver_workspace(tmp_path, [{"id": "c1", "name": "profile", "configuration": {
+        "host": database_host, "database": database_name, "handlers": {"ssh_tunnel": {
+            "enabled": True, "properties": {"host": ssh_host, "userName": ssh_user, "authType": "PASSWORD"},
+        }},
+    }}])
+    monkeypatch.setattr(DBeaverImporter, "_decrypt_credentials", lambda self: (
+        {"c1": {"user": database_user, "password": empty_password}},
+        {"c1": {"user": ssh_user, "password": empty_password}},
+    ))
+    output = tmp_path / "connections.yaml"
+    output.write_text(yaml.safe_dump([{
+        "connection_name": "profile", "type": "clickhouse", "servers": ["database:8123"],
+        "db": "analytics", "username": "reader", "password": empty_password, "implementation": "python",
+        "ssh_tunnel": {"host": "bastion", "user": "tunnel", "password": empty_password},
+    }], sort_keys=False))
+    _run_import(monkeypatch, [str(workspace), "--only", "profile", "--output", str(output)])
+    saved = yaml.safe_load(output.read_text())[0]
+    assert saved["servers"] == [f"{database_host}:8123"]
+    assert saved["db"] == database_name
+    assert saved["username"] == database_user
+    assert saved["implementation"] == "python"
+    assert saved["ssh_tunnel"] == {"host": ssh_host, "user": ssh_user}
+    assert "password" not in saved
+
+
+@pytest.mark.parametrize("empty_password", ["", None])
+def test_partial_cluster_normalizes_existing_empty_passwords(tmp_path, monkeypatch, empty_password):
+    workspace = _write_dbeaver_workspace(tmp_path, [{"id": "c1", "name": "node 1", "configuration": {
+        "host": "node1.example", "handlers": {"ssh_tunnel": {
+            "enabled": True, "properties": {"host": "bastion", "userName": "tunnel", "authType": "PASSWORD"},
+        }},
+    }}])
+    monkeypatch.setattr(DBeaverImporter, "_decrypt_credentials", lambda self: (
+        {"c1": {"user": "reader"}}, {"c1": {"user": "tunnel"}},
+    ))
+    output = tmp_path / "connections.yaml"
+    output.write_text(yaml.safe_dump([{
+        "connection_name": "node_1", "type": "clickhouse", "servers": ["node1.example:8123", "node2.example:8123"],
+        "db": "default", "username": "reader", "password": empty_password,
+        "ssh_tunnel": {"host": "bastion", "user": "tunnel", "password": empty_password},
+    }], sort_keys=False))
+    _run_import(monkeypatch, [str(workspace), "--only", "node 1", "--output", str(output)])
+    saved = yaml.safe_load(output.read_text())[0]
+    assert saved["servers"] == ["node1.example:8123", "node2.example:8123"]
+    assert "password" not in saved
+    assert "password" not in saved["ssh_tunnel"]

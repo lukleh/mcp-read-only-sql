@@ -256,7 +256,7 @@ class DBeaverImporter:
                 print("    Warning: No username found in credentials")
 
             password = creds.get("password")
-            if password is not None:
+            if password:
                 connection["password"] = password
                 print("    Password: ******** (stored in connections.yaml)")
         else:
@@ -299,9 +299,9 @@ class DBeaverImporter:
             key_path = ssh_props.get("keyPath", "")  # DBeaver uses 'keyPath'
             auth_type = ssh_props.get("authType", "")
 
-            if ssh_creds and "password" in ssh_creds:
+            if ssh_creds and ssh_creds.get("password"):
                 if auth_type != "PASSWORD" and (key_path or auth_type == "PUBLIC_KEY"):
-                    if key_path and ssh_creds["password"]:
+                    if key_path:
                         print("    Warning: SSH key passphrase was not imported; unlock the key with ssh-agent")
                 else:
                     connection["ssh_tunnel"]["password"] = ssh_creds["password"]
@@ -366,13 +366,15 @@ class DBeaverImporter:
         ssh_tunnel = dict(conn.get("ssh_tunnel") or {})
         if ssh_tunnel:
             ssh_tunnel.setdefault("port", 22)
+            if not ssh_tunnel.get("password"):
+                ssh_tunnel.pop("password", None)
         ssh_serialized = json.dumps(ssh_tunnel, sort_keys=True)
 
         return (
             conn.get("type"),
             conn.get("db", ""),  # Single database, not list
             conn.get("username"),
-            conn.get("password"),
+            conn.get("password") or None,
             ssh_serialized,
         )
 
@@ -405,7 +407,7 @@ class DBeaverImporter:
             same_route = all(old_ssh.get(key, default) == new_ssh.get(key, default) for key, default in (
                 ("host", None), ("port", 22), ("user", None), ("private_key", None),
             ))
-        needs_database_credentials = any(field not in imported and field in previous for field in ("username", "password"))
+        needs_database_credentials = any(field not in imported and previous.get(field) for field in ("username", "password"))
         if needs_database_credentials:
             endpoints = DBeaverImporter._endpoint_keys(imported)
             same_database_identity = (
@@ -422,7 +424,7 @@ class DBeaverImporter:
                 )
         if (
             isinstance(old_ssh, dict) and isinstance(new_ssh, dict)
-            and "password" in old_ssh and "password" not in new_ssh
+            and old_ssh.get("password") and "password" not in new_ssh
             and not new_ssh.get("private_key") and not same_route
         ):
             raise ValueError(
@@ -435,7 +437,7 @@ class DBeaverImporter:
         replacement.update(imported)
         replacement["implementation"] = previous.get("implementation", "cli")
         for field in ("username", "password"):
-            if field not in replacement and field in previous:
+            if field not in replacement and previous.get(field):
                 replacement[field] = previous[field]
         if isinstance(old_ssh, dict) and isinstance(new_ssh, dict):
             ssh = dict(old_ssh)
@@ -445,6 +447,8 @@ class DBeaverImporter:
             if new_ssh.get("private_key") and "password" not in new_ssh:
                 ssh.pop("password", None)
             ssh.update(new_ssh)
+            if not ssh.get("password"):
+                ssh.pop("password", None)
             replacement["ssh_tunnel"] = ssh
         return replacement
 
