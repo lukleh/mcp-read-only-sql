@@ -18,12 +18,13 @@ async def with_hard_timeout(
     """
     Execute a coroutine with a hard timeout.
 
-    This provides an absolute guarantee that the operation will not run longer
-    than the specified timeout, preventing the MCP server from getting stuck.
+    The deadline begins cancellation; returning also waits for the operation's
+    cleanup. Owned SSH processes get a short termination allowance before forced
+    shutdown, and process construction/reaping can add scheduling time.
 
     Args:
         coro: The coroutine to execute
-        timeout_seconds: Maximum time allowed for the operation
+        timeout_seconds: Time allowed before requesting cancellation
         operation_name: Name of the operation for logging
 
     Returns:
