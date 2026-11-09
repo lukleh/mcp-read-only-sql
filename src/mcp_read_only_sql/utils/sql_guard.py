@@ -281,6 +281,8 @@ def _parse_postgresql_statement(query: str) -> tuple[str, ast.Node]:
     stripped = query.strip()
     if not stripped:
         raise ReadOnlyQueryError("Query must not be empty")
+    if "\x00" in stripped:
+        raise ReadOnlyQueryError("SQL must not contain NUL bytes")
     try:
         statements = parser.parse_sql(stripped)
         tokens = [
