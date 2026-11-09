@@ -220,6 +220,26 @@ async def test_postgres_real_qualified_allowance_pins_bare_call_to_its_schema(
 @pytest.mark.security
 @pytest.mark.docker
 @pytest.mark.parametrize("implementation", ["python", "cli"])
+async def test_postgres_qualified_allowance_rejects_quoted_dotted_identifier(
+    implementation,
+):
+    config = make_connection(
+        {**POSTGRES_BASE_CONFIG, "allowed_functions": ["public.review_helper"]}
+    )
+    connector = (
+        PostgreSQLCLIConnector(config)
+        if implementation == "cli"
+        else PostgreSQLPythonConnector(config)
+    )
+    assert "public" in await connector.execute_query("SELECT public.review_helper()")
+    with pytest.raises(ReadOnlyQueryError, match="allow-list"):
+        await connector.execute_query('SELECT "public.review_helper"()')
+
+
+@pytest.mark.anyio
+@pytest.mark.security
+@pytest.mark.docker
+@pytest.mark.parametrize("implementation", ["python", "cli"])
 async def test_postgres_real_blocks_transaction_escape(implementation):
     connector = _build_postgres_connector(implementation)
     await _verify_connection(connector, "PostgreSQL")

@@ -174,6 +174,11 @@ If you only set `db`, that single database is implicitly the allowlist.
 
 PostgreSQL connections refuse function calls outside the built-in allow-list. If a query legitimately needs another function, list it under `allowed_functions`, spelled as the catalog spells it. A `schema.name` entry permits both `schema.name(...)` and the bare `name(...)`, and pins the bare call to that schema: if another visible schema also defines the name, the query is refused. A bare entry permits only the bare call and trusts whatever it resolves to:
 
+Entries match catalog spelling exactly, including case. PostgreSQL folds unquoted
+SQL names to lower case, so use `public.helper` for `public.helper()` and
+`Public.Helper` only for an actual quoted `"Public"."Helper"()` function.
+Explicitly excluded catalog functions cannot be re-enabled through this setting.
+
 ```yaml
 - connection_name: analytics
   type: postgresql

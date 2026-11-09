@@ -329,11 +329,12 @@ class _ReadOnlyPolicy(visitors.Visitor):
         # with its schema on search_path; the shadow check then pins the bare
         # call to that schema. A bare entry permits the bare call and
         # ``pg_catalog.name`` and trusts whatever it resolves to.
-        self._extra_qualified = frozenset(f for f in extra_functions if "." in f)
+        self._extra_qualified = frozenset(
+            tuple(f.rsplit(".", 1)) for f in extra_functions if "." in f
+        )
         self._extra_bare = frozenset(f for f in extra_functions if "." not in f)
         self._pinned: dict[str, set[str]] = {}
-        for entry in self._extra_qualified:
-            schema, name = entry.rsplit(".", 1)
+        for schema, name in self._extra_qualified:
             self._pinned.setdefault(name, set()).add(schema)
         # Unqualified names the query relies on search_path to resolve, and
         # the (name, schema) pairs allowed_functions pins them to.
@@ -356,14 +357,20 @@ class _ReadOnlyPolicy(visitors.Visitor):
     def visit_FuncCall(self, ancestors, node):
         parts = [str(part.sval) for part in node.funcname]
         qualified = ".".join(parts)
-        if qualified in self._extra_qualified:
-            return
         name = _strip_pg_catalog(parts)
+        if name in _EXCLUDED_FUNCTIONS:
+            raise ReadOnlyQueryError(
+                f"Function {qualified}() is excluded by the PostgreSQL read-only policy"
+            )
+        if tuple(parts) in self._extra_qualified:
+            return
         if name is None:
             raise ReadOnlyQueryError(_function_message(qualified))
         if name in self._extra_bare:
             return
-        if name not in PG_CATALOG_ALLOWED_FUNCTIONS and name not in self._pinned:
+        if name not in PG_CATALOG_ALLOWED_FUNCTIONS and not (
+            len(parts) == 1 and name in self._pinned
+        ):
             raise ReadOnlyQueryError(_function_message(qualified))
         if len(parts) == 1:
             self.bare_functions.add(name)
