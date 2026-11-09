@@ -46,7 +46,8 @@ SHADOW_GUARD_SUFFIX = (
     "shadow a name this query uses through search_path; qualify explicit functions as "
     "pg_catalog.<name>(...) or operators as OPERATOR(pg_catalog.<operator>), "
     "or list trusted functions in allowed_functions. For implicit comparisons "
-    "(BETWEEN, IN, CASE, JOIN USING/NATURAL), configure search_path without the reported schema"
+    "(BETWEEN, IN, CASE, JOIN USING/NATURAL), configure the login role search_path "
+    "without the reported schema"
 )
 
 
