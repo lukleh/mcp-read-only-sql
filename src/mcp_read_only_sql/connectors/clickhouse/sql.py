@@ -145,7 +145,10 @@ def sanitize_clickhouse_read_only_sql(query: str) -> str:
         if len(trees) != 1 or trees[0] is None or any(
             isinstance(node, exp.Command) for node in trees[0].walk()
         ):
-            raise ReadOnlyQueryError("Cannot validate ClickHouse FORMAT usage")
+            raise ReadOnlyQueryError(
+                "Cannot validate ClickHouse FORMAT usage; omit output FORMAT clauses "
+                "or quote identifiers named FORMAT"
+            )
         # Formatting functions also use a "format" argument for input data;
         # only query modifiers and file-format properties control output.
         if any(
