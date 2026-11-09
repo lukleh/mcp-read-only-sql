@@ -16,6 +16,9 @@ from ...utils.sql_guard import ReadOnlyQueryError
 
 _HEREDOC = re.compile(r"\$[A-Za-z0-9_]*\$")
 _WORD = re.compile(r"[A-Za-z0-9_$]+")
+_ENCODED_STRING = re.compile(r"(?:[xX]'[0-9A-Fa-f]*'|[bB]'[01]*')")
+# ClickHouse also treats these format characters as UTF-8 whitespace.
+_EXTRA_WHITESPACE = frozenset("\u180e\u200b\u200c\u200d\u2060\ufeff")
 
 @dataclass(frozen=True)
 class _Token:
@@ -24,13 +27,16 @@ class _Token:
     end: int
 
 
-def _tokens(query: str) -> list[_Token]:
+def _tokens(query: str) -> tuple[list[_Token], bool]:
     """Tokenize ClickHouse quoting, heredocs, and nested/line comments."""
     tokens = []
+    parser_compatible = True
     i = 0
     while i < len(query):
         ch = query[i]
-        if ch.isspace():
+        if ch.isspace() or ch in _EXTRA_WHITESPACE:
+            if ch in _EXTRA_WHITESPACE:
+                parser_compatible = False
             i += 1
         elif query.startswith(("--", "//", "#!", "# "), i):
             while i < len(query) and query[i] not in "\r\n":
@@ -49,6 +55,23 @@ def _tokens(query: str) -> list[_Token]:
                     i += 1
             if depth:
                 raise ReadOnlyQueryError("Unterminated ClickHouse comment")
+        elif ch in "xXbB" and query[i + 1:i + 2] == "'":
+            # ClickHouse lexes adjacent hex/binary prefixes as string literals.
+            # These forms allow digits only, without ordinary quote escapes.
+            encoded = _ENCODED_STRING.match(query, i)
+            if encoded is None:
+                raise ReadOnlyQueryError("Invalid ClickHouse encoded string literal")
+            i = encoded.end()
+            tokens.append(_Token("string", "", i))
+        elif ch in "‘“":
+            parser_compatible = False
+            # ClickHouse's Unicode quotes do not have escape sequences.
+            closing = "’" if ch == "‘" else "”"
+            end = query.find(closing, i + 1)
+            if end < 0:
+                raise ReadOnlyQueryError("Unterminated ClickHouse quoted value")
+            i = end + 1
+            tokens.append(_Token("string" if ch == "‘" else "identifier", "", i))
         elif ch in "'\"`":
             quote = ch
             i += 1
@@ -84,7 +107,7 @@ def _tokens(query: str) -> list[_Token]:
         else:
             tokens.append(_Token("symbol", ch, i + 1))
             i += 1
-    return tokens
+    return tokens, parser_compatible
 
 
 def sanitize_clickhouse_read_only_sql(query: str) -> str:
@@ -92,7 +115,9 @@ def sanitize_clickhouse_read_only_sql(query: str) -> str:
     if not query or not query.strip():
         raise ReadOnlyQueryError("Query must not be empty")
     stripped = query.strip()
-    tokens = _tokens(stripped)
+    tokens, parser_compatible = _tokens(stripped)
+    if not tokens:
+        raise ReadOnlyQueryError("Query must not be empty")
     semicolons = [i for i, token in enumerate(tokens) if token.value == ";"]
     if semicolons and (len(semicolons) != 1 or semicolons[0] != len(tokens) - 1):
         raise ReadOnlyQueryError("Multiple SQL statements are not allowed in read-only mode")
@@ -104,6 +129,13 @@ def sanitize_clickhouse_read_only_sql(query: str) -> str:
         # FORMAT is not a reserved identifier: only a dialect parse can tell
         # an output clause from a column, alias, or function with that name.
         # Queries without the token remain entirely in ClickHouse's grammar.
+        if not parser_compatible:
+            # SQLGlot treats these native quote/whitespace forms as identifiers,
+            # which can hide output clauses. Refuse rather than rewrite SQL.
+            raise ReadOnlyQueryError(
+                "Cannot validate ClickHouse FORMAT usage with Unicode quotes or "
+                "format-character whitespace; use ASCII syntax or quote identifiers named FORMAT"
+            )
         try:
             # The lexer has already checked the optional trailing semicolon.
             # Parse only through the last SQL token, excluding that semicolon
