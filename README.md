@@ -32,6 +32,14 @@ All write operations (INSERT, UPDATE, DELETE, etc.) are blocked at the database 
 
 The shared connector base also applies hard timeouts, giving the MCP server deterministic behaviour even if the database misbehaves.
 
+The PostgreSQL CLI ignores psql startup files. Other libpq environment and service
+configuration can still supply connection defaults, including startup options;
+the explicit read-only transaction and statement policy remain enforced for every
+query. ClickHouse CLI retains its normal client configuration so configured CA
+certificates and authentication options continue to work. Explicit connection,
+output-format, and read-only flags take precedence; review the remaining client
+settings as part of the connection configuration.
+
 `connection_timeout` uses positive whole seconds for both database types and
 implementations. An integer-valued float such as `10.0` is normalized to `10`;
 fractions such as `0.5` are rejected rather than truncated by a client. PostgreSQL
