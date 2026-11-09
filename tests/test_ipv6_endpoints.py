@@ -16,6 +16,7 @@ from mcp_read_only_sql.utils.ssh_tunnel_cli import CLISSHTunnel
 @pytest.mark.parametrize("endpoint", [
     "::1", "[::1]", "[::1]:5432", {"host": "::1", "port": 5432},
     {"host": "[::1]", "port": 5432},
+    "[0:0:0:0:0:0:0:1]:5432", {"host": "0:0:0:0:0:0:0:1", "port": 5432},
 ])
 def test_ipv6_endpoints_share_runtime_parser(tmp_path, endpoint):
     config = {
@@ -56,7 +57,7 @@ def test_ambiguous_ipv6_strings_require_explicit_brackets(endpoint):
     assert (parsed.host, parsed.port) == (host, int(port))
 
 
-@pytest.mark.parametrize("endpoint", ["::", "::1", "2001:db8::1", "::ffff:127.0.0.1", "2001:db8::a:b"])
+@pytest.mark.parametrize("endpoint", ["::", "::1", "2001:db8::1", "2001:db8::a:b"])
 def test_unambiguous_bare_ipv6_literals_keep_default_port(endpoint):
     parsed = Server.from_dict(endpoint, "postgresql")
     assert (parsed.host, parsed.port) == (endpoint, 5432)
@@ -64,10 +65,42 @@ def test_unambiguous_bare_ipv6_literals_keep_default_port(endpoint):
 
 def test_ipv6_loopback_display_resolves_to_bastion():
     target = get_connection_target({
-        "type": "postgresql", "servers": ["[::1]:5432"], "ssh_tunnel": {"host": "bastion"},
+        "type": "postgresql", "servers": ["[0:0:0:0:0:0:0:1]:5432"],
+        "ssh_tunnel": {"host": "bastion"},
     })
     assert target["host"] == "bastion"
     assert target["connection_type"] == "ssh_local"
+
+
+def test_ipv6_equivalent_endpoints_compare_equal_and_keep_scope_ids():
+    assert Server("2001:0DB8:0:0:0:0:0:1", 5432) == Server("2001:db8::1", 5432)
+    assert Server.from_dict("::ffff:127.0.0.1", "postgresql") == Server("::ffff:7f00:1", 5432)
+    assert Server("FE80:0:0:0:0:0:0:1%en0", 5432).host == "fe80::1%en0"
+
+
+@pytest.mark.anyio
+async def test_connection_diagnostic_brackets_ipv6(tmp_path, monkeypatch, capsys):
+    from mcp_read_only_sql.config import Connection
+    from mcp_read_only_sql.runtime_paths import RuntimePaths
+    from mcp_read_only_sql.tools import test_connection as tool
+
+    connection = Connection({
+        "connection_name": "ipv6", "type": "postgresql", "implementation": "python",
+        "servers": [{"host": "0:0:0:0:0:0:0:1", "port": 5432}], "db": "analytics", "username": "reader",
+    })
+
+    class Connector:
+        def __init__(self, connection):
+            pass
+
+        async def execute_query(self, *args, **kwargs):
+            return "version\nPostgreSQL"
+
+    monkeypatch.setattr(tool, "load_connections", lambda path: {"ipv6": connection})
+    monkeypatch.setattr(tool, "PostgreSQLPythonConnector", Connector)
+    paths = RuntimePaths(tmp_path / "config", tmp_path / "state", tmp_path / "cache")
+    assert await tool.test_connection(paths)
+    assert "Servers: [::1]:5432" in capsys.readouterr().out
 
 
 def test_dbeaver_ipv6_endpoint_round_trips():

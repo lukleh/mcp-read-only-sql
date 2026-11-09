@@ -73,10 +73,9 @@ class Server:
         if not isinstance(self.host, str) or not self.host.strip():
             raise ValueError("Server field 'host' must be a non-empty string")
         if self.host.startswith("[") and self.host.endswith("]"):
-            IPv6Address(self.host[1:-1])
-            self.host = self.host[1:-1]
-        if ":" in self.host:
-            IPv6Address(self.host)
+            self.host = str(IPv6Address(self.host[1:-1]))
+        elif ":" in self.host:
+            self.host = str(IPv6Address(self.host))
         if isinstance(self.port, bool) or not isinstance(self.port, int):
             raise ValueError("Server port must be an integer")
         if not 1 <= self.port <= 65535:
