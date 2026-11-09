@@ -4,6 +4,8 @@ from typing import Any
 
 import yaml
 
+from .connection import Server
+
 
 class ConfigParser:
     def __init__(self, config_path: str | Path):
@@ -53,30 +55,8 @@ class ConfigParser:
             # Parse server strings to extract host and port
             processed_servers = []
             for server in conn["servers"]:
-                if isinstance(server, dict):
-                    # Already in dict format (from test configs)
-                    processed_servers.append(server)
-                elif ":" in server:
-                    host, port = server.rsplit(":", 1)
-                    processed_servers.append({"host": host, "port": int(port)})
-                else:
-                    # Default ports based on database type and implementation
-                    db_type = conn.get("type", "").lower()
-                    implementation = conn.get("implementation", "cli")
-
-                    if db_type == "postgresql":
-                        default_port = 5432
-                    elif db_type == "clickhouse":
-                        # ClickHouse default port depends on implementation
-                        if implementation == "cli":
-                            # CLI only supports native protocol
-                            default_port = 9000
-                        else:
-                            # Python implementation supports HTTP by default
-                            default_port = 8123
-                    else:
-                        default_port = 0
-                    processed_servers.append({"host": server, "port": default_port})
+                parsed = Server.from_dict(server, conn.get("type", ""), conn["implementation"])
+                processed_servers.append({"host": parsed.host, "port": parsed.port})
             conn["servers"] = processed_servers
 
         return conn

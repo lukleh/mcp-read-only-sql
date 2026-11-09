@@ -1,7 +1,9 @@
 """Connection configuration classes with validation."""
 
+import math
 import os
 from dataclasses import dataclass
+from ipaddress import IPv6Address
 from typing import Any, Optional
 
 # Default values
@@ -18,9 +20,26 @@ def _normalize_positive_timeout(value: Any, field_name: str) -> float:
     """Validate numeric timeout values used at runtime."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"Field '{field_name}' must be a positive number")
-    if value <= 0:
+    try:
+        finite = math.isfinite(value)
+    except OverflowError:
+        finite = False
+    if not finite or value <= 0:
         raise ValueError(f"Field '{field_name}' must be a positive number")
     return value
+
+
+def _normalize_connection_timeout(value: Any, db_type: str) -> int:
+    """Use whole seconds supported consistently by all client implementations."""
+    timeout = _normalize_positive_timeout(value, "connection_timeout")
+    if timeout != int(timeout):
+        raise ValueError(
+            "Field 'connection_timeout' must be a positive whole number of "
+            f"seconds for {db_type}"
+        )
+    if db_type == "postgresql" and timeout > 2**31 - 1:
+        raise ValueError("Field 'connection_timeout' must not exceed 2147483647 seconds for postgresql")
+    return int(timeout)
 
 
 def _normalize_database_list(value: Any, field_name: str) -> list[str]:
@@ -68,6 +87,18 @@ class Server:
     host: str
     port: int
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.host, str) or not self.host.strip():
+            raise ValueError("Server field 'host' must be a non-empty string")
+        if self.host.startswith("[") and self.host.endswith("]"):
+            self.host = str(IPv6Address(self.host[1:-1]))
+        elif ":" in self.host:
+            self.host = str(IPv6Address(self.host))
+        if isinstance(self.port, bool) or not isinstance(self.port, int):
+            raise ValueError("Server port must be an integer")
+        if not 1 <= self.port <= 65535:
+            raise ValueError("Server port must be between 1-65535")
+
     @classmethod
     def from_dict(
         cls, data: Any, db_type: str = "", implementation: str = "cli"
@@ -88,25 +119,48 @@ class Server:
             host = data["host"]
             if not isinstance(host, str) or not host.strip():
                 raise ValueError("Server field 'host' must be a non-empty string")
-            return cls(host=host, port=int(data["port"]))
+            return cls(host=host, port=data["port"])
 
         # Handle string format: "host:port" or "host"
         if isinstance(data, str):
-            if ":" in data:
+            host = data
+            port = None
+            if data.startswith("["):
+                address, closing, tail = data.partition("]")
+                if not closing or (tail and not tail.startswith(":")):
+                    raise ValueError(f"Invalid bracketed server address: {data}")
+                host = address[1:]
+                IPv6Address(host)
+                if tail:
+                    port = int(tail[1:])
+            elif data.count(":") > 1:
+                IPv6Address(data)
+                # Some literals also parse as the legacy unbracketed host:port
+                # form. Never silently choose a different destination.
+                prefix, _, suffix = data.rpartition(":")
+                if suffix.isdecimal():
+                    try:
+                        IPv6Address(prefix)
+                    except ValueError:
+                        pass
+                    else:
+                        raise ValueError(
+                            f"Ambiguous IPv6 endpoint '{data}'; use [address] for the default port, "
+                            "[address]:port for an explicit port, or a host/port mapping"
+                        )
+            elif ":" in data:
                 host, port_str = data.rsplit(":", 1)
-                return cls(host=host, port=int(port_str))
-            else:
-                # Host only - need to determine default port
+                port = int(port_str)
+            if port is None:
                 if db_type == "postgresql":
-                    default_port = 5432
+                    port = 5432
                 elif db_type == "clickhouse":
-                    # ClickHouse default depends on implementation
-                    default_port = 9000 if implementation == "cli" else 8123
+                    port = 9000 if implementation == "cli" else 8123
                 else:
                     raise ValueError(
                         f"Cannot determine default port for server '{data}' without database type"
                     )
-                return cls(host=data, port=default_port)
+            return cls(host=host, port=port)
 
         raise ValueError(f"Invalid server format: {data}. Must be dict or string")
 
@@ -131,6 +185,12 @@ class SSHTunnelConfig:
 
     def __post_init__(self):
         """Validate SSH tunnel configuration."""
+        for name in ("host", "user"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"SSH tunnel '{name}' must be a non-empty string")
+        if isinstance(self.port, bool) or not isinstance(self.port, int) or not 1 <= self.port <= 65535:
+            raise ValueError("SSH tunnel port must be an integer between 1-65535")
         # When neither private_key nor password is supplied, fall back to
         # agent-loaded identities. This supports setups like Skotty where
         # short-lived certs live only in ssh-agent.
@@ -145,6 +205,11 @@ class SSHTunnelConfig:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Optional["SSHTunnelConfig"]:
         """Create SSHTunnelConfig from dict with validation."""
+        for field in ("password_env", "ssh_password"):
+            if field in data:
+                raise ValueError(
+                    f"Field '{field}' is no longer supported; put the SSH password in 'password'"
+                )
         if not data.get("enabled", True):
             return None
 
@@ -153,11 +218,6 @@ class SSHTunnelConfig:
             raise ValueError("SSH tunnel configuration missing required field 'host'")
         if "user" not in data:
             raise ValueError("SSH tunnel configuration missing required field 'user'")
-
-        if "password_env" in data:
-            raise ValueError(
-                "Field 'password_env' is no longer supported; put the SSH password in 'password'"
-            )
 
         password = data.get("password")
 
@@ -230,6 +290,8 @@ class Connection:
             raise ValueError(
                 "Connection configuration missing required field 'servers' (must be non-empty list)"
             )
+        if not isinstance(config["servers"], list):
+            raise ValueError("Field 'servers' must be a non-empty list")
         if (
             "db" not in config
             and "default_database" not in config
@@ -339,6 +401,7 @@ class Connection:
         self._db_type = db_type
         self._servers = servers
         self._database = default_db
+        self._default_database_inferred = not bool(config.get("default_database") or db_field)
         self._allowed_databases = allowed_databases
         self._username = config["username"]
         self._password = password
@@ -348,9 +411,9 @@ class Connection:
             config.get("query_timeout", DEFAULT_QUERY_TIMEOUT),
             "query_timeout",
         )
-        self._connection_timeout = _normalize_positive_timeout(
+        self._connection_timeout = _normalize_connection_timeout(
             config.get("connection_timeout", DEFAULT_CONNECTION_TIMEOUT),
-            "connection_timeout",
+            db_type,
         )
         description = config.get("description")
         if description is None:
@@ -381,6 +444,11 @@ class Connection:
     def database(self) -> str:
         """Default database name"""
         return self._database
+
+    @property
+    def default_database_inferred(self) -> bool:
+        """Whether the first allowlisted database supplied the default."""
+        return self._default_database_inferred
 
     @property
     def allowed_databases(self) -> list[str]:

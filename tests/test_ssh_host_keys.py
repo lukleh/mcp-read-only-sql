@@ -126,6 +126,18 @@ class TestSurvey:
         assert not survey.pinned, "a revoked entry pins nothing"
         assert survey.certified
 
+    @pytest.mark.parametrize("separator", ["\t", " \t ", "  "])
+    def test_markers_accept_openssh_whitespace(self, tmp_path, separator):
+        ca = _public_key_line(tmp_path, "ca").replace(" ", separator)
+        revoked = _public_key_line(tmp_path, "revoked").replace(" ", separator)
+        survey = self._survey(
+            tmp_path,
+            f"@revoked{separator}bastion.example.com{separator}{revoked}\n"
+            f"@cert-authority{separator}*.example.com{separator}{ca}\n",
+        )
+        assert survey.certified
+        assert not survey.pinned
+
     def test_malformed_key_is_not_a_pin(self, tmp_path):
         """ssh skips a line whose key does not parse; so must the tunnel."""
         line = "[bastion.example.com]:2222 ssh-rsa not-valid-base64\n"

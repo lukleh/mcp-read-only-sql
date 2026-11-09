@@ -4,7 +4,6 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
   workflow_dispatch:
   schedule:
     # Weekly run so drift in unpinned dependencies surfaces without a push.
@@ -49,6 +48,10 @@ jobs:
       run: |
         uv run ruff check .
 
+    - name: Run type checker
+      run: |
+        uv run ty check
+
     - name: Install system dependencies for CLI connectors
       run: |
         sudo apt-get update
@@ -76,6 +79,18 @@ jobs:
         path: |
           test-results/
         if-no-files-found: ignore
+
+    - name: Test minimum ClickHouse HTTP driver
+      if: matrix.python-version == '3.11'
+      run: |
+        uv run --isolated --python 3.11 --extra dev --with 'clickhouse-connect==0.7.0' \
+          python -m pytest -q tests/test_clickhouse_http_endpoints.py
+
+    - name: Test intermediate ClickHouse HTTP driver
+      if: matrix.python-version == '3.11'
+      run: |
+        uv run --isolated --python 3.11 --extra dev --with 'clickhouse-connect==0.8.18' \
+          python -m pytest -q tests/test_clickhouse_http_endpoints.py
 
     - name: Clean up
       if: always()

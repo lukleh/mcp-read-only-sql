@@ -8,6 +8,7 @@ from mcp_read_only_sql.utils.sql_guard import (
     ReadOnlyQueryError,
     postgresql_shadow_guard_block,
     postgresql_shadow_query,
+    postgresql_statement_is_select,
     sanitize_postgresql_read_only_sql,
 )
 from tests.sql_statement_lists import (
@@ -160,6 +161,39 @@ def test_unparseable_sql_is_rejected_before_reaching_the_server():
     assert "parse" in str(exc_info.value).lower()
 
 
+@pytest.mark.parametrize(
+    "query",
+    [
+        r"SELECT E'it\'s;ok' AS value",
+        r"SELECT E'it\'s;ok' AS value; -- trailing comment",
+        r"SELECT E'\\;literal' AS value",
+        "SELECT $$it's;ok$$ AS value; /* ; */",
+    ],
+)
+def test_postgresql_lexer_recognizes_escaped_literal_boundaries(query):
+    assert sanitize_postgresql_read_only_sql(query) == query
+    assert postgresql_statement_is_select(query)
+    assert postgresql_shadow_query(query) is None
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        r"SELECT E'it\'s;ok'; SELECT 2",
+        "SELECT 1;;",
+        ";SELECT 1",
+        "/* comment only */",
+        ";",
+        "SELECT 1\x00; SELECT 2",
+        "SELECT 'before\x00after'",
+        "SELECT 1 -- comment\x00; SELECT 2",
+    ],
+)
+def test_postgresql_lexer_does_not_accept_extra_statement_boundaries(query):
+    with pytest.raises(ReadOnlyQueryError):
+        sanitize_postgresql_read_only_sql(query)
+
+
 @pytest.mark.security
 def test_allowed_functions_extend_the_policy_per_connection():
     with pytest.raises(ReadOnlyQueryError):
@@ -187,6 +221,60 @@ def test_allowed_functions_extend_the_policy_per_connection():
     with pytest.raises(ReadOnlyQueryError):
         sanitize_postgresql_read_only_sql(
             "SELECT other.my_helper(1)", ["public.my_helper"]
+        )
+
+
+@pytest.mark.security
+@pytest.mark.parametrize(
+    "query",
+    [
+        'SELECT "public.helper"()',
+        'SELECT public."other.helper"()',
+        'SELECT "public.helper".other()',
+    ],
+)
+def test_qualified_allowance_does_not_flatten_quoted_function_names(query):
+    with pytest.raises(ReadOnlyQueryError):
+        sanitize_postgresql_read_only_sql(query, ["public.helper"])
+
+
+@pytest.mark.security
+def test_qualified_allowances_preserve_catalog_spelling_and_schema_dots():
+    query = 'SELECT "SafeSchema"."MixedCase"()'
+    assert sanitize_postgresql_read_only_sql(query, ["SafeSchema.MixedCase"]) == query
+    assert postgresql_shadow_query(query, ["SafeSchema.MixedCase"]) is None
+    with pytest.raises(ReadOnlyQueryError):
+        sanitize_postgresql_read_only_sql('SELECT "SafeSchema.MixedCase"()', ["SafeSchema.MixedCase"])
+
+    # Entries have always split at the last dot, so a dotted schema remains
+    # supported without authorizing a differently partitioned function name.
+    query = 'SELECT "schema.with.dot".helper()'
+    assert sanitize_postgresql_read_only_sql(query, ["schema.with.dot.helper"]) == query
+    with pytest.raises(ReadOnlyQueryError):
+        sanitize_postgresql_read_only_sql(
+            'SELECT schema."with.dot.helper"()', ["schema.with.dot.helper"]
+        )
+
+
+@pytest.mark.security
+@pytest.mark.parametrize("name", ["nextval", "txid_current"])
+def test_qualified_allowance_does_not_authorize_catalog_function(name):
+    query = f"SELECT public.{name}('value')"
+    assert sanitize_postgresql_read_only_sql(query, [f"public.{name}"]) == query
+    with pytest.raises(ReadOnlyQueryError):
+        sanitize_postgresql_read_only_sql(
+            f"SELECT pg_catalog.{name}('value')", [f"public.{name}"]
+        )
+
+
+@pytest.mark.security
+@pytest.mark.parametrize("name", ["txid_current", "pg_current_xact_id", "ts_rewrite"])
+@pytest.mark.parametrize("call_schema", ["", "pg_catalog."])
+@pytest.mark.parametrize("allowed_schema", ["", "pg_catalog.", "public."])
+def test_excluded_catalog_functions_cannot_be_reenabled(name, call_schema, allowed_schema):
+    with pytest.raises(ReadOnlyQueryError):
+        sanitize_postgresql_read_only_sql(
+            f"SELECT {call_schema}{name}()", [f"{allowed_schema}{name}"]
         )
 
 
@@ -243,7 +331,40 @@ def test_shadow_query_is_skipped_when_nothing_resolves_through_search_path():
     assert postgresql_shadow_query("SELECT 1") is None
     assert postgresql_shadow_query("SELECT pg_catalog.length('x')") is None
     assert postgresql_shadow_query("SELECT 1 OPERATOR(pg_catalog.+) 2") is None
-    assert postgresql_shadow_query("SELECT * FROM t WHERE a BETWEEN 1 AND 2") is None
+    assert postgresql_shadow_query("SELECT CASE WHEN true THEN 1 ELSE 2 END") is None
+
+
+@pytest.mark.security
+@pytest.mark.parametrize(
+    ("query", "operators"),
+    [
+        ("SELECT 5 BETWEEN 1 AND 10", "ARRAY['<=', '>=']"),
+        ("SELECT 5 BETWEEN SYMMETRIC 1 AND 10", "ARRAY['<=', '>=']"),
+        ("SELECT 5 NOT BETWEEN 1 AND 10", "ARRAY['<', '>']"),
+        ("SELECT 5 NOT BETWEEN SYMMETRIC 1 AND 10", "ARRAY['<', '>']"),
+        ("SELECT 1 FROM a JOIN b USING (id)", "ARRAY['=']"),
+        ("SELECT 1 FROM a JOIN b USING (id) AS joined", "ARRAY['=']"),
+        ("SELECT 1 FROM a NATURAL LEFT JOIN b", "ARRAY['=']"),
+        ("SELECT CASE 1 WHEN 2 THEN true ELSE false END", "ARRAY['=']"),
+        ("SELECT 1 IN (SELECT 2)", "ARRAY['=']"),
+        ("SELECT 1 NOT IN (SELECT 2)", "ARRAY['=']"),
+        ("SELECT 1 <= ALL (SELECT 2)", "ARRAY['<=']"),
+        ("SELECT 1 >= ANY (SELECT 2)", "ARRAY['>=']"),
+    ],
+)
+def test_shadow_query_covers_synthesized_and_sublink_operators(query, operators):
+    shadow = postgresql_shadow_query(query)
+    assert shadow is not None
+    assert operators + "::pg_catalog.name[]" in shadow
+
+
+@pytest.mark.security
+def test_sublink_operator_qualification_is_checked():
+    query = "SELECT 1 OPERATOR(pg_catalog.<=) ALL (SELECT 2)"
+    assert sanitize_postgresql_read_only_sql(query) == query
+    assert postgresql_shadow_query(query) is None
+    with pytest.raises(ReadOnlyQueryError, match="Operator public.<="):
+        sanitize_postgresql_read_only_sql("SELECT 1 OPERATOR(public.<=) ALL (SELECT 2)")
 
 
 @pytest.mark.security

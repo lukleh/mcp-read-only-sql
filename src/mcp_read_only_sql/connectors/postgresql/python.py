@@ -8,6 +8,7 @@ from threading import Event
 
 import psycopg2
 from psycopg2 import errors as psycopg_errors
+from psycopg2 import extensions as psycopg_extensions
 
 from ...errors import ConnectorError
 from ...utils.sql_guard import (
@@ -290,6 +291,18 @@ class PostgreSQLPythonConnector(BaseConnector):
         """
         cursor = conn.cursor(name=_CURSOR_NAME) if streams else conn.cursor()
         try:
+            # Preserve PostgreSQL's text before psycopg2 converts values into
+            # Python objects (which loses BYTEA, JSON spelling and infinity).
+            # Install this before the first FETCH: named cursors do not expose
+            # their column types until then. Unknown types already return text.
+            psycopg_extensions.register_type(
+                psycopg_extensions.new_type(
+                    tuple(psycopg_extensions.string_types),
+                    "MCP_SQL_TEXT",
+                    lambda value, _cursor: value,
+                ),
+                cursor,
+            )
             if streams:
                 cursor.itersize = _FETCH_SIZE
             if cancellation is not None:

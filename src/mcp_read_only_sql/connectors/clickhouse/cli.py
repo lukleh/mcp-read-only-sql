@@ -8,10 +8,11 @@ from pathlib import Path
 from ...config import Connection
 from ...errors import ConnectorError
 from ...utils.cli_process import stream_cli_process
-from ...utils.sql_guard import ReadOnlyQueryError, sanitize_read_only_sql
+from ...utils.sql_guard import ReadOnlyQueryError
 from ...utils.ssh_tunnel_cli import CLISSHTunnel
 from ..base_cli import BaseCLIConnector
 from .settings import PROBE_QUERY, decide_client_settings, refuses_sent_setting
+from .sql import sanitize_clickhouse_read_only_sql
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +116,7 @@ class ClickHouseCLIConnector(BaseCLIConnector):
         output_path: Path | None = None,
     ) -> str | None:
         """Run clickhouse-client and optionally stream output to a managed file."""
-        sanitized_query = sanitize_read_only_sql(query)
+        sanitized_query = sanitize_clickhouse_read_only_sql(query)
         selected_server = self._select_server(server)
 
         async with self._get_ssh_tunnel(server) as local_port:
@@ -154,9 +155,13 @@ class ClickHouseCLIConnector(BaseCLIConnector):
                 fmt: str = "TabSeparatedWithNames",
             ) -> list[str]:
                 cmd = [binary]
-                if port == 9440:
+                if selected_server.port in (8443, 9440):
                     cmd.append("--secure")  # TLS native port
-                    logger.debug("Adding --secure flag for TLS port 9440")
+                    logger.debug("Adding --secure flag for the configured TLS endpoint")
+                    if local_port:
+                        # Preserve the remote certificate identity while the
+                        # TCP connection goes through the local SSH listener.
+                        cmd += ["--tls-sni-override", selected_server.host]
                 cmd += [
                     "--host",
                     host,
@@ -195,6 +200,15 @@ class ClickHouseCLIConnector(BaseCLIConnector):
                         _PASSWORD_PROMPT.sub("", result.stderr.decode()).strip()
                         if result.stderr else "Unknown error"
                     )
+                    if (
+                        "tls-sni-override" in error_msg
+                        and "unrecognized option" in error_msg.lower()
+                    ):
+                        raise ConnectorError(
+                            "clickhouse-client: TLS over SSH requires a client with "
+                            "--tls-sni-override (26.1 or newer); upgrade the client "
+                            "or use implementation: python"
+                        )
                     raise ConnectorError(f"clickhouse-client: {error_msg}")
 
             async def read_probe() -> list[list[str]]:
