@@ -153,6 +153,13 @@ uvx --from . mcp-read-only-sql import-dbeaver \
 
 That writes `connections.yaml` with any decrypted passwords stored directly in the file. The importer writes user-only permissions and keeps timestamped backups when it overwrites an existing file.
 
+Connections that normalize to the same name are accepted only when cluster
+merging combines them into one output connection with matching shared settings.
+With `--only`, both colliding records must be selected for that exemption.
+Distinct output connections must have unique names. With `--no-merge`, duplicate
+names are refused even for otherwise matching cluster members. Collision errors
+include both DBeaver display names and internal IDs so the entries can be renamed.
+
 The importer refuses symlinked output and backup paths, including unchanged
 imports. For a dotfiles-managed configuration, pass its real target explicitly
 with `--output`. Writes flush a private sibling temporary file before atomic
