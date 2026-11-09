@@ -262,14 +262,14 @@ class DBeaverImporter:
             auth_type = ssh_props.get("authType", "")
 
             if ssh_creds and "password" in ssh_creds:
-                if key_path or auth_type == "PUBLIC_KEY":
-                    if ssh_creds["password"]:
+                if auth_type != "PASSWORD" and (key_path or auth_type == "PUBLIC_KEY"):
+                    if key_path and ssh_creds["password"]:
                         print("    Warning: SSH key passphrase was not imported; unlock the key with ssh-agent")
                 else:
                     connection["ssh_tunnel"]["password"] = ssh_creds["password"]
                     print("    SSH Password: ******** (stored in connections.yaml)")
 
-            if key_path:
+            if key_path and auth_type != "PASSWORD":
                 connection["ssh_tunnel"]["private_key"] = key_path
                 print(f"    SSH: Key authentication with {key_path}")
             elif auth_type == "PASSWORD":
