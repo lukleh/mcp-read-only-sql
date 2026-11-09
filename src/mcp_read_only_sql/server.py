@@ -43,6 +43,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 RESULT_FILE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
 RESULT_DIR_HASH_BYTES = 6
+RESULT_DIR_PREFIX_MAX_LENGTH = 100
 ConfigMarker: TypeAlias = tuple[int, int] | None
 SAMPLE_CONNECTIONS_YAML = (
     files("mcp_read_only_sql")
@@ -125,7 +126,9 @@ class ReadOnlySQLServer:
     def _build_result_path(self, connection_name: str) -> Path:
         """Create a collision-safe result path under the managed state directory."""
         safe_name = (
-            RESULT_FILE_NAME_RE.sub("-", connection_name).strip("._-") or "query"
+            RESULT_FILE_NAME_RE.sub("-", connection_name)
+            .strip("._-")[:RESULT_DIR_PREFIX_MAX_LENGTH].rstrip("._-")
+            or "query"
         )
         digest = blake2b(
             connection_name.encode("utf-8"), digest_size=RESULT_DIR_HASH_BYTES
