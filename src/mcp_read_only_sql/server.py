@@ -8,7 +8,7 @@ import logging
 import os
 import re
 import sys
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager, suppress
 from datetime import UTC, datetime
 from hashlib import blake2b
@@ -37,11 +37,13 @@ from .runtime_paths import (
 )
 from .tools import test_connection, test_ssh_tunnel, validate_config
 from .utils.timeout_wrapper import HardTimeoutError
+from .utils.tsv_formatter import format_tsv_line
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 RESULT_FILE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
 RESULT_DIR_HASH_BYTES = 6
+RESULT_DIR_PREFIX_MAX_LENGTH = 100
 ConfigMarker: TypeAlias = tuple[int, int] | None
 SAMPLE_CONNECTIONS_YAML = (
     files("mcp_read_only_sql")
@@ -89,7 +91,7 @@ def _display_hosts_for_connector(connector: BaseConnector) -> list[str]:
 
 
 @contextmanager
-def _surface_tool_errors() -> Iterator[None]:
+def _surface_tool_errors() -> Generator[None, None, None]:
     """Report an anticipated tool failure to the caller with its message.
 
     Since mcp 2.x the SDK treats any exception other than ``ToolError`` (or a
@@ -124,7 +126,9 @@ class ReadOnlySQLServer:
     def _build_result_path(self, connection_name: str) -> Path:
         """Create a collision-safe result path under the managed state directory."""
         safe_name = (
-            RESULT_FILE_NAME_RE.sub("-", connection_name).strip("._-") or "query"
+            RESULT_FILE_NAME_RE.sub("-", connection_name)
+            .strip("._-")[:RESULT_DIR_PREFIX_MAX_LENGTH].rstrip("._-")
+            or "query"
         )
         digest = blake2b(
             connection_name.encode("utf-8"), digest_size=RESULT_DIR_HASH_BYTES
@@ -308,6 +312,8 @@ class ReadOnlySQLServer:
                 ``user``. The ``servers`` column contains the resolved display
                 hosts for each connection, while ``database`` and ``databases``
                 describe the default database and allowed database list.
+                Fields containing tabs, quotes, or line breaks use CSV quoting
+                with a tab delimiter; parse with a TSV-aware CSV reader.
             """
             with _surface_tool_errors():
                 self._reload_connections_if_needed()
@@ -353,7 +359,7 @@ class ReadOnlySQLServer:
                     ",".join(conn.get("databases", [])),
                     conn.get("user", ""),
                 ]
-                rows.append("\t".join(row))
+                rows.append(format_tsv_line(row))
 
             return "\n".join(rows)
 

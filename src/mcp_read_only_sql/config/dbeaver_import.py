@@ -4,22 +4,58 @@ import logging
 import os
 import re
 import subprocess
+import tempfile
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
 from .. import __version__
 from ..runtime_paths import resolve_runtime_paths
 from ..utils.connection_utils import get_connection_target
+from .connection import Server
 
 logger = logging.getLogger(__name__)
 
 
+def _refuse_symlink(path: Path) -> None:
+    """Keep imports from following or replacing a user-managed symlink."""
+    if path.is_symlink():
+        raise ValueError(f"Refusing symlinked output '{path}'; use its explicit target path")
+
+
 def _write_text_file_secure(path: Path, content: str) -> None:
-    """Write a text file and restrict it to user-only permissions."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as handle:
-        handle.write(content)
-    os.chmod(path, 0o600)
+    """Replace a file atomically with content private from its first byte."""
+    _refuse_symlink(path)
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        with suppress(FileNotFoundError):
+            os.unlink(temporary)
+
+
+def _extract_credentials(
+    data: Any,
+) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+    """Read the same database and SSH sections from either credential format."""
+    credentials: dict[str, dict[str, Any]] = {}
+    ssh_credentials: dict[str, dict[str, Any]] = {}
+    if isinstance(data, dict):
+        for conn_id, conn_data in data.items():
+            if not isinstance(conn_data, dict):
+                continue
+            database = conn_data.get("#connection")
+            ssh = conn_data.get("network/ssh_tunnel")
+            if isinstance(database, dict):
+                credentials[conn_id] = database
+            if isinstance(ssh, dict):
+                ssh_credentials[conn_id] = ssh
+    return credentials, ssh_credentials
 
 
 class DBeaverImporter:
@@ -28,6 +64,8 @@ class DBeaverImporter:
         self.data_sources_path = self.dbeaver_path / "data-sources.json"
         self.credentials_path = self.dbeaver_path / "credentials-config.json"
         self.last_seen_names: list[str] = []
+        self.last_merge_report: list[dict[str, Any]] = []
+        self._credentials_decrypted = False
 
     def _decrypt_credentials(
         self,
@@ -65,25 +103,16 @@ class DBeaverImporter:
             # Skip the first 16 bytes (padding) and parse JSON
             decrypted = result.stdout[16:]
             credentials_data = json.loads(decrypted)
+            self._credentials_decrypted = True
 
-            # Extract both connection and SSH credentials
-            credentials: dict[str, dict[str, Any]] = {}
-            ssh_credentials: dict[str, dict[str, Any]] = {}
-            for conn_id, conn_data in credentials_data.items():
-                if isinstance(conn_data, dict):
-                    db_connection = conn_data.get("#connection")
-                    if isinstance(db_connection, dict):
-                        credentials[conn_id] = db_connection
-                    ssh_connection = conn_data.get("network/ssh_tunnel")
-                    if isinstance(ssh_connection, dict):
-                        ssh_credentials[conn_id] = ssh_connection
+            credentials, ssh_credentials = _extract_credentials(credentials_data)
 
             logger.info(
                 f"Successfully decrypted credentials for {len(credentials)} connections"
             )
             return credentials, ssh_credentials
 
-        except (subprocess.SubprocessError, json.JSONDecodeError) as e:
+        except (OSError, subprocess.SubprocessError, json.JSONDecodeError) as e:
             logger.warning(f"Could not decrypt credentials file: {e}")
             return {}, {}
 
@@ -100,20 +129,17 @@ class DBeaverImporter:
             data_sources = json.load(handle)
 
         # Try to decrypt credentials
+        self._credentials_decrypted = False
         credentials, ssh_credentials = self._decrypt_credentials()
 
-        if not credentials and self.credentials_path.exists():
+        if not (self._credentials_decrypted or credentials or ssh_credentials) and self.credentials_path.exists():
             # Fallback: try to read as plaintext JSON (some DBeaver versions don't encrypt)
             try:
                 with self.credentials_path.open("r", encoding="utf-8") as handle:
                     cred_data = json.load(handle)
-                    if isinstance(cred_data, dict):
-                        for conn_id, conn_creds in cred_data.items():
-                            if not isinstance(conn_creds, dict):
-                                continue
-                            db_connection = conn_creds.get("#connection")
-                            if isinstance(db_connection, dict):
-                                credentials[conn_id] = db_connection
+                    database, ssh = _extract_credentials(cred_data)
+                    credentials.update(database)
+                    ssh_credentials.update(ssh)
                     logger.info("Credentials file was not encrypted")
             except (json.JSONDecodeError, UnicodeDecodeError):
                 logger.warning(
@@ -128,28 +154,50 @@ class DBeaverImporter:
         connections: list[dict[str, Any]] = []
         imported_names: list[str] = []
         seen_names: list[str] = []
+        source_names: dict[str, tuple[str, str, tuple, bool]] = {}
         connections_data = data_sources.get("connections", {})
         if not isinstance(connections_data, dict):
             connections_data = {}
+        selected_names = {
+            self._sanitize_name(data.get("name", conn_id))
+            for conn_id, data in connections_data.items()
+            if isinstance(data, dict)
+            and data.get("provider") in {"postgresql", "clickhouse"}
+            and (only_set is None or data.get("name", conn_id) in only_set)
+        }
 
         for conn_id, conn_data in connections_data.items():
             if not isinstance(conn_data, dict):
                 continue
             original_name = conn_data.get("name", conn_id)
-            if only_set and original_name not in only_set:
+            selected = only_set is None or original_name in only_set
+            name = self._sanitize_name(original_name)
+            if not selected and name not in selected_names:
                 continue
-            if only_set:
-                seen_names.append(original_name)
-            # Pass both DB and SSH credentials
-            db_creds = credentials.get(conn_id)
-            ssh_creds = ssh_credentials.get(conn_id)
             converted = self._convert_connection(
-                conn_id, conn_data, db_creds, ssh_creds
+                conn_id, conn_data, credentials.get(conn_id), ssh_credentials.get(conn_id)
             )
-            if converted:
+            if converted is None:
+                continue
+            key = self._group_key(converted)
+            previous = source_names.get(name)
+            if previous is not None and (
+                not merge_clusters or previous[2] != key or not (selected and previous[3])
+            ):
+                previous_name, previous_id, _, _ = previous
+                raise ValueError(
+                    f"DBeaver connections '{previous_name}' ({previous_id}) and "
+                    f"'{original_name}' ({conn_id}) both map to connection_name '{name}'; "
+                    "rename one before importing"
+                )
+            source_names[name] = (original_name, conn_id, key, selected)
+            if selected:
+                if only_set:
+                    seen_names.append(original_name)
                 connections.append(converted)
                 imported_names.append(original_name)
 
+        self.last_merge_report = self._build_merge_report(connections) if merge_clusters else []
         if merge_clusters:
             connections = self._merge_cluster_connections(connections)
 
@@ -244,11 +292,6 @@ class DBeaverImporter:
                 "user": ssh_user,
             }
 
-            # Store SSH password if available
-            if ssh_creds and "password" in ssh_creds:
-                connection["ssh_tunnel"]["password"] = ssh_creds["password"]
-                print("    SSH Password: ******** (stored in connections.yaml)")
-
             # Add SSH port if non-standard
             ssh_port = ssh_props.get("port", 22)
             if ssh_port and str(ssh_port) != "22":
@@ -258,7 +301,15 @@ class DBeaverImporter:
             key_path = ssh_props.get("keyPath", "")  # DBeaver uses 'keyPath'
             auth_type = ssh_props.get("authType", "")
 
-            if key_path:
+            if ssh_creds and ssh_creds.get("password"):
+                if auth_type != "PASSWORD" and (key_path or auth_type == "PUBLIC_KEY"):
+                    if key_path:
+                        print("    Warning: SSH key passphrase was not imported; unlock the key with ssh-agent")
+                else:
+                    connection["ssh_tunnel"]["password"] = ssh_creds["password"]
+                    print("    SSH Password: ******** (stored in connections.yaml)")
+
+            if key_path and auth_type != "PASSWORD":
                 connection["ssh_tunnel"]["private_key"] = key_path
                 print(f"    SSH: Key authentication with {key_path}")
             elif auth_type == "PASSWORD":
@@ -311,23 +362,193 @@ class DBeaverImporter:
         digit_re = re.compile(r"\d+")
         return digit_re.sub("#", host), port
 
-    def _group_key(self, conn: dict[str, Any]) -> tuple:
-        """Generate a grouping key for connection merging"""
-        ssh_tunnel = conn.get("ssh_tunnel") or {}
+    @staticmethod
+    def _shared_settings(conn: dict[str, Any]) -> tuple:
+        """Connection-wide settings that must stay separate across servers."""
+        ssh_tunnel = dict(conn.get("ssh_tunnel") or {})
+        if ssh_tunnel:
+            ssh_tunnel.setdefault("port", 22)
+            if not ssh_tunnel.get("password"):
+                ssh_tunnel.pop("password", None)
         ssh_serialized = json.dumps(ssh_tunnel, sort_keys=True)
 
-        fields_part = (
+        return (
             conn.get("type"),
             conn.get("db", ""),  # Single database, not list
             conn.get("username"),
-            conn.get("password"),
+            conn.get("password") or None,
             ssh_serialized,
         )
 
+    @staticmethod
+    def _endpoint_keys(conn: dict[str, Any]) -> set[tuple[str, int]]:
+        """Compare stored string/mapping endpoints without changing their spelling."""
+        try:
+            return {
+                (endpoint.host, endpoint.port)
+                for server in conn.get("servers", [])
+                for endpoint in [Server.from_dict(server, conn["type"], conn.get("implementation", "cli"))]
+            }
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(f"Invalid servers for connection '{conn.get('connection_name', '')}': {exc}") from exc
+
+    @staticmethod
+    def _preserve_partial_settings(previous: dict[str, Any], imported: dict[str, Any]) -> dict[str, Any]:
+        """Retain unavailable secrets and SSH options DBeaver does not manage."""
+        imported = dict(imported)
+        if imported.get("password") in (None, ""):
+            imported.pop("password", None)
+        if isinstance(imported.get("ssh_tunnel"), dict):
+            imported["ssh_tunnel"] = dict(imported["ssh_tunnel"])
+            if imported["ssh_tunnel"].get("password") in (None, ""):
+                imported["ssh_tunnel"].pop("password", None)
+        old_ssh = previous.get("ssh_tunnel")
+        new_ssh = imported.get("ssh_tunnel")
+        same_route = not old_ssh and not new_ssh
+        if isinstance(old_ssh, dict) and isinstance(new_ssh, dict):
+            same_route = all(old_ssh.get(key, default) == new_ssh.get(key, default) for key, default in (
+                ("host", None), ("port", 22), ("user", None), ("private_key", None),
+            ))
+        needs_database_credentials = any(field not in imported and previous.get(field) for field in ("username", "password"))
+        if needs_database_credentials:
+            endpoints = DBeaverImporter._endpoint_keys(imported)
+            same_database_identity = (
+                previous.get("type") == imported.get("type")
+                and previous.get("db", previous.get("default_database")) == imported.get("db")
+                and ("username" not in imported or previous.get("username") == imported["username"])
+                and bool(endpoints) and endpoints <= DBeaverImporter._endpoint_keys(previous)
+                and same_route
+            )
+            if not same_database_identity:
+                raise ValueError(
+                    f"Cannot preserve unavailable credentials for '{previous.get('connection_name', '')}' "
+                    "after its database or SSH identity changed; supply credentials or run a full import"
+                )
+        if (
+            isinstance(old_ssh, dict) and isinstance(new_ssh, dict)
+            and old_ssh.get("password") and "password" not in new_ssh
+            and not new_ssh.get("private_key") and not same_route
+        ):
+            raise ValueError(
+                f"Cannot preserve unavailable SSH password for '{previous.get('connection_name', '')}' "
+                "after its SSH identity changed; supply credentials or run a full import"
+            )
+        managed = {"connection_name", "type", "servers", "db", "username", "password",
+                   "ssh_tunnel", "implementation", "description"}
+        replacement = {key: value for key, value in previous.items() if key not in managed}
+        replacement.update(imported)
+        replacement["implementation"] = previous.get("implementation", "cli")
+        for field in ("username", "password"):
+            if field not in replacement and previous.get(field):
+                replacement[field] = previous[field]
+        if isinstance(old_ssh, dict) and isinstance(new_ssh, dict):
+            ssh = dict(old_ssh)
+            for field in ("host", "port", "private_key"):
+                if field not in new_ssh and not (field == "port" and old_ssh.get("port") == 22):
+                    ssh.pop(field, None)
+            if new_ssh.get("private_key") and "password" not in new_ssh:
+                ssh.pop("password", None)
+            ssh.update(new_ssh)
+            if not ssh.get("password"):
+                ssh.pop("password", None)
+            replacement["ssh_tunnel"] = ssh
+        return replacement
+
+    @staticmethod
+    def _same_partial_identity(previous: dict[str, Any], imported: dict[str, Any]) -> bool:
+        """An endpoint alone cannot identify a database login or SSH route."""
+        username = imported.get("username")
+        if not isinstance(username, str) or not username:
+            return False
+        if (
+            previous.get("type") != imported.get("type")
+            or previous.get("db", previous.get("default_database")) != imported.get("db")
+            or previous.get("username") != username
+        ):
+            return False
+        old_ssh = previous.get("ssh_tunnel")
+        new_ssh = imported.get("ssh_tunnel")
+        if not old_ssh or not new_ssh:
+            return not old_ssh and not new_ssh
+        if not isinstance(old_ssh, dict) or not isinstance(new_ssh, dict):
+            return False
+        return all(old_ssh.get(key, default) == new_ssh.get(key, default) for key, default in (
+            ("host", None), ("port", 22), ("user", None), ("private_key", None),
+        ))
+
+    def _merge_partial_connections(
+        self, existing: Any, imported: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Match partial updates by name or one unique existing endpoint owner."""
+        if not isinstance(existing, list) or any(not isinstance(conn, dict) for conn in existing):
+            raise ValueError("Existing configuration must be a list of connection mappings")
+        by_name = {conn.get("connection_name"): conn for conn in existing}
+        if any(not isinstance(name, str) or not name for name in by_name) or len(by_name) != len(existing):
+            raise ValueError("Existing configuration must have unique connection names")
+        replacements: dict[str, dict[str, Any]] = {}
+        additions = []
+        for incoming in imported:
+            name = incoming["connection_name"]
+            previous = by_name.get(name)
+            if previous is None:
+                endpoints = self._endpoint_keys(incoming)
+                owners = [
+                    conn for conn in existing
+                    if conn.get("type") == incoming.get("type") and endpoints & self._endpoint_keys(conn)
+                ]
+                matches = [
+                    conn for conn in owners
+                    if isinstance(conn.get("servers"), list) and len(conn["servers"]) > 1
+                    and self._same_partial_identity(conn, incoming)
+                ]
+                if len(matches) > 1:
+                    raise ValueError(f"Ambiguous partial import '{name}': its endpoint belongs to multiple existing connections; resolve names or run a full import")
+                if matches:
+                    previous = matches[0]
+                    name = previous["connection_name"]
+                elif owners and (not isinstance(incoming.get("username"), str) or not incoming.get("username")):
+                    raise ValueError(
+                        f"Cannot identify existing endpoint owner for partial import '{name}' "
+                        "without its login; use an explicit matching name or run a full import"
+                    )
+            if previous is None:
+                additions.append(incoming)
+                continue
+            if name in replacements:
+                raise ValueError(f"Multiple partial updates match '{name}'; run a full import to regroup its servers")
+            replacement = self._preserve_partial_settings(previous, incoming)
+            replacement["connection_name"] = name
+            previous_servers = previous.get("servers", [])
+            if not isinstance(previous_servers, list):
+                raise ValueError(f"Invalid servers for connection '{name}': expected a list")
+            if len(previous_servers) > 1:
+                if (
+                    self._shared_settings(previous) != self._shared_settings(replacement)
+                    or previous.get("implementation", "cli") != replacement.get("implementation", "cli")
+                ):
+                    raise ValueError(
+                        f"Cannot partially change shared settings for cluster '{name}'; "
+                        "run a full import to keep each server's settings separate"
+                    )
+                servers = list(previous_servers)
+                endpoints = self._endpoint_keys(previous)
+                for server in replacement.get("servers", []):
+                    endpoint = Server.from_dict(server, previous["type"], previous.get("implementation", "cli"))
+                    if (endpoint.host, endpoint.port) not in endpoints:
+                        servers.append(server)
+                        endpoints.add((endpoint.host, endpoint.port))
+                replacement["servers"] = servers
+                if "description" in previous:
+                    replacement["description"] = previous["description"]
+            replacements[name] = replacement
+        return [replacements.get(conn["connection_name"], conn) for conn in existing] + additions
+
+    def _group_key(self, conn: dict[str, Any]) -> tuple:
+        """Generate a grouping key for connection merging"""
         servers = conn.get("servers", []) or []
         patterns = tuple(sorted(self._host_pattern(server) for server in servers))
 
-        return fields_part, patterns
+        return self._shared_settings(conn), patterns
 
     def _merge_cluster_connections(
         self, connections: list[dict[str, Any]]
@@ -559,17 +780,12 @@ def main() -> None:
         print("Dry run: no files will be written\n")
 
     try:
+        _refuse_symlink(output_path)
         importer = DBeaverImporter(dbeaver_path)
-        # Always import raw connections first so we can report on merges clearly.
-        raw_connections = importer.import_connections(
-            merge_clusters=False, only_names=only_names
+        connections = importer.import_connections(
+            merge_clusters=merge_clusters, only_names=only_names
         )
-        merge_report = []
-        if merge_clusters:
-            merge_report = importer._build_merge_report(raw_connections)
-            connections = importer._merge_cluster_connections(raw_connections)
-        else:
-            connections = raw_connections
+        merge_report = importer.last_merge_report
 
         if only_names:
             missing = sorted(set(only_names) - set(importer.last_seen_names))
@@ -625,32 +841,9 @@ def main() -> None:
             try:
                 with open(output_path, "r", encoding="utf-8") as f:
                     existing_connections = yaml.safe_load(f) or []
-            except Exception as e:
-                existing_connections = []
-                print(f"\n⚠ Could not read existing {output_path} for merge: {e}")
-
-            new_by_name = {
-                c.get("connection_name"): c
-                for c in clean_connections
-                if isinstance(c, dict)
-            }
-            used = set()
-            merged_connections = []
-            for conn in existing_connections:
-                name = conn.get("connection_name") if isinstance(conn, dict) else None
-                if name in new_by_name:
-                    merged_connections.append(new_by_name[name])
-                    used.add(name)
-                else:
-                    merged_connections.append(conn)
-
-            for conn in clean_connections:
-                name = conn.get("connection_name") if isinstance(conn, dict) else None
-                if name and name not in used:
-                    merged_connections.append(conn)
-                    used.add(name)
-
-            output_connections = merged_connections
+            except (OSError, yaml.YAMLError) as exc:
+                raise ValueError(f"Cannot read existing {output_path} for partial import: {exc}") from exc
+            output_connections = importer._merge_partial_connections(existing_connections, clean_connections)
 
         if dry_run:
             print(f"\nDry run: skipping write to {output_path}")
@@ -670,8 +863,8 @@ def main() -> None:
                 if existing_yaml is not None:
                     # Local wall-clock is intentional: the backup filename should
                     # match the user's clock, not UTC.
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")  # noqa: DTZ005
-                    # Create backup filename: connections.yaml.bak.20241230_143022
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")  # noqa: DTZ005
+                    # Include microseconds so rapid repeated imports retain both backups.
                     backup_name = f"{output_path.stem}.yaml.bak.{timestamp}"
                     backup_path = output_path.parent / backup_name
                     _write_text_file_secure(backup_path, existing_yaml)
@@ -779,6 +972,9 @@ def main() -> None:
                 "\n⚠ Some passwords were not available from DBeaver. Fill them in manually in connections.yaml before validating or connecting."
             )
 
+    except ValueError as e:
+        print(f"\n✗ Error: {e}")
+        sys.exit(1)
     except Exception as e:
         print(f"\n✗ Error: {e}")
         import traceback
