@@ -245,3 +245,42 @@ def test_subset_import_ignores_unselected_name_collisions(tmp_path, monkeypatch,
     _run_import(monkeypatch, [str(workspace), "--only", "wanted", "--output", str(output)])
     result = yaml.safe_load(output.read_text())
     assert [conn["connection_name"] for conn in result] == ["wanted"]
+
+
+@pytest.mark.parametrize("only", [[], ["--only", "Analytics"]])
+def test_identically_named_cluster_members_merge_in_cli(tmp_path, monkeypatch, only):
+    workspace = _write_dbeaver_workspace(tmp_path, [
+        {"id": "c1", "name": "Analytics", "configuration": {"host": "ch-1.example", "port": "8123"}},
+        {"id": "c2", "name": "Analytics", "configuration": {"host": "ch-2.example", "port": "8123"}},
+    ])
+    output = tmp_path / "connections.yaml"
+    _run_import(monkeypatch, [str(workspace), "--output", str(output), *only])
+    result = yaml.safe_load(output.read_text())
+    assert len(result) == 1
+    assert result[0]["connection_name"] == "analytics"
+    assert result[0]["servers"] == ["ch-1.example:8123", "ch-2.example:8123"]
+
+
+def test_no_merge_refuses_identical_names_and_reports_display_names(tmp_path, monkeypatch, capsys):
+    workspace = _write_dbeaver_workspace(tmp_path, [
+        {"id": "c1", "name": "Analytics", "configuration": {"host": "ch-1.example", "port": "8123"}},
+        {"id": "c2", "name": "Analytics", "configuration": {"host": "ch-2.example", "port": "8123"}},
+    ])
+    output = tmp_path / "connections.yaml"
+    with pytest.raises(SystemExit) as error:
+        _run_import(monkeypatch, [str(workspace), "--no-merge", "--output", str(output)])
+    assert error.value.code == 1
+    assert "'Analytics' (c1)" in capsys.readouterr().out
+    assert not output.exists()
+
+
+def test_same_name_distinct_credentials_do_not_merge(tmp_path, monkeypatch):
+    workspace = _write_dbeaver_workspace(tmp_path, [
+        {"id": "c1", "name": "Analytics", "configuration": {"host": "ch-1.example", "port": "8123"}},
+        {"id": "c2", "name": "Analytics", "configuration": {"host": "ch-2.example", "port": "8123"}},
+    ])
+    monkeypatch.setattr(DBeaverImporter, "_decrypt_credentials", lambda self: (
+        {"c1": {"user": "reader", "password": "first"}, "c2": {"user": "reader", "password": "second"}}, {},
+    ))
+    with pytest.raises(ValueError, match="both map to connection_name"):
+        DBeaverImporter(str(workspace)).import_connections()

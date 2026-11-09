@@ -28,6 +28,7 @@ class DBeaverImporter:
         self.data_sources_path = self.dbeaver_path / "data-sources.json"
         self.credentials_path = self.dbeaver_path / "credentials-config.json"
         self.last_seen_names: list[str] = []
+        self.last_merge_report: list[dict[str, Any]] = []
 
     def _decrypt_credentials(
         self,
@@ -128,7 +129,7 @@ class DBeaverImporter:
         connections: list[dict[str, Any]] = []
         imported_names: list[str] = []
         seen_names: list[str] = []
-        source_names: dict[str, str] = {}
+        source_names: dict[str, tuple[str, str, tuple]] = {}
         connections_data = data_sources.get("connections", {})
         if not isinstance(connections_data, dict):
             connections_data = {}
@@ -144,28 +145,32 @@ class DBeaverImporter:
             if not isinstance(conn_data, dict):
                 continue
             original_name = conn_data.get("name", conn_id)
-            if conn_data.get("provider") in {"postgresql", "clickhouse"}:
-                name = self._sanitize_name(original_name)
-                if name in source_names and name in selected_names:
-                    raise ValueError(
-                        f"DBeaver connections '{source_names[name]}' and '{conn_id}' "
-                        f"both map to connection_name '{name}'; rename one before importing"
-                    )
-                source_names[name] = conn_id
-            if only_set and original_name not in only_set:
+            selected = only_set is None or original_name in only_set
+            name = self._sanitize_name(original_name)
+            if not selected and name not in selected_names:
                 continue
-            if only_set:
-                seen_names.append(original_name)
-            # Pass both DB and SSH credentials
-            db_creds = credentials.get(conn_id)
-            ssh_creds = ssh_credentials.get(conn_id)
             converted = self._convert_connection(
-                conn_id, conn_data, db_creds, ssh_creds
+                conn_id, conn_data, credentials.get(conn_id), ssh_credentials.get(conn_id)
             )
-            if converted:
+            if converted is None:
+                continue
+            key = self._group_key(converted)
+            previous = source_names.get(name)
+            if previous is not None and (not merge_clusters or previous[2] != key):
+                previous_name, previous_id, _ = previous
+                raise ValueError(
+                    f"DBeaver connections '{previous_name}' ({previous_id}) and "
+                    f"'{original_name}' ({conn_id}) both map to connection_name '{name}'; "
+                    "rename one before importing"
+                )
+            source_names[name] = (original_name, conn_id, key)
+            if selected:
+                if only_set:
+                    seen_names.append(original_name)
                 connections.append(converted)
                 imported_names.append(original_name)
 
+        self.last_merge_report = self._build_merge_report(connections) if merge_clusters else []
         if merge_clusters:
             connections = self._merge_cluster_connections(connections)
 
@@ -576,16 +581,10 @@ def main() -> None:
 
     try:
         importer = DBeaverImporter(dbeaver_path)
-        # Always import raw connections first so we can report on merges clearly.
-        raw_connections = importer.import_connections(
-            merge_clusters=False, only_names=only_names
+        connections = importer.import_connections(
+            merge_clusters=merge_clusters, only_names=only_names
         )
-        merge_report = []
-        if merge_clusters:
-            merge_report = importer._build_merge_report(raw_connections)
-            connections = importer._merge_cluster_connections(raw_connections)
-        else:
-            connections = raw_connections
+        merge_report = importer.last_merge_report
 
         if only_names:
             missing = sorted(set(only_names) - set(importer.last_seen_names))

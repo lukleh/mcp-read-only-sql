@@ -153,6 +153,12 @@ uvx --from . mcp-read-only-sql import-dbeaver \
 
 That writes `connections.yaml` with any decrypted passwords stored directly in the file. The importer writes user-only permissions and keeps timestamped backups when it overwrites an existing file.
 
+Connections that normalize to the same name are accepted only when cluster
+merging combines them into one output connection with matching shared settings.
+Distinct output connections must have unique names. With `--no-merge`, duplicate
+names are refused even for otherwise matching cluster members. Collision errors
+include both DBeaver display names and internal IDs so the entries can be renamed.
+
 > `connections.yaml` contains credentials. Keep it private, do not commit it, and restart the MCP process after editing it so changes take effect.
 
 To allow a connection to access multiple databases, add an explicit allowlist:
