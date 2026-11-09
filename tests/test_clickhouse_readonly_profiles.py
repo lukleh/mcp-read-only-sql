@@ -69,7 +69,7 @@ class _Stdout:
     def __init__(self, lines):
         self._lines = [line.encode() for line in lines]
 
-    async def readline(self):
+    async def read(self, size=-1):
         return self._lines.pop(0) if self._lines else b""
 
 

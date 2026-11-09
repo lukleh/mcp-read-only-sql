@@ -31,15 +31,16 @@ async def test_postgresql_cli_process_cleanup_on_timeout():
     # Mock the subprocess to simulate a long-running query
     mock_process = MagicMock()
     mock_process.returncode = None
+    mock_process.stdin.drain = AsyncMock()
     mock_process.kill = MagicMock()
     mock_process.wait = AsyncMock(return_value=None)
 
-    async def slow_readline():
+    async def slow_read(*args):
         await asyncio.sleep(10)
         return b""
 
     mock_stdout = MagicMock()
-    mock_stdout.readline = AsyncMock(side_effect=slow_readline)
+    mock_stdout.read = AsyncMock(side_effect=slow_read)
     mock_process.stdout = mock_stdout
 
     mock_stderr = MagicMock()
@@ -89,15 +90,16 @@ async def test_clickhouse_cli_process_cleanup_on_timeout():
     # Mock the subprocess
     mock_process = MagicMock()
     mock_process.returncode = None
+    mock_process.stdin.drain = AsyncMock()
     mock_process.kill = MagicMock()
     mock_process.wait = AsyncMock(return_value=None)
 
-    async def slow_readline():
+    async def slow_read(*args):
         await asyncio.sleep(10)
         return b""
 
     mock_stdout = MagicMock()
-    mock_stdout.readline = AsyncMock(side_effect=slow_readline)
+    mock_stdout.read = AsyncMock(side_effect=slow_read)
     mock_process.stdout = mock_stdout
 
     mock_stderr = MagicMock()

@@ -1,16 +1,15 @@
-import asyncio
 import logging
 import os
 import re
 from collections.abc import Awaitable, Callable
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from ...config import Connection
 from ...errors import ConnectorError
+from ...utils.cli_process import stream_cli_process
 from ...utils.sql_guard import ReadOnlyQueryError
 from ...utils.ssh_tunnel_cli import CLISSHTunnel
-from ...utils.tsv_formatter import write_tsv_text_line
 from ..base_cli import BaseCLIConnector
 from .settings import PROBE_QUERY, decide_client_settings, refuses_sent_setting
 from .sql import sanitize_clickhouse_read_only_sql
@@ -187,142 +186,35 @@ class ClickHouseCLIConnector(BaseCLIConnector):
                     cmd.append("--ask-password")
                 return cmd
 
-            async def run_client(
-                cmd: list[str], emit_line: Callable[[str], None]
-            ) -> None:
-                process = await asyncio.create_subprocess_exec(
-                    *cmd,
-                    stdin=asyncio.subprocess.PIPE,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
+            async def run_client(cmd: list[str], emit: Callable[[str], object]) -> None:
+                result = await stream_cli_process(
+                    cmd,
                     env=env,
+                    timeout=self.query_timeout,
+                    label="clickhouse-client",
+                    emit=emit,
+                    stdin_data=f"{self.password}\n".encode() if self.password else None,
                 )
-
-                stdin = getattr(process, "stdin", None)
-                if self.password and stdin is not None:
-                    stdin.write(f"{self.password}\n".encode())
-                    drain = getattr(stdin, "drain", None)
-                    if callable(drain):
-                        drain_result = drain()
-                        if asyncio.iscoroutine(drain_result):
-                            await drain_result
-                    stdin.close()
-                elif self.password:
-                    process.kill()
-                    await process.wait()
-                    raise ConnectorError(
-                        "clickhouse-client: failed to create subprocess stdin pipe"
+                if result.returncode not in (0, None):
+                    error_msg = (
+                        _PASSWORD_PROMPT.sub("", result.stderr.decode()).strip()
+                        if result.stderr else "Unknown error"
                     )
-
-                stdout = process.stdout
-                stderr_stream = process.stderr
-                if stdout is None or stderr_stream is None:
-                    process.kill()
-                    await process.wait()
-                    raise ConnectorError(
-                        "clickhouse-client: failed to create subprocess pipes"
-                    )
-
-                stderr_task = asyncio.create_task(stderr_stream.read())
-                loop = asyncio.get_event_loop()
-                deadline = loop.time() + self.query_timeout
-
-                async def terminate() -> None:
-                    """Kill clickhouse-client and reap it; the server then drops the query."""
-                    with suppress(ProcessLookupError):
-                        process.kill()
-                    stderr_task.cancel()
-                    with suppress(asyncio.CancelledError):
-                        await stderr_task
-                    with suppress(asyncio.TimeoutError):
-                        await asyncio.wait_for(process.wait(), timeout=1.0)
-
-                async def stream_output() -> None:
-                    # Every stdout line is data: the header, then one line per
-                    # row. An empty line is a row whose only column is empty.
-                    async def read_line_with_timeout() -> bytes:
-                        remaining = deadline - loop.time()
-                        if remaining <= 0:
-                            raise TimeoutError
-                        return await asyncio.wait_for(
-                            stdout.readline(), timeout=remaining
+                    if (
+                        "tls-sni-override" in error_msg
+                        and "unrecognized option" in error_msg.lower()
+                    ):
+                        raise ConnectorError(
+                            "clickhouse-client: TLS over SSH requires a client with "
+                            "--tls-sni-override (26.1 or newer); upgrade the client "
+                            "or use implementation: python"
                         )
-
-                    try:
-                        while True:
-                            line_bytes = await read_line_with_timeout()
-                            if not line_bytes:
-                                break
-                            emit_line(line_bytes.decode(errors="replace").rstrip("\r\n"))
-                    except TimeoutError:
-                        logger.warning(
-                            "Query timeout - terminating clickhouse-client process"
-                        )
-                        await terminate()
-                        raise TimeoutError(
-                            f"clickhouse-client: Query timeout after {self.query_timeout}s"
-                        )
-
-                async def finalize_process() -> None:
-                    try:
-                        await asyncio.wait_for(process.wait(), timeout=1.0)
-                    except TimeoutError:
-                        logger.error(
-                            "clickhouse-client process did not terminate cleanly"
-                        )
-                        process.kill()
-                        await process.wait()
-
-                    try:
-                        stderr = (
-                            await stderr_task
-                            if not stderr_task.done()
-                            else stderr_task.result()
-                        )
-                    except asyncio.CancelledError:
-                        stderr = b""
-
-                    returncode = process.returncode
-                    if returncode is None:
-                        logger.debug(
-                            "clickhouse-client process still running after wait(); treating as successful termination"
-                        )
-                    if returncode not in (0, None):
-                        error_msg = (
-                            _PASSWORD_PROMPT.sub("", stderr.decode()).strip()
-                            if stderr
-                            else "Unknown error"
-                        )
-                        if (
-                            "tls-sni-override" in error_msg
-                            and "unrecognized option" in error_msg.lower()
-                        ):
-                            raise ConnectorError(
-                                "clickhouse-client: TLS over SSH requires a client with "
-                                "--tls-sni-override (26.1 or newer); upgrade the client "
-                                "or use implementation: python"
-                            )
-                        logger.error(f"clickhouse-client error: {error_msg}")
-                        raise ConnectorError(f"clickhouse-client: {error_msg}")
-
-                try:
-                    await stream_output()
-                    await finalize_process()
-                except asyncio.CancelledError:
-                    # The caller gave up (its hard timeout, or a cancelled
-                    # call). Without this clickhouse-client, and the query on
-                    # the server, would run on until max_execution_time.
-                    await terminate()
-                    raise
+                    raise ConnectorError(f"clickhouse-client: {error_msg}")
 
             async def read_probe() -> list[list[str]]:
-                # No client-side settings, so the rows describe the profile.
-                rows: list[list[str]] = []
-                await run_client(
-                    build_command(PROBE_QUERY, {}, fmt="TabSeparated"),
-                    lambda line: rows.append(line.split("\t")),
-                )
-                return rows
+                chunks: list[str] = []
+                await run_client(build_command(PROBE_QUERY, {}, fmt="TabSeparated"), chunks.append)
+                return [line.split("\t") for line in "".join(chunks).splitlines()]
 
             server_key = (selected_server.host, selected_server.port)
 
@@ -336,7 +228,7 @@ class ClickHouseCLIConnector(BaseCLIConnector):
                     self._decided_settings[server_key] = settings
                 cmd = build_command(sanitized_query, settings)
 
-                async def run_statement(emit_line: Callable[[str], None]) -> None:
+                async def run_statement(emit_line: Callable[[str], object]) -> None:
                     try:
                         await run_client(cmd, emit_line)
                     except ConnectorError as exc:
@@ -350,20 +242,11 @@ class ClickHouseCLIConnector(BaseCLIConnector):
                         raise
 
                 if output_path is None:
-                    lines: list[str] = []
-                    await run_statement(lines.append)
-                    return "\n".join(lines)
-
-                wrote_content = False
-
-                def emit_file_line(line: str) -> None:
-                    nonlocal wrote_content
-                    wrote_content = write_tsv_text_line(handle, line, wrote_content)
-
-                with Path(output_path).open(  # noqa: ASYNC230 -- local file writes are fast; async file IO would add a dependency for no benefit
-                    "w", encoding="utf-8", newline=""
-                ) as handle:
-                    await run_statement(emit_file_line)
+                    chunks: list[str] = []
+                    await run_statement(chunks.append)
+                    return "".join(chunks)
+                with Path(output_path).open("w", encoding="utf-8", newline="") as handle:  # noqa: ASYNC230 -- local managed-file writes
+                    await run_statement(handle.write)
                 return None
 
             except FileNotFoundError:

@@ -25,7 +25,7 @@ async def test_postgres_cli_retries_without_pgoptions(monkeypatch):
 
     call_log = []
 
-    async def fake_create_subprocess_exec(*cmd, stdout=None, stderr=None, env=None):
+    async def fake_create_subprocess_exec(*cmd, stdout=None, stderr=None, env=None, stdin=None):
         call_log.append(env.copy())
         if len(call_log) == 1:
             raise RuntimeError(
