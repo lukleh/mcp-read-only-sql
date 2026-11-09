@@ -27,6 +27,16 @@ STARTUP_REJECTION = psycopg2.OperationalError(
 )
 
 
+@pytest.fixture(autouse=True)
+def _record_cursor_typecasters(monkeypatch):
+    """The C extension accepts only real cursors; these tests use fakes."""
+    monkeypatch.setattr(
+        psycopg2.extensions,
+        "register_type",
+        lambda caster, cursor: cursor.log.append(("typecaster", cursor.name)),
+    )
+
+
 class FakeCursor:
     def __init__(self, log, name, rows, shadows):
         self.log = log
@@ -213,6 +223,9 @@ class TestCursors:
 
         assert result.split("\n") == ["col", *(str(i) for i in range(2500))]
         assert ("execute", "mcp_read_only_sql", "SELECT i FROM t") in log
+        assert log.index(("typecaster", "mcp_read_only_sql")) < log.index(
+            ("execute", "mcp_read_only_sql", "SELECT i FROM t")
+        )
         fetches = [entry for entry in log if entry[0] == "fetchmany"]
         assert fetches == [("fetchmany", "mcp_read_only_sql", 1000)] * 4
 

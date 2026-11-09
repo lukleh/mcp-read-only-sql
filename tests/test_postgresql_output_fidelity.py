@@ -10,6 +10,8 @@ and the Python formatter follows psql's quoting rules.
 """
 
 import asyncio
+import csv
+import io
 
 import pytest
 
@@ -125,6 +127,47 @@ async def test_real_rows_are_returned_verbatim(
 @pytest.mark.docker
 @pytest.mark.usefixtures("docker_check")
 @pytest.mark.anyio
+@pytest.mark.parametrize("to_file", [False, True], ids=["inline", "file"])
+async def test_python_preserves_postgresql_text_for_every_value_type(
+    postgres_config, tmp_path, to_file
+):
+    query = """
+        SELECT decode('000102ff', 'hex') AS bytes,
+               '{"a":true,"b":null,"a":false}'::json AS json,
+               'infinity'::date AS pos_inf,
+               '-infinity'::timestamptz AS neg_inf,
+               ARRAY[1,2,NULL] AS array,
+               ARRAY['a,b', 'q"q', NULL] AS strings,
+               true AS boolean,
+               0.00000::numeric AS decimal,
+               interval '1 year 2 months 3 days' AS span,
+               date '12000-01-01' AS far_date
+    """
+    cli = PostgreSQLCLIConnector(postgres_config)
+    python = PostgreSQLPythonConnector(postgres_config)
+    expected = await cli.execute_query(query)
+    if to_file:
+        output = tmp_path / "raw-values.tsv"
+        await python.execute_query_to_file(query, output)
+        actual = output.read_text(encoding="utf-8")
+    else:
+        actual = await python.execute_query(query)
+
+    assert actual == expected
+    _, values = list(csv.reader(io.StringIO(actual), delimiter="\t"))
+    assert values[:5] == [
+        r"\x000102ff",
+        '{"a":true,"b":null,"a":false}',
+        "infinity",
+        "-infinity",
+        "{1,2,NULL}",
+    ]
+    assert values[6:] == ["t", "0.00000", "1 year 2 mons 3 days", "12000-01-01"]
+
+
+@pytest.mark.docker
+@pytest.mark.usefixtures("docker_check")
+@pytest.mark.anyio
 @pytest.mark.parametrize("implementation", ["cli", "python"])
 async def test_integer_valued_float_connection_timeout_connects(
     postgres_config, implementation
@@ -145,6 +188,28 @@ async def test_integer_valued_float_connection_timeout_connects(
     )
 
     assert await _connector(implementation, config).execute_query("SELECT 1 AS x") == "x\n1"
+
+
+@pytest.mark.docker
+@pytest.mark.usefixtures("docker_check")
+@pytest.mark.anyio
+async def test_text_typecasting_does_not_change_other_database_cursors(postgres_config):
+    import psycopg2
+
+    await PostgreSQLPythonConnector(postgres_config).execute_query("SELECT true")
+    conn = psycopg2.connect(
+        host=postgres_config.servers[0].host,
+        port=postgres_config.servers[0].port,
+        dbname=postgres_config.database,
+        user=postgres_config.username,
+        password=postgres_config.password,
+    )
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT true, 1, ARRAY[1,2]")
+            assert cursor.fetchone() == (True, 1, [1, 2])
+    finally:
+        conn.close()
 
 
 @pytest.mark.docker
