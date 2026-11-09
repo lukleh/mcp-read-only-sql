@@ -16,6 +16,9 @@ from ...utils.sql_guard import ReadOnlyQueryError
 
 _HEREDOC = re.compile(r"\$[A-Za-z0-9_]*\$")
 _WORD = re.compile(r"[A-Za-z0-9_$]+")
+_ENCODED_STRING = re.compile(r"(?:[xX]'[0-9A-Fa-f]*'|[bB]'[01]*')")
+# ClickHouse also treats these format characters as UTF-8 whitespace.
+_EXTRA_WHITESPACE = frozenset("\u180e\u200b\u200c\u200d\u2060\ufeff")
 
 @dataclass(frozen=True)
 class _Token:
@@ -30,7 +33,7 @@ def _tokens(query: str) -> list[_Token]:
     i = 0
     while i < len(query):
         ch = query[i]
-        if ch.isspace():
+        if ch.isspace() or ch in _EXTRA_WHITESPACE:
             i += 1
         elif query.startswith(("--", "//", "#!", "# "), i):
             while i < len(query) and query[i] not in "\r\n":
@@ -49,6 +52,22 @@ def _tokens(query: str) -> list[_Token]:
                     i += 1
             if depth:
                 raise ReadOnlyQueryError("Unterminated ClickHouse comment")
+        elif ch in "xXbB" and query[i + 1:i + 2] == "'":
+            # ClickHouse lexes adjacent hex/binary prefixes as string literals.
+            # These forms allow digits only, without ordinary quote escapes.
+            encoded = _ENCODED_STRING.match(query, i)
+            if encoded is None:
+                raise ReadOnlyQueryError("Invalid ClickHouse encoded string literal")
+            i = encoded.end()
+            tokens.append(_Token("string", "", i))
+        elif ch in "‘“":
+            # ClickHouse's Unicode quotes do not have escape sequences.
+            closing = "’" if ch == "‘" else "”"
+            end = query.find(closing, i + 1)
+            if end < 0:
+                raise ReadOnlyQueryError("Unterminated ClickHouse quoted value")
+            i = end + 1
+            tokens.append(_Token("string" if ch == "‘" else "identifier", "", i))
         elif ch in "'\"`":
             quote = ch
             i += 1

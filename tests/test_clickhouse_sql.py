@@ -120,11 +120,34 @@ async def test_format_is_refused_before_connecting(
         "INTO // comment\nOUTFILE '/tmp/query.tsv' COMPRESSION 'gzip'",
         "INTO #! comment\nOUTFILE $file$/tmp/query.tsv$file$",
         'INTO OUTFILE "/tmp/query.tsv"', "INTO OUTFILE `/tmp/query.tsv`",
+        "INTO OUTFILE X'2f746d702f71756572792e747376'",
+        "INTO OUTFILE x'2f746d702f71756572792e747376' TRUNCATE",
+        "INTO OUTFILE b'01110000'", "INTO OUTFILE B'01110000' APPEND",
+        "INTO /* comment */ OUTFILE X'70' AND STDOUT",
+        "INTO OUTFILE ‘/tmp/query.tsv’", "INTO OUTFILE “/tmp/query.tsv”",
     ],
 )
 def test_outfile_variants_are_refused(suffix):
     with pytest.raises(ReadOnlyQueryError, match="INTO OUTFILE"):
         sanitize_clickhouse_read_only_sql("SELECT 1 " + suffix)
+
+
+@pytest.mark.parametrize("space", ["\u180e", "\u200b", "\u200c", "\u200d", "\u2060", "\ufeff"])
+@pytest.mark.parametrize("literal", ["'/tmp/query.tsv'", "X'70'", "b'01110000'", "‘/tmp/query.tsv’", "$x$/tmp/query.tsv$x$"])
+@pytest.mark.parametrize("position", ["keyword", "operand"])
+def test_clickhouse_unicode_whitespace_does_not_hide_outfile(space, literal, position):
+    query = (
+        f"SELECT 1 INTO{space}OUTFILE {literal}"
+        if position == "keyword" else f"SELECT 1 INTO OUTFILE{space}{literal}"
+    )
+    with pytest.raises(ReadOnlyQueryError, match="INTO OUTFILE"):
+        sanitize_clickhouse_read_only_sql(query)
+
+
+@pytest.mark.parametrize("space", ["\u180e", "\u200b", "\u200c", "\u200d", "\u2060", "\ufeff"])
+def test_clickhouse_unicode_whitespace_keeps_identifier_alias(space):
+    query = f"SELECT into{space}outfile FROM (SELECT 1 AS into)"
+    assert sanitize_clickhouse_read_only_sql(query) == query
 
 
 @pytest.mark.parametrize(
@@ -134,10 +157,19 @@ def test_outfile_variants_are_refused(suffix):
         "SELECT 'it\\'s INTO OUTFILE; text'", "SELECT $sql$INTO OUTFILE '/tmp/x'$sql$",
         "SELECT 1 AS into", "SELECT 1 /* INTO OUTFILE */", "SELECT 1 // INTO OUTFILE",
         "SELECT into outfile FROM (SELECT 1 AS into)",
+        "SELECT X'494e544f204f555446494c45' AS value",
+        "SELECT b'01110000' AS value",
+        "SELECT ‘INTO OUTFILE’ AS value", "SELECT “INTO OUTFILE” FROM t",
     ],
 )
 def test_outfile_text_inside_data_and_comments_is_preserved(query):
     assert sanitize_clickhouse_read_only_sql(query) == query
+
+
+@pytest.mark.parametrize("query", ["SELECT X'not-hex'", "SELECT B'012'", "SELECT X'41", "SELECT ‘open"])
+def test_malformed_literal_forms_are_refused(query):
+    with pytest.raises(ReadOnlyQueryError):
+        sanitize_clickhouse_read_only_sql(query)
 
 
 def test_local_client_accepts_outfile_identifier_alias(tmp_path):
@@ -155,8 +187,9 @@ def test_local_client_accepts_outfile_identifier_alias(tmp_path):
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("connector_class", [ClickHouseCLIConnector, ClickHousePythonConnector])
+@pytest.mark.parametrize("literal_kind", ["string", "hex", "binary", "unicode"])
 async def test_outfile_is_refused_before_connecting(
-    connector_class, clickhouse_config, monkeypatch, tmp_path
+    connector_class, literal_kind, clickhouse_config, monkeypatch, tmp_path
 ):
     target = tmp_path / "existing.txt"
     target.write_text("original\n", encoding="utf-8")
@@ -166,8 +199,15 @@ async def test_outfile_is_refused_before_connecting(
         raise AssertionError("a local file query must not connect or spawn")
 
     monkeypatch.setattr(connector, "_get_ssh_tunnel", unexpected)
+    path = str(target)
+    literal = {
+        "string": f"'{path}'",
+        "hex": f"X'{path.encode().hex()}'",
+        "binary": "b'" + "".join(f"{byte:08b}" for byte in path.encode()) + "'",
+        "unicode": f"‘{path}’",
+    }[literal_kind]
     with pytest.raises(ReadOnlyQueryError, match="INTO OUTFILE"):
-        await connector.execute_query(f"SELECT 'replacement' INTO OUTFILE '{target}' TRUNCATE")
+        await connector.execute_query(f"SELECT 'replacement' INTO OUTFILE {literal} TRUNCATE")
     assert target.read_text(encoding="utf-8") == "original\n"
 
 
