@@ -27,13 +27,16 @@ class _Token:
     end: int
 
 
-def _tokens(query: str) -> list[_Token]:
+def _tokens(query: str) -> tuple[list[_Token], bool]:
     """Tokenize ClickHouse quoting, heredocs, and nested/line comments."""
     tokens = []
+    parser_compatible = True
     i = 0
     while i < len(query):
         ch = query[i]
         if ch.isspace() or ch in _EXTRA_WHITESPACE:
+            if ch in _EXTRA_WHITESPACE:
+                parser_compatible = False
             i += 1
         elif query.startswith(("--", "//", "#!", "# "), i):
             while i < len(query) and query[i] not in "\r\n":
@@ -61,6 +64,7 @@ def _tokens(query: str) -> list[_Token]:
             i = encoded.end()
             tokens.append(_Token("string", "", i))
         elif ch in "‘“":
+            parser_compatible = False
             # ClickHouse's Unicode quotes do not have escape sequences.
             closing = "’" if ch == "‘" else "”"
             end = query.find(closing, i + 1)
@@ -103,7 +107,7 @@ def _tokens(query: str) -> list[_Token]:
         else:
             tokens.append(_Token("symbol", ch, i + 1))
             i += 1
-    return tokens
+    return tokens, parser_compatible
 
 
 def sanitize_clickhouse_read_only_sql(query: str) -> str:
@@ -111,7 +115,9 @@ def sanitize_clickhouse_read_only_sql(query: str) -> str:
     if not query or not query.strip():
         raise ReadOnlyQueryError("Query must not be empty")
     stripped = query.strip()
-    tokens = _tokens(stripped)
+    tokens, parser_compatible = _tokens(stripped)
+    if not tokens:
+        raise ReadOnlyQueryError("Query must not be empty")
     semicolons = [i for i, token in enumerate(tokens) if token.value == ";"]
     if semicolons and (len(semicolons) != 1 or semicolons[0] != len(tokens) - 1):
         raise ReadOnlyQueryError("Multiple SQL statements are not allowed in read-only mode")
@@ -131,6 +137,13 @@ def sanitize_clickhouse_read_only_sql(query: str) -> str:
         # FORMAT is not a reserved identifier: only a dialect parse can tell
         # an output clause from a column, alias, or function with that name.
         # Queries without the token remain entirely in ClickHouse's grammar.
+        if not parser_compatible:
+            # SQLGlot treats these native quote/whitespace forms as identifiers,
+            # which can hide output clauses. Refuse rather than rewrite SQL.
+            raise ReadOnlyQueryError(
+                "Cannot validate ClickHouse FORMAT usage with Unicode quotes or "
+                "format-character whitespace; use ASCII syntax or quote identifiers named FORMAT"
+            )
         try:
             # The lexer has already checked the optional trailing semicolon.
             # Parse only through the last SQL token, excluding that semicolon

@@ -88,6 +88,49 @@ def test_trailing_comments_do_not_hide_additional_statements(query):
         sanitize_clickhouse_read_only_sql(query)
 
 
+@pytest.mark.parametrize("space", ["\u180e", "\u200b", "\u200c", "\u200d", "\u2060", "\ufeff"])
+@pytest.mark.parametrize("prefix", ["SELECT 1", "SELECT 1 FROM system.one"])
+def test_native_whitespace_cannot_hide_output_format(space, prefix):
+    with pytest.raises(ReadOnlyQueryError, match="FORMAT"):
+        sanitize_clickhouse_read_only_sql(f"{prefix} FORMAT{space}JSON")
+
+
+@pytest.mark.parametrize("query", [
+    "SELECT ‘--’ FORMAT JSON",
+    "SELECT “--” FROM (SELECT 1 AS “--”) FORMAT JSON",
+])
+def test_unicode_quotes_cannot_hide_output_format(query):
+    with pytest.raises(ReadOnlyQueryError, match="FORMAT"):
+        sanitize_clickhouse_read_only_sql(query)
+
+
+def test_unicode_quote_cannot_hide_additional_statement():
+    with pytest.raises(ReadOnlyQueryError, match="Multiple SQL statements"):
+        sanitize_clickhouse_read_only_sql("SELECT ‘'’; SELECT 2 -- '")
+
+
+@pytest.mark.parametrize("query", [
+    "/* comment */", "-- comment", "// comment", "# comment",
+    "\u180e", "\u200b", "\u200c", "\u200d", "\u2060", "\ufeff",
+    "\u200b /* comment */",
+])
+def test_comment_or_native_whitespace_only_is_empty(query):
+    with pytest.raises(ReadOnlyQueryError, match="Query must not be empty"):
+        sanitize_clickhouse_read_only_sql(query)
+
+
+@pytest.mark.parametrize("query", [
+    "SELECT ‘;’", "SELECT “;” FROM t",
+    'SELECT ‘--’ AS "format"',
+    "SELECT '‘--’\u200b' AS format",
+    'SELECT "‘x’" AS format FROM t',
+    "SELECT 1 AS format; -- \u200b ‘x’",
+    "SELECT 1 AS format /* \u200b ‘x’ */",
+])
+def test_native_syntax_outside_parser_or_inside_ascii_quotes_is_preserved(query):
+    assert sanitize_clickhouse_read_only_sql(query) == query
+
+
 @pytest.mark.anyio
 @pytest.mark.parametrize("connector_class", [ClickHouseCLIConnector, ClickHousePythonConnector])
 @pytest.mark.parametrize(
@@ -96,6 +139,8 @@ def test_trailing_comments_do_not_hide_additional_statements(query):
         "SELECT 1 FORMAT JSON", "DESCRIBE TABLE system.one FORMAT JSON",
         "DESC system.one FORMAT JSONEachRow", "SHOW TABLES FORMAT JSON",
         "EXPLAIN AST SELECT 1 FORMAT JSON",
+        "SELECT 1 FORMAT\u200bJSON", "SELECT ‘--’ FORMAT JSON",
+        "SELECT “--” FROM (SELECT 1 AS “--”) FORMAT JSON",
     ],
 )
 async def test_format_is_refused_before_connecting(
