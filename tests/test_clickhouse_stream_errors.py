@@ -56,8 +56,9 @@ def _stalled_response():
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("boundary", ["connector", "mcp"])
 async def test_stalled_raw_response_reports_operational_error_and_removes_file(
-    clickhouse_config, monkeypatch, tmp_path
+    clickhouse_config, monkeypatch, tmp_path, boundary
 ):
     responses = []
     closed = Event()
@@ -75,13 +76,17 @@ async def test_stalled_raw_response_reports_operational_error_and_removes_file(
         monkeypatch.setattr(connector, "_open_client", lambda *args: (Client(), {"readonly": 1}))
         paths = make_runtime_paths(tmp_path)
         server = build_stub_server(connector, paths)
-        with pytest.raises(ToolError, match="ClickHouse: response stream failed:"):
-            await server.mcp._tool_manager.call_tool(
-                "run_query_read_only",
-                {"connection_name": connector.name, "query": "SELECT 1"},
-                Context(mcp_server=server.mcp, subscriptions=server.mcp._subscriptions),
-                convert_result=False,
-            )
+        if boundary == "connector":
+            with pytest.raises(TimeoutError, match="ClickHouse: response stream timed out"):
+                await connector.execute_query_to_file("SELECT 1", tmp_path / "result.tsv")
+        else:
+            with pytest.raises(ToolError, match="ClickHouse: response stream timed out"):
+                await server.mcp._tool_manager.call_tool(
+                    "run_query_read_only",
+                    {"connection_name": connector.name, "query": "SELECT 1"},
+                    Context(mcp_server=server.mcp, subscriptions=server.mcp._subscriptions),
+                    convert_result=False,
+                )
     assert closed.is_set()
     assert responses and responses[0].closed
     assert list(paths.results_dir.rglob("*.tsv")) == []

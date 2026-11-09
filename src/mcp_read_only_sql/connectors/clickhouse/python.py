@@ -12,7 +12,7 @@ from typing import cast
 import clickhouse_connect
 from clickhouse_connect.driver.client import Client
 from clickhouse_connect.driver.exceptions import ClickHouseError
-from urllib3.exceptions import HTTPError
+from urllib3.exceptions import HTTPError, ReadTimeoutError
 
 from ...config import Connection
 from ...errors import ConnectorError
@@ -230,8 +230,8 @@ class ClickHousePythonConnector(BaseConnector):
                     raise
 
         except TimeoutError as e:
-            # Re-raise SSH timeout as-is
-            if "SSH:" in str(e):
+            # Preserve specific SSH and response-read timeout diagnostics.
+            if "SSH:" in str(e) or "ClickHouse:" in str(e):
                 raise
             # Otherwise it's a query timeout from asyncio.wait_for
             raise TimeoutError(
@@ -509,6 +509,8 @@ class ClickHousePythonConnector(BaseConnector):
                         cancellation.check()
                     try:
                         chunk = stream.read(64 * 1024)
+                    except ReadTimeoutError as exc:
+                        raise TimeoutError("ClickHouse: response stream timed out") from exc
                     except (HTTPError, OSError) as exc:
                         # raw_stream() returns a response whose later reads
                         # bypass the driver's ClickHouseError translation.
