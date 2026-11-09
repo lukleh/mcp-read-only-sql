@@ -117,8 +117,20 @@ class Server:
                 if tail:
                     port = int(tail[1:])
             elif data.count(":") > 1:
-                # A bare IPv6 address never carries an unbracketed port.
                 IPv6Address(data)
+                # Some literals also parse as the legacy unbracketed host:port
+                # form. Never silently choose a different destination.
+                prefix, _, suffix = data.rpartition(":")
+                if suffix.isdecimal():
+                    try:
+                        IPv6Address(prefix)
+                    except ValueError:
+                        pass
+                    else:
+                        raise ValueError(
+                            f"Ambiguous IPv6 endpoint '{data}'; use [address] for the default port, "
+                            "[address]:port for an explicit port, or a host/port mapping"
+                        )
             elif ":" in data:
                 host, port_str = data.rsplit(":", 1)
                 port = int(port_str)

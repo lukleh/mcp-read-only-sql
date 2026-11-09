@@ -45,6 +45,23 @@ def test_invalid_bracketed_addresses_fail(endpoint):
         Server.from_dict(endpoint, "postgresql")
 
 
+@pytest.mark.parametrize("endpoint", ["::1:5432", "2001:db8::1:5432", "fe80::1:22", "2001:db8::1:2"])
+def test_ambiguous_ipv6_strings_require_explicit_brackets(endpoint):
+    with pytest.raises(ValueError, match="Ambiguous IPv6 endpoint.*\\[address\\]"):
+        Server.from_dict(endpoint, "postgresql")
+    # Both meanings remain expressible; do not infer a user's port intent.
+    assert Server.from_dict(f"[{endpoint}]", "postgresql").host == endpoint
+    host, _, port = endpoint.rpartition(":")
+    parsed = Server.from_dict(f"[{host}]:{port}", "postgresql")
+    assert (parsed.host, parsed.port) == (host, int(port))
+
+
+@pytest.mark.parametrize("endpoint", ["::", "::1", "2001:db8::1", "::ffff:127.0.0.1", "2001:db8::a:b"])
+def test_unambiguous_bare_ipv6_literals_keep_default_port(endpoint):
+    parsed = Server.from_dict(endpoint, "postgresql")
+    assert (parsed.host, parsed.port) == (endpoint, 5432)
+
+
 def test_ipv6_loopback_display_resolves_to_bastion():
     target = get_connection_target({
         "type": "postgresql", "servers": ["[::1]:5432"], "ssh_tunnel": {"host": "bastion"},

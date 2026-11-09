@@ -144,7 +144,17 @@ Use CLI mode when you want the behavior of `psql` or `clickhouse-client`, or whe
 
 ### 3. Import or Edit `connections.yaml`
 
-You can edit the generated sample directly, or import a DBeaver workspace:
+You can edit the generated sample directly, or import a DBeaver workspace.
+
+IPv6 server strings with an explicit port use `[2001:db8::1]:5432`. Use
+`[2001:db8::1]` for the database's default port, or a mapping such as
+`{host: "2001:db8::1", port: 5432}`. Unambiguous bare literals such as `::1`
+also use the default port. Strings such as `2001:db8::1:5432` are rejected:
+they can mean either one address or an address plus a port. Older versions
+split those strings at the final colon, so bracket legacy endpoints explicitly
+when upgrading rather than allowing a silent destination change.
+
+Import a DBeaver workspace with:
 
 ```bash
 uvx --from . mcp-read-only-sql import-dbeaver \
