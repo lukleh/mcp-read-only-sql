@@ -309,6 +309,8 @@ class ReadOnlySQLServer:
                 ``user``. The ``servers`` column contains the resolved display
                 hosts for each connection, while ``database`` and ``databases``
                 describe the default database and allowed database list.
+                Fields containing tabs, quotes, or line breaks use CSV quoting
+                with a tab delimiter; parse with a TSV-aware CSV reader.
             """
             with _surface_tool_errors():
                 self._reload_connections_if_needed()
