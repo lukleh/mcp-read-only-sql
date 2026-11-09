@@ -2,6 +2,7 @@ import json
 import stat
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -552,3 +553,154 @@ def test_partial_missing_ssh_password_is_not_reused_on_new_bastion(tmp_path, mon
     assert error.value.code == 1
     assert "Cannot preserve unavailable SSH password" in capsys.readouterr().out
     assert output.read_bytes() == original
+
+
+@pytest.mark.parametrize("only", [[], ["--only", "prod.db"]])
+def test_name_collision_never_replaces_existing_config(tmp_path, monkeypatch, only):
+    workspace = _write_dbeaver_workspace(
+        tmp_path,
+        [
+            {"id": "c1", "name": "prod.db", "configuration": {"host": "alpha.example", "port": "8123"}},
+            {"id": "c2", "name": "prod_db", "configuration": {"host": "beta.example", "port": "8123"}},
+        ],
+    )
+    output = tmp_path / "connections.yaml"
+    original = "- connection_name: retained\n"
+    output.write_text(original)
+    with pytest.raises(SystemExit) as failure:
+        _run_import(monkeypatch, [str(workspace), "--output", str(output), *only])
+    assert failure.value.code == 1
+    assert output.read_bytes() == original.encode()
+    assert not list(tmp_path.glob("connections.yaml.bak.*"))
+
+
+@pytest.mark.parametrize("wanted_first", [False, True])
+def test_subset_import_ignores_unselected_name_collisions(tmp_path, monkeypatch, wanted_first):
+    collisions = [
+        {"id": "c1", "name": "prod.db", "configuration": {"host": "alpha.example", "port": "8123"}},
+        {"id": "c2", "name": "prod_db", "configuration": {"host": "beta.example", "port": "8123"}},
+    ]
+    wanted = {"id": "wanted", "name": "wanted", "configuration": {"host": "wanted.example", "port": "8123"}}
+    connections = [wanted, *collisions] if wanted_first else [*collisions, wanted]
+    workspace = _write_dbeaver_workspace(tmp_path, connections)
+    output = tmp_path / "connections.yaml"
+    _run_import(monkeypatch, [str(workspace), "--only", "wanted", "--output", str(output)])
+    result = yaml.safe_load(output.read_text())
+    assert [conn["connection_name"] for conn in result] == ["wanted"]
+
+
+@pytest.mark.parametrize("only", [[], ["--only", "Analytics"]])
+def test_identically_named_cluster_members_merge_in_cli(tmp_path, monkeypatch, only):
+    workspace = _write_dbeaver_workspace(tmp_path, [
+        {"id": "c1", "name": "Analytics", "configuration": {"host": "ch-1.example", "port": "8123"}},
+        {"id": "c2", "name": "Analytics", "configuration": {"host": "ch-2.example", "port": "8123"}},
+    ])
+    output = tmp_path / "connections.yaml"
+    _run_import(monkeypatch, [str(workspace), "--output", str(output), *only])
+    result = yaml.safe_load(output.read_text())
+    assert len(result) == 1
+    assert result[0]["connection_name"] == "analytics"
+    assert result[0]["servers"] == ["ch-1.example:8123", "ch-2.example:8123"]
+
+
+def test_no_merge_refuses_identical_names_and_reports_display_names(tmp_path, monkeypatch, capsys):
+    workspace = _write_dbeaver_workspace(tmp_path, [
+        {"id": "c1", "name": "Analytics", "configuration": {"host": "ch-1.example", "port": "8123"}},
+        {"id": "c2", "name": "Analytics", "configuration": {"host": "ch-2.example", "port": "8123"}},
+    ])
+    output = tmp_path / "connections.yaml"
+    with pytest.raises(SystemExit) as error:
+        _run_import(monkeypatch, [str(workspace), "--no-merge", "--output", str(output)])
+    assert error.value.code == 1
+    assert "'Analytics' (c1)" in capsys.readouterr().out
+    assert not output.exists()
+
+
+def test_same_name_distinct_credentials_do_not_merge(tmp_path, monkeypatch):
+    workspace = _write_dbeaver_workspace(tmp_path, [
+        {"id": "c1", "name": "Analytics", "configuration": {"host": "ch-1.example", "port": "8123"}},
+        {"id": "c2", "name": "Analytics", "configuration": {"host": "ch-2.example", "port": "8123"}},
+    ])
+    monkeypatch.setattr(DBeaverImporter, "_decrypt_credentials", lambda self: (
+        {"c1": {"user": "reader", "password": "first"}, "c2": {"user": "reader", "password": "second"}}, {},
+    ))
+    with pytest.raises(ValueError, match="both map to connection_name"):
+        DBeaverImporter(str(workspace)).import_connections()
+
+
+@pytest.mark.parametrize("encrypted", [False, True])
+@pytest.mark.parametrize("stale_key_path", [False, True])
+def test_import_reads_ssh_and_database_credentials_from_both_formats(tmp_path, monkeypatch, encrypted, stale_key_path):
+    workspace = _write_dbeaver_workspace(tmp_path, [{
+        "id": "c1", "name": "database", "configuration": {
+            "host": "database.internal", "handlers": {"ssh_tunnel": {
+                "enabled": True, "properties": {
+                    "host": "bastion.example", "userName": "fallback", "authType": "PASSWORD",
+                    "keyPath": "/unused-key" if stale_key_path else "",
+                },
+            }},
+        },
+    }])
+    credentials = {
+        "c1": {
+            "#connection": {"user": "reader", "password": "database-secret"},
+            "network/ssh_tunnel": {"user": "tunnel", "password": "ssh-secret"},
+        },
+        "invalid": None,
+        "invalid-sections": {"#connection": [], "network/ssh_tunnel": "invalid"},
+    }
+    content = json.dumps(credentials).encode()
+    (workspace / "credentials-config.json").write_bytes(content)
+    if encrypted:
+        monkeypatch.setattr(
+            "mcp_read_only_sql.config.dbeaver_import.subprocess.run",
+            lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout=b"0" * 16 + content),
+        )
+    result = DBeaverImporter(str(workspace)).import_connections()
+    assert result[0]["username"] == "reader"
+    assert result[0]["password"] == "database-secret"
+    assert result[0]["ssh_tunnel"] == {
+        "host": "bastion.example", "user": "tunnel", "password": "ssh-secret",
+    }
+
+
+def test_plaintext_credentials_do_not_require_openssl(tmp_path, monkeypatch):
+    workspace = _write_dbeaver_workspace(tmp_path, [{"id": "c1", "name": "database"}])
+    (workspace / "credentials-config.json").write_text(json.dumps({
+        "c1": {"#connection": {"user": "reader", "password": "database-secret"}},
+    }))
+    def unavailable(*args, **kwargs):
+        raise FileNotFoundError("openssl")
+    monkeypatch.setattr("mcp_read_only_sql.config.dbeaver_import.subprocess.run", unavailable)
+    result = DBeaverImporter(str(workspace)).import_connections()
+    assert result[0]["username"] == "reader"
+    assert result[0]["password"] == "database-secret"
+
+
+def test_ssh_only_encrypted_credentials_do_not_attempt_plaintext_fallback(tmp_path, monkeypatch, caplog):
+    workspace = _write_dbeaver_workspace(tmp_path, [{
+        "id": "c1", "name": "database", "configuration": {"handlers": {"ssh_tunnel": {
+            "enabled": True, "properties": {"host": "bastion", "authType": "PASSWORD"},
+        }}},
+    }])
+    (workspace / "credentials-config.json").write_bytes(b"not plaintext JSON")
+    content = json.dumps({"c1": {"network/ssh_tunnel": {"user": "tunnel", "password": "ssh-secret"}}}).encode()
+    monkeypatch.setattr("mcp_read_only_sql.config.dbeaver_import.subprocess.run", lambda *a, **kw: SimpleNamespace(returncode=0, stdout=b"0" * 16 + content))
+    result = DBeaverImporter(str(workspace)).import_connections()
+    assert result[0]["ssh_tunnel"]["password"] == "ssh-secret"
+    assert "Usernames will need" not in caplog.text
+
+
+@pytest.mark.parametrize("key_path", ["/key", ""])
+def test_key_passphrase_is_not_mislabeled_as_account_password(capsys, key_path):
+    importer = DBeaverImporter("/unused")
+    result = importer._convert_connection("c1", {
+        "name": "database", "provider": "clickhouse", "configuration": {"handlers": {"ssh_tunnel": {
+            "enabled": True, "properties": {"host": "bastion", "authType": "PUBLIC_KEY", "keyPath": key_path},
+        }}},
+    }, ssh_creds={"user": "tunnel", "password": "private-key-secret"})
+    assert result["ssh_tunnel"].get("private_key", "") == key_path
+    assert "password" not in result["ssh_tunnel"]
+    output = capsys.readouterr().out
+    assert ("key passphrase was not imported" in output) == bool(key_path)
+    assert "private-key-secret" not in output

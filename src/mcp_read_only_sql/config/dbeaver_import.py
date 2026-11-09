@@ -4,6 +4,8 @@ import logging
 import os
 import re
 import subprocess
+import tempfile
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
@@ -15,12 +17,45 @@ from .connection import Server
 logger = logging.getLogger(__name__)
 
 
+def _refuse_symlink(path: Path) -> None:
+    """Keep imports from following or replacing a user-managed symlink."""
+    if path.is_symlink():
+        raise ValueError(f"Refusing symlinked output '{path}'; use its explicit target path")
+
+
 def _write_text_file_secure(path: Path, content: str) -> None:
-    """Write a text file and restrict it to user-only permissions."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as handle:
-        handle.write(content)
-    os.chmod(path, 0o600)
+    """Replace a file atomically with content private from its first byte."""
+    _refuse_symlink(path)
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        with suppress(FileNotFoundError):
+            os.unlink(temporary)
+
+
+def _extract_credentials(
+    data: Any,
+) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+    """Read the same database and SSH sections from either credential format."""
+    credentials: dict[str, dict[str, Any]] = {}
+    ssh_credentials: dict[str, dict[str, Any]] = {}
+    if isinstance(data, dict):
+        for conn_id, conn_data in data.items():
+            if not isinstance(conn_data, dict):
+                continue
+            database = conn_data.get("#connection")
+            ssh = conn_data.get("network/ssh_tunnel")
+            if isinstance(database, dict):
+                credentials[conn_id] = database
+            if isinstance(ssh, dict):
+                ssh_credentials[conn_id] = ssh
+    return credentials, ssh_credentials
 
 
 class DBeaverImporter:
@@ -29,6 +64,8 @@ class DBeaverImporter:
         self.data_sources_path = self.dbeaver_path / "data-sources.json"
         self.credentials_path = self.dbeaver_path / "credentials-config.json"
         self.last_seen_names: list[str] = []
+        self.last_merge_report: list[dict[str, Any]] = []
+        self._credentials_decrypted = False
 
     def _decrypt_credentials(
         self,
@@ -66,25 +103,16 @@ class DBeaverImporter:
             # Skip the first 16 bytes (padding) and parse JSON
             decrypted = result.stdout[16:]
             credentials_data = json.loads(decrypted)
+            self._credentials_decrypted = True
 
-            # Extract both connection and SSH credentials
-            credentials: dict[str, dict[str, Any]] = {}
-            ssh_credentials: dict[str, dict[str, Any]] = {}
-            for conn_id, conn_data in credentials_data.items():
-                if isinstance(conn_data, dict):
-                    db_connection = conn_data.get("#connection")
-                    if isinstance(db_connection, dict):
-                        credentials[conn_id] = db_connection
-                    ssh_connection = conn_data.get("network/ssh_tunnel")
-                    if isinstance(ssh_connection, dict):
-                        ssh_credentials[conn_id] = ssh_connection
+            credentials, ssh_credentials = _extract_credentials(credentials_data)
 
             logger.info(
                 f"Successfully decrypted credentials for {len(credentials)} connections"
             )
             return credentials, ssh_credentials
 
-        except (subprocess.SubprocessError, json.JSONDecodeError) as e:
+        except (OSError, subprocess.SubprocessError, json.JSONDecodeError) as e:
             logger.warning(f"Could not decrypt credentials file: {e}")
             return {}, {}
 
@@ -101,20 +129,17 @@ class DBeaverImporter:
             data_sources = json.load(handle)
 
         # Try to decrypt credentials
+        self._credentials_decrypted = False
         credentials, ssh_credentials = self._decrypt_credentials()
 
-        if not credentials and self.credentials_path.exists():
+        if not (self._credentials_decrypted or credentials or ssh_credentials) and self.credentials_path.exists():
             # Fallback: try to read as plaintext JSON (some DBeaver versions don't encrypt)
             try:
                 with self.credentials_path.open("r", encoding="utf-8") as handle:
                     cred_data = json.load(handle)
-                    if isinstance(cred_data, dict):
-                        for conn_id, conn_creds in cred_data.items():
-                            if not isinstance(conn_creds, dict):
-                                continue
-                            db_connection = conn_creds.get("#connection")
-                            if isinstance(db_connection, dict):
-                                credentials[conn_id] = db_connection
+                    database, ssh = _extract_credentials(cred_data)
+                    credentials.update(database)
+                    ssh_credentials.update(ssh)
                     logger.info("Credentials file was not encrypted")
             except (json.JSONDecodeError, UnicodeDecodeError):
                 logger.warning(
@@ -129,28 +154,48 @@ class DBeaverImporter:
         connections: list[dict[str, Any]] = []
         imported_names: list[str] = []
         seen_names: list[str] = []
+        source_names: dict[str, tuple[str, str, tuple]] = {}
         connections_data = data_sources.get("connections", {})
         if not isinstance(connections_data, dict):
             connections_data = {}
+        selected_names = {
+            self._sanitize_name(data.get("name", conn_id))
+            for conn_id, data in connections_data.items()
+            if isinstance(data, dict)
+            and data.get("provider") in {"postgresql", "clickhouse"}
+            and (only_set is None or data.get("name", conn_id) in only_set)
+        }
 
         for conn_id, conn_data in connections_data.items():
             if not isinstance(conn_data, dict):
                 continue
             original_name = conn_data.get("name", conn_id)
-            if only_set and original_name not in only_set:
+            selected = only_set is None or original_name in only_set
+            name = self._sanitize_name(original_name)
+            if not selected and name not in selected_names:
                 continue
-            if only_set:
-                seen_names.append(original_name)
-            # Pass both DB and SSH credentials
-            db_creds = credentials.get(conn_id)
-            ssh_creds = ssh_credentials.get(conn_id)
             converted = self._convert_connection(
-                conn_id, conn_data, db_creds, ssh_creds
+                conn_id, conn_data, credentials.get(conn_id), ssh_credentials.get(conn_id)
             )
-            if converted:
+            if converted is None:
+                continue
+            key = self._group_key(converted)
+            previous = source_names.get(name)
+            if previous is not None and (not merge_clusters or previous[2] != key):
+                previous_name, previous_id, _ = previous
+                raise ValueError(
+                    f"DBeaver connections '{previous_name}' ({previous_id}) and "
+                    f"'{original_name}' ({conn_id}) both map to connection_name '{name}'; "
+                    "rename one before importing"
+                )
+            source_names[name] = (original_name, conn_id, key)
+            if selected:
+                if only_set:
+                    seen_names.append(original_name)
                 connections.append(converted)
                 imported_names.append(original_name)
 
+        self.last_merge_report = self._build_merge_report(connections) if merge_clusters else []
         if merge_clusters:
             connections = self._merge_cluster_connections(connections)
 
@@ -245,11 +290,6 @@ class DBeaverImporter:
                 "user": ssh_user,
             }
 
-            # Store SSH password if available
-            if ssh_creds and "password" in ssh_creds:
-                connection["ssh_tunnel"]["password"] = ssh_creds["password"]
-                print("    SSH Password: ******** (stored in connections.yaml)")
-
             # Add SSH port if non-standard
             ssh_port = ssh_props.get("port", 22)
             if ssh_port and str(ssh_port) != "22":
@@ -259,7 +299,15 @@ class DBeaverImporter:
             key_path = ssh_props.get("keyPath", "")  # DBeaver uses 'keyPath'
             auth_type = ssh_props.get("authType", "")
 
-            if key_path:
+            if ssh_creds and "password" in ssh_creds:
+                if auth_type != "PASSWORD" and (key_path or auth_type == "PUBLIC_KEY"):
+                    if key_path and ssh_creds["password"]:
+                        print("    Warning: SSH key passphrase was not imported; unlock the key with ssh-agent")
+                else:
+                    connection["ssh_tunnel"]["password"] = ssh_creds["password"]
+                    print("    SSH Password: ******** (stored in connections.yaml)")
+
+            if key_path and auth_type != "PASSWORD":
                 connection["ssh_tunnel"]["private_key"] = key_path
                 print(f"    SSH: Key authentication with {key_path}")
             elif auth_type == "PASSWORD":
@@ -726,17 +774,12 @@ def main() -> None:
         print("Dry run: no files will be written\n")
 
     try:
+        _refuse_symlink(output_path)
         importer = DBeaverImporter(dbeaver_path)
-        # Always import raw connections first so we can report on merges clearly.
-        raw_connections = importer.import_connections(
-            merge_clusters=False, only_names=only_names
+        connections = importer.import_connections(
+            merge_clusters=merge_clusters, only_names=only_names
         )
-        merge_report = []
-        if merge_clusters:
-            merge_report = importer._build_merge_report(raw_connections)
-            connections = importer._merge_cluster_connections(raw_connections)
-        else:
-            connections = raw_connections
+        merge_report = importer.last_merge_report
 
         if only_names:
             missing = sorted(set(only_names) - set(importer.last_seen_names))
@@ -814,8 +857,8 @@ def main() -> None:
                 if existing_yaml is not None:
                     # Local wall-clock is intentional: the backup filename should
                     # match the user's clock, not UTC.
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")  # noqa: DTZ005
-                    # Create backup filename: connections.yaml.bak.20241230_143022
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")  # noqa: DTZ005
+                    # Include microseconds so rapid repeated imports retain both backups.
                     backup_name = f"{output_path.stem}.yaml.bak.{timestamp}"
                     backup_path = output_path.parent / backup_name
                     _write_text_file_secure(backup_path, existing_yaml)
