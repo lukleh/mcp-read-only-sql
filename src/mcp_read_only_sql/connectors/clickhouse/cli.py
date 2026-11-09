@@ -155,9 +155,13 @@ class ClickHouseCLIConnector(BaseCLIConnector):
                 fmt: str = "TabSeparatedWithNames",
             ) -> list[str]:
                 cmd = [binary]
-                if port == 9440:
+                if selected_server.port in (8443, 9440):
                     cmd.append("--secure")  # TLS native port
-                    logger.debug("Adding --secure flag for TLS port 9440")
+                    logger.debug("Adding --secure flag for the configured TLS endpoint")
+                    if local_port:
+                        # Preserve the remote certificate identity while the
+                        # TCP connection goes through the local SSH listener.
+                        cmd += ["--tls-sni-override", selected_server.host]
                 cmd += [
                     "--host",
                     host,
@@ -288,6 +292,15 @@ class ClickHouseCLIConnector(BaseCLIConnector):
                             if stderr
                             else "Unknown error"
                         )
+                        if (
+                            "tls-sni-override" in error_msg
+                            and "unrecognized option" in error_msg.lower()
+                        ):
+                            raise ConnectorError(
+                                "clickhouse-client: TLS over SSH requires a client with "
+                                "--tls-sni-override (26.1 or newer); upgrade the client "
+                                "or use implementation: python"
+                            )
                         logger.error(f"clickhouse-client error: {error_msg}")
                         raise ConnectorError(f"clickhouse-client: {error_msg}")
 
