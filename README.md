@@ -32,6 +32,20 @@ All write operations (INSERT, UPDATE, DELETE, etc.) are blocked at the database 
 
 The shared connector base also applies hard timeouts, giving the MCP server deterministic behaviour even if the database misbehaves.
 
+The PostgreSQL CLI ignores psql startup files. Other libpq environment and service
+configuration can still supply connection defaults, including startup options;
+the explicit read-only transaction and statement policy remain enforced for every
+query. ClickHouse CLI retains its normal client configuration so configured CA
+certificates and authentication options continue to work. Explicit connection,
+output-format, and read-only flags take precedence; review the remaining client
+settings as part of the connection configuration.
+
+`connection_timeout` uses positive whole seconds for both database types and
+implementations. An integer-valued float such as `10.0` is normalized to `10`;
+fractions such as `0.5` are rejected rather than truncated by a client. PostgreSQL
+limits this setting to 2,147,483,647 seconds. `query_timeout` may use positive
+fractional seconds for the application deadline.
+
 Because bare names resolve through `search_path`, the guard also asks the server, right before the query, whether any bare function or operator it uses has a definition outside `pg_catalog` in a schema the session can see, and refuses the query if so. This matches on name only, so a visible `public.length(integer)` refuses `length('abc')` even though PostgreSQL would pick the catalog function; the error says to qualify the call as `pg_catalog.length(...)` or list the function. Resolving overloads client-side would mean reimplementing PostgreSQL's function resolution, so the guard stays conservative. The guard is still a filter, not a privilege boundary. It cannot see inside views, user-defined types or casts that already exist in the database, and it does not reduce what the configured login is allowed to do. Log in with a role that can only read (for PostgreSQL 14+, `pg_read_all_data`); a superuser login stays a superuser login.
 
 See [READ_ONLY_ENFORCEMENT_MATRIX.md](READ_ONLY_ENFORCEMENT_MATRIX.md) for a statement-by-statement view of every write-capable command and the tests that enforce it.
@@ -189,7 +203,16 @@ PostgreSQL connections refuse function calls outside the built-in allow-list. If
 
 ### 4. Validate and Test Connections
 
-The package includes management subcommands for connection validation and dry-run testing:
+The package includes management subcommands for connection validation and dry-run testing.
+
+Runtime loading and `validate-config` use the same structural rules. Server and
+SSH ports must be integer YAML values, usernames and SSH hosts must be nonempty
+strings, and obsolete credential fields must be removed even from disabled SSH
+tunnels. Older configurations that loaded despite validator errors need these
+corrections before upgrading. Validation reports the first structural error per
+connection; environment checks run after the complete configuration loads.
+
+Run the management commands with:
 
 ```bash
 uvx --from . mcp-read-only-sql validate-config

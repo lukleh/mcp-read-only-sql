@@ -2,6 +2,8 @@
 # This file demonstrates all connection variations and options.
 # `uvx mcp-read-only-sql@latest --write-sample-config` writes it to
 # ~/.config/lukleh/mcp-read-only-sql/connections.yaml
+# connection_timeout requires positive whole seconds (10 or 10.0, not 0.5).
+# query_timeout may use positive fractional seconds for the application deadline.
 
 # ============================================================================
 # BASIC CONNECTIONS

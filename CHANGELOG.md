@@ -7,6 +7,14 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Runtime configuration loading now enforces the same structural rules as
+  `validate-config`: use integer database/SSH ports and nonempty string SSH
+  identities, and remove obsolete credential keys from enabled and disabled
+  tunnels. Configurations previously accepted only by runtime must be corrected
+  before upgrading. The validator retains the inferred-default-database warning.
+
 ## [0.7.0] - 2026-09-29
 
 ### Changed
