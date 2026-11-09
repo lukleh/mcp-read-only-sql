@@ -324,12 +324,15 @@ class TestConnection:
                 }
             )
 
+    @pytest.mark.parametrize("db_type", ["postgresql", "clickhouse"])
+    @pytest.mark.parametrize("implementation", ["cli", "python"])
     @pytest.mark.parametrize("value", [10, 10.0])
-    def test_postgresql_connection_timeout_uses_integer_seconds(self, value):
+    def test_connection_timeout_uses_integer_seconds(self, value, db_type, implementation):
         conn = Connection(
             {
                 "connection_name": "test",
-                "type": "postgresql",
+                "type": db_type,
+                "implementation": implementation,
                 "servers": ["localhost:5432"],
                 "db": "testdb",
                 "username": "testuser",
@@ -339,13 +342,16 @@ class TestConnection:
         assert conn.connection_timeout == 10
         assert isinstance(conn.connection_timeout, int)
 
-    @pytest.mark.parametrize("value", [0.5, 10.5])
-    def test_postgresql_rejects_fractional_connection_timeout(self, value):
+    @pytest.mark.parametrize("db_type", ["postgresql", "clickhouse"])
+    @pytest.mark.parametrize("implementation", ["cli", "python"])
+    @pytest.mark.parametrize("value", [0.5, 1.5, 10.5])
+    def test_rejects_fractional_connection_timeout(self, value, db_type, implementation):
         with pytest.raises(ValueError, match="connection_timeout.*whole number"):
             Connection(
                 {
                     "connection_name": "test",
-                    "type": "postgresql",
+                    "type": db_type,
+                    "implementation": implementation,
                     "servers": ["localhost:5432"],
                     "db": "testdb",
                     "username": "testuser",
@@ -353,21 +359,17 @@ class TestConnection:
                 }
             )
 
-    def test_clickhouse_keeps_fractional_connection_timeout(self):
-        conn = Connection(
-            {
-                "connection_name": "test",
-                "type": "clickhouse",
-                "servers": ["localhost:8123"],
-                "db": "testdb",
-                "username": "testuser",
-                "connection_timeout": 0.5,
-            }
-        )
-        assert conn.connection_timeout == 0.5
+    @pytest.mark.parametrize("value", [2**31, 1e30])
+    def test_postgresql_connection_timeout_rejects_libpq_overflow(self, value):
+        with pytest.raises(ValueError, match="connection_timeout.*2147483647"):
+            Connection({
+                "connection_name": "test", "type": "postgresql",
+                "servers": ["localhost:5432"], "db": "testdb",
+                "username": "testuser", "connection_timeout": value,
+            })
 
     @pytest.mark.parametrize("field", ["connection_timeout", "query_timeout"])
-    @pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+    @pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf"), 10**1000])
     def test_nonfinite_timeouts_are_rejected(self, field, value):
         with pytest.raises(ValueError, match=field):
             Connection(

@@ -19,22 +19,26 @@ def _normalize_positive_timeout(value: Any, field_name: str) -> float:
     """Validate numeric timeout values used at runtime."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"Field '{field_name}' must be a positive number")
-    if not math.isfinite(value) or value <= 0:
+    try:
+        finite = math.isfinite(value)
+    except OverflowError:
+        finite = False
+    if not finite or value <= 0:
         raise ValueError(f"Field '{field_name}' must be a positive number")
     return value
 
 
-def _normalize_connection_timeout(value: Any, db_type: str) -> float:
-    """Keep PostgreSQL's libpq timeout in its required whole-second form."""
+def _normalize_connection_timeout(value: Any, db_type: str) -> int:
+    """Use whole seconds supported consistently by all client implementations."""
     timeout = _normalize_positive_timeout(value, "connection_timeout")
-    if db_type == "postgresql":
-        if timeout != int(timeout):
-            raise ValueError(
-                "Field 'connection_timeout' must be a positive whole number of "
-                "seconds for postgresql"
-            )
-        return int(timeout)
-    return timeout
+    if timeout != int(timeout):
+        raise ValueError(
+            "Field 'connection_timeout' must be a positive whole number of "
+            f"seconds for {db_type}"
+        )
+    if db_type == "postgresql" and timeout > 2**31 - 1:
+        raise ValueError("Field 'connection_timeout' must not exceed 2147483647 seconds for postgresql")
+    return int(timeout)
 
 
 def _normalize_database_list(value: Any, field_name: str) -> list[str]:
