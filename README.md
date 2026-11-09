@@ -159,6 +159,18 @@ Distinct output connections must have unique names. With `--no-merge`, duplicate
 names are refused even for otherwise matching cluster members. Collision errors
 include both DBeaver display names and internal IDs so the entries can be renamed.
 
+The importer refuses symlinked output and backup paths, including unchanged
+imports. For a dotfiles-managed configuration, pass its real target explicitly
+with `--output`. Writes flush a private sibling temporary file before atomic
+replacement; this guarantees private, complete replacement, not durability through
+power loss. The final configuration directory is created privately; intermediate
+parent directories retain normal umask behavior.
+
+Plaintext DBeaver credential files can be imported even when OpenSSL is unavailable.
+Encrypted SSH private-key passphrases are not imported as account passwords: the
+importer warns and leaves the passphrase out of `connections.yaml`. Unlock those
+keys through `ssh-agent` before connecting.
+
 > `connections.yaml` contains credentials. Keep it private, do not commit it, and restart the MCP process after editing it so changes take effect.
 
 To allow a connection to access multiple databases, add an explicit allowlist:
