@@ -46,6 +46,18 @@ fractions such as `0.5` are rejected rather than truncated by a client. PostgreS
 limits this setting to 2,147,483,647 seconds. `query_timeout` may use positive
 fractional seconds for the application deadline.
 
+ClickHouse queries must omit explicit output `FORMAT` clauses, including on
+`SHOW` and `EXPLAIN`; the connector selects the managed TSV format. Unsupported
+syntax involving `FORMAT` is refused with guidance to remove the output clause
+or quote an identifier named `FORMAT`.
+
+The current parser also refuses queries that combine an unquoted `format`
+identifier with hex or binary literals such as `x'41'` or `b'01000001'`.
+Quote the identifier, for example `WHERE "format" = x'41'`, as a workaround.
+When unquoted `FORMAT` is present, Unicode quote delimiters and ClickHouse-only
+whitespace are also refused because the parser tokenizes them differently. Use
+ASCII syntax or quote an identifier named `FORMAT`.
+
 Because bare names resolve through `search_path`, the guard also asks the server, right before the query, whether any bare function or operator it uses has a definition outside `pg_catalog` in a schema the session can see, and refuses the query if so. This matches on name only, so a visible `public.length(integer)` refuses `length('abc')` even though PostgreSQL would pick the catalog function; qualify explicit function calls as `pg_catalog.length(...)` or allow trusted functions through `allowed_functions`. Explicit operators can use `OPERATOR(pg_catalog.<operator>)`. Implicit comparisons in `BETWEEN`, `IN`, `CASE`, and `JOIN USING`/`NATURAL JOIN` have no operator to qualify; configure the PostgreSQL login role `search_path` without the reported schema instead. Resolving overloads client-side would mean reimplementing PostgreSQL's function resolution, so the guard stays conservative. The guard is still a filter, not a privilege boundary. It cannot see inside views, user-defined types or casts that already exist in the database, and it does not reduce what the configured login is allowed to do. Log in with a role that can only read (for PostgreSQL 14+, `pg_read_all_data`); a superuser login stays a superuser login.
 
 See [READ_ONLY_ENFORCEMENT_MATRIX.md](READ_ONLY_ENFORCEMENT_MATRIX.md) for a statement-by-statement view of every write-capable command and the tests that enforce it.
