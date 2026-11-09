@@ -184,6 +184,9 @@ def test_postgresql_lexer_recognizes_escaped_literal_boundaries(query):
         ";SELECT 1",
         "/* comment only */",
         ";",
+        "SELECT 1\x00; SELECT 2",
+        "SELECT 'before\x00after'",
+        "SELECT 1 -- comment\x00; SELECT 2",
     ],
 )
 def test_postgresql_lexer_does_not_accept_extra_statement_boundaries(query):
