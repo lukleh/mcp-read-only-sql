@@ -8,6 +8,7 @@ from mcp_read_only_sql.utils.sql_guard import (
     ReadOnlyQueryError,
     postgresql_shadow_guard_block,
     postgresql_shadow_query,
+    postgresql_statement_is_select,
     sanitize_postgresql_read_only_sql,
 )
 from tests.sql_statement_lists import (
@@ -158,6 +159,39 @@ def test_unparseable_sql_is_rejected_before_reaching_the_server():
     with pytest.raises(ReadOnlyQueryError) as exc_info:
         sanitize_postgresql_read_only_sql("SELEC 1")
     assert "parse" in str(exc_info.value).lower()
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        r"SELECT E'it\'s;ok' AS value",
+        r"SELECT E'it\'s;ok' AS value; -- trailing comment",
+        r"SELECT E'\\;literal' AS value",
+        "SELECT $$it's;ok$$ AS value; /* ; */",
+    ],
+)
+def test_postgresql_lexer_recognizes_escaped_literal_boundaries(query):
+    assert sanitize_postgresql_read_only_sql(query) == query
+    assert postgresql_statement_is_select(query)
+    assert postgresql_shadow_query(query) is None
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        r"SELECT E'it\'s;ok'; SELECT 2",
+        "SELECT 1;;",
+        ";SELECT 1",
+        "/* comment only */",
+        ";",
+        "SELECT 1\x00; SELECT 2",
+        "SELECT 'before\x00after'",
+        "SELECT 1 -- comment\x00; SELECT 2",
+    ],
+)
+def test_postgresql_lexer_does_not_accept_extra_statement_boundaries(query):
+    with pytest.raises(ReadOnlyQueryError):
+        sanitize_postgresql_read_only_sql(query)
 
 
 @pytest.mark.security

@@ -183,8 +183,8 @@ def postgresql_statement_is_select(query: str) -> bool:
     and SHOW cannot, and their output is small enough to fetch at once.
     """
 
-    statements = parser.parse_sql(sanitize_read_only_sql(query))
-    return isinstance(statements[0].stmt, ast.SelectStmt)
+    _, statement = _parse_postgresql_statement(query)
+    return isinstance(statement, ast.SelectStmt)
 
 
 def postgresql_shadow_query(
@@ -268,20 +268,45 @@ def postgresql_shadow_guard_block(shadow_query: str) -> str:
 def _analyze(
     query: str, allowed_functions: Iterable[str]
 ) -> tuple[str, _ReadOnlyPolicy]:
-    stripped = sanitize_read_only_sql(query)
+    stripped, statement = _parse_postgresql_statement(query)
+    policy = _ReadOnlyPolicy(frozenset(allowed_functions))
+    policy(statement)
+    return stripped, policy
+
+
+def _parse_postgresql_statement(query: str) -> tuple[str, ast.Node]:
+    """Use PostgreSQL's grammar and lexer for every PostgreSQL input path."""
+    if query is None:
+        raise ReadOnlyQueryError("Query must not be None")
+    stripped = query.strip()
+    if not stripped:
+        raise ReadOnlyQueryError("Query must not be empty")
+    if "\x00" in stripped:
+        raise ReadOnlyQueryError("SQL must not contain NUL bytes")
     try:
         statements = parser.parse_sql(stripped)
+        tokens = [
+            token
+            for token in parser.scan(stripped)
+            if token.name not in {"C_COMMENT", "SQL_COMMENT"}
+        ]
+        semicolons = sum(token.name == "ASCII_59" for token in tokens)
     except parser.ParseError as exc:
         raise ReadOnlyQueryError(
             f"SQL could not be parsed, so it cannot be validated for read-only mode: {exc}"
         ) from exc
-    if len(statements) != 1:
+    if (
+        len(statements) != 1
+        or semicolons > 1
+        or (semicolons and tokens[-1].name != "ASCII_59")
+    ):
         raise ReadOnlyQueryError(
             "Multiple SQL statements are not allowed in read-only mode"
         )
-    policy = _ReadOnlyPolicy(frozenset(allowed_functions))
-    policy(statements[0].stmt)
-    return stripped, policy
+    statement = statements[0].stmt
+    if statement is None:
+        raise ReadOnlyQueryError("Query must contain a SQL statement")
+    return stripped, statement
 
 
 def _literal(value: str) -> str:
@@ -298,6 +323,7 @@ class _ReadOnlyPolicy(visitors.Visitor):
 
     def __init__(self, extra_functions: frozenset[str]):
         super().__init__()
+        self.visit = self._visit_node
         # A configured ``schema.name`` permits both the qualified call and the
         # bare ``name(...)``, which is how such a function is normally invoked
         # with its schema on search_path; the shadow check then pins the bare
@@ -315,7 +341,7 @@ class _ReadOnlyPolicy(visitors.Visitor):
         self.bare_operators: set[str] = set()
         self.pinned_schemas: set[tuple[str, str]] = set()
 
-    def visit(self, ancestors, node):
+    def _visit_node(self, ancestors, node):
         if isinstance(node, ast.Node) and type(node).__name__.endswith("Stmt"):
             self._check_statement(node)
 
@@ -374,6 +400,11 @@ class _ReadOnlyPolicy(visitors.Visitor):
             return
         class_name = type(node).__name__
         label = _STATEMENT_LABELS.get(class_name, class_name.removesuffix("Stmt"))
+        if isinstance(node, ast.VariableSetStmt) and node.name in {
+            "TRANSACTION",
+            "SESSION CHARACTERISTICS",
+        }:
+            label = "transaction control"
         raise ReadOnlyQueryError(
             f"{label} statements are not allowed in read-only mode "
             "(only SELECT, EXPLAIN and SHOW are accepted)"

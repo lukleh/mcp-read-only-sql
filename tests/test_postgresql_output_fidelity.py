@@ -93,6 +93,7 @@ def _connector(implementation: str, config):
         ("SELECT E'l1\\nl2' AS v", 'v\n"l1\nl2"'),
         ("SELECT E'abc\\r' AS v", 'v\n"abc\r"'),
         ("SELECT 'q\"q' AS v", 'v\n"q""q"'),
+        (r"SELECT E'it\'s;ok' AS v", "v\nit's;ok"),
         ("SELECT '' AS x", "x\n"),
         ("SELECT NULL AS x", "x\n"),
         ("SELECT v FROM (VALUES ('a'), (NULL)) AS t(v) ORDER BY v NULLS LAST", "v\na\n"),
