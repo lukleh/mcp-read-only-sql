@@ -274,11 +274,12 @@ Explicitly excluded catalog functions cannot be re-enabled through this setting.
 
 The package includes management subcommands for connection validation and dry-run testing.
 
-Runtime loading and `validate-config` use the same structural rules. Server and
-SSH ports must be integer YAML values, usernames and SSH hosts must be nonempty
-strings, and obsolete credential fields must be removed even from disabled SSH
-tunnels. Older configurations that loaded despite validator errors need these
-corrections before upgrading. Validation reports the first structural error per
+Runtime loading and `validate-config` use the same structural rules. Server ports
+must be integer YAML values, and database usernames and SSH hosts must be nonempty
+strings. SSH user and port may be omitted or `null`; otherwise the user must be a
+nonempty string and the port an integer. Obsolete credential fields must be removed
+even from disabled SSH tunnels. Older configurations that loaded despite validator
+errors need these corrections before upgrading. Validation reports the first structural error per
 connection; environment checks run after the complete configuration loads.
 
 Run the management commands with:
@@ -458,8 +459,29 @@ Example HAProxy configuration:
 When multiple servers are specified in a connection's configuration, the system currently uses only the first server in the list. Load balancing across servers is not implemented.
 
 ### SSH Authentication
-- **One tunnel**: Both implementations start the system `ssh` for the tunnel, so everything `ssh` supports applies: keys, agents, certificates, `~/.ssh/config`. `ssh_tunnel.private_key` is passed with `-i`; `ssh_tunnel.password` needs `sshpass`
-- **SSH agent / identity fallback**: Omit both `private_key` and `password` and `ssh` runs without `-i`, so agent identities and matching identity options are used. The configured `ssh_tunnel.host`, `user`, and `port` are still passed explicitly; full OpenSSH `Host` alias fallback for those fields is future work.
+
+- **One tunnel**: Both implementations start the system `ssh` for the tunnel, with support for keys, agents, certificates, and `~/.ssh/config`. `ssh_tunnel.private_key` is passed with `-i`; `ssh_tunnel.password` needs `sshpass`
+- **SSH agent / identity fallback**: Omit both `private_key` and `password` and `ssh` runs without `-i`, so agent identities and matching identity options are used.
+- **OpenSSH Host aliases**: `ssh_tunnel.host` is required and may name a `Host` alias from `~/.ssh/config`. Omit `user` and `port` (or set them to `null`) to inherit OpenSSH's `User` and `Port` settings and defaults. An explicit `user` or `port` overrides that setting independently. Previously an omitted port forced 22; set `port: 22` explicitly to keep that behavior. DBeaver imports write an explicit SSH port, including 22, to preserve the imported route.
 - **Timeout behavior**: Tunnel startup defaults to 30 seconds to allow `ssh` interactive approval flows such as hardware tokens or short-lived certificate prompts. Set `ssh_tunnel.ssh_timeout` to a lower value when fail-fast behavior is preferred for unreachable bastions.
 - **Cancellation cleanup**: Cancellation and timeout deadlines stop and reap owned SSH processes before returning. Cleanup gives `sshpass` up to 0.25 seconds to forward `SIGTERM` to its SSH child before forcing termination; ordinary tunnel shutdown allows 5 seconds. A hard timeout marks when cancellation begins, so process construction, cleanup, and operating-system reaping can add time before the call returns.
 - **Host-key verification**: `ssh` verifies the bastion's host key, and by default the key must already be known: `ssh_tunnel.host_key_checking` takes the OpenSSH `StrictHostKeyChecking` values and defaults to `yes`. A bastion you have connected to with `ssh` before is already known. To provision one you have not, fetch its key with `ssh-keyscan -p <port> <host>`, compare the fingerprint (`ssh-keygen -lf` on the output) with one you got from the bastion's operator or console, and only then append the line to `~/.ssh/known_hosts`; `ssh-keyscan` itself does not verify anything, so appending it unseen is trust on first use, which is what `accept-new` does with a safety check. `ssh_tunnel.known_hosts_file` can point at another file; `/etc/ssh/ssh_known_hosts` is read as well. `accept-new` is the explicit trust-on-first-use mode: the bastion is recorded on first use and refused if its key changes, and because `ssh` only warns when it cannot write the file, the tunnel passes known_hosts files explicitly and checks that a first-use key was saved. It uses `ssh_tunnel.known_hosts_file` when set, otherwise the standard user and global files. This mode overrides `UserKnownHostsFile` and `GlobalKnownHostsFile` from `~/.ssh/config`; set `ssh_tunnel.known_hosts_file` to use a custom file. `HostKeyAlias` and `HostName` still apply. A bastion covered only by an `@cert-authority` entry is always connected to strictly, so a valid host certificate connects and a raw key is refused rather than recorded. `no` restores the previous behaviour: every key is trusted and none is recorded. A changed key surfaces as an `SSH:` error naming host key verification; remove the stale line from the file once you have confirmed the new key.
+
+For example, keep the bastion's hostname, login, and port together in `~/.ssh/config`:
+
+```sshconfig
+Host production-bastion
+    HostName bastion.example.com
+    User deploy
+    Port 2222
+```
+
+Then add this to the database connection in `connections.yaml`:
+
+```yaml
+ssh_tunnel:
+  host: production-bastion
+```
+
+The tunnel uses `deploy@bastion.example.com` on port 2222. Changes to the alias's
+user or port also apply to the tunnel, without duplicating them in the connection.

@@ -63,6 +63,8 @@ def test_duplicate_names_are_rejected_by_validator(tmp_path):
     {"db": " analytics ", "allowed_databases": ["analytics"]},
     {"ssh_tunnel": {"enabled": False}},
     {"ssh_tunnel": {"host": "bastion", "user": "tunnel"}},
+    {"ssh_tunnel": {"host": "production-bastion"}},
+    {"ssh_tunnel": {"host": "production-bastion", "user": None, "port": None}},
     {"servers": ["localhost"]},
 ])
 def test_valid_runtime_config_passes_validator(tmp_path, update):

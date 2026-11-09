@@ -182,9 +182,15 @@ class CLISSHTunnel:
         resolved = _ssh_resolved_config(ssh_options, destination)
         if not resolved:
             raise ConnectorError(f"SSH: cannot resolve host-key settings for {destination}")
+        try:
+            port = int(resolved["port"])
+        except (KeyError, ValueError) as exc:
+            raise ConnectorError(
+                f"SSH: cannot resolve host-key port for {destination}"
+            ) from exc
         name = resolved.get("hostkeyalias") or known_hosts_name(
             resolved.get("hostname", self.ssh_host),
-            int(resolved.get("port", self.ssh_port)),
+            port,
         )
         user_files = self._user_known_hosts_files()
         matches = [
@@ -260,7 +266,10 @@ class CLISSHTunnel:
         destination = (
             f"{self.ssh_user}@{self.ssh_host}" if self.ssh_user else self.ssh_host
         )
-        lookup_options = ["-p", str(self.ssh_port)]
+        # Use the same explicit overrides for resolution and the connection;
+        # omitted values must remain available to the matching Host block.
+        port_options = ["-p", str(self.ssh_port)] if self.ssh_port is not None else []
+        lookup_options = list(port_options)
         known_hosts_options: list[str] = []
         if host_key_checking == "accept-new":
             known_hosts_options = [
@@ -315,8 +324,7 @@ class CLISSHTunnel:
             "ServerAliveInterval=60",  # Keep connection alive
             "-o",
             "ExitOnForwardFailure=yes",  # Exit if port forwarding fails
-            "-p",
-            str(self.ssh_port),
+            *port_options,
         ]
         if self.ssh_config.host_key_checking == "accept-new":
             ssh_options.extend(known_hosts_options)

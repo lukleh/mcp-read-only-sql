@@ -7,6 +7,14 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- SSH tunnels for both database implementations now inherit OpenSSH's `User`
+  and `Port` settings and defaults when `ssh_tunnel.user` or `port` is omitted
+  or `null`. Explicit values still override the matching SSH setting. Previously
+  an omitted port forced 22; add `port: 22` to retain that route. DBeaver imports
+  now write an explicit SSH port, including 22, to preserve the imported route.
+
 ## [0.8.0] - 2026-11-09
 
 ### Changed

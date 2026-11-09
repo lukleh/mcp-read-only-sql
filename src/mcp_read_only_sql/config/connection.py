@@ -8,7 +8,6 @@ from typing import Any, Optional
 
 # Default values
 DEFAULT_IMPLEMENTATION = "cli"
-DEFAULT_SSH_PORT = 22
 DEFAULT_QUERY_TIMEOUT = 120
 DEFAULT_CONNECTION_TIMEOUT = 10
 # OpenSSH StrictHostKeyChecking values accepted for ssh_tunnel.host_key_checking
@@ -170,8 +169,9 @@ class SSHTunnelConfig:
     """SSH tunnel configuration with validation."""
 
     host: str
-    port: int
-    user: str
+    # None leaves these values to OpenSSH's configuration and defaults.
+    port: int | None = None
+    user: str | None = None
     private_key: str | None = None
     password: str | None = None
     ssh_timeout: int | None = None
@@ -187,9 +187,13 @@ class SSHTunnelConfig:
         """Validate SSH tunnel configuration."""
         for name in ("host", "user"):
             value = getattr(self, name)
+            if name == "user" and value is None:
+                continue
             if not isinstance(value, str) or not value.strip():
                 raise ValueError(f"SSH tunnel '{name}' must be a non-empty string")
-        if isinstance(self.port, bool) or not isinstance(self.port, int) or not 1 <= self.port <= 65535:
+        if self.port is not None and (
+            isinstance(self.port, bool) or not isinstance(self.port, int) or not 1 <= self.port <= 65535
+        ):
             raise ValueError("SSH tunnel port must be an integer between 1-65535")
         # When neither private_key nor password is supplied, fall back to
         # agent-loaded identities. This supports setups like Skotty where
@@ -216,8 +220,6 @@ class SSHTunnelConfig:
         # Required fields
         if "host" not in data:
             raise ValueError("SSH tunnel configuration missing required field 'host'")
-        if "user" not in data:
-            raise ValueError("SSH tunnel configuration missing required field 'user'")
 
         password = data.get("password")
 
@@ -251,8 +253,8 @@ class SSHTunnelConfig:
 
         return cls(
             host=data["host"],
-            port=data.get("port", DEFAULT_SSH_PORT),
-            user=data["user"],
+            port=data.get("port"),
+            user=data.get("user"),
             private_key=private_key,
             password=password,
             ssh_timeout=ssh_timeout,

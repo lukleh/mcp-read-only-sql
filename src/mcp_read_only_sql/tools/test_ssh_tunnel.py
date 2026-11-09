@@ -54,15 +54,15 @@ async def test_ssh_tunnels(
             print(f"Testing connection: {name}")
             print(f"  Implementation: {impl}")
             print(f"  SSH Host: {ssh_config.host}")
-            print(f"  SSH User: {ssh_config.user}")
-            print(f"  SSH Port: {ssh_config.port}")
+            print(f"  SSH User: {ssh_config.user or 'OpenSSH config/default'}")
+            print(f"  SSH Port: {ssh_config.port if ssh_config.port is not None else 'OpenSSH config/default'}")
 
             if ssh_config.password:
                 auth_method = "password"
             elif ssh_config.private_key:
                 auth_method = f"key ({ssh_config.private_key})"
             else:
-                auth_method = "unknown"
+                auth_method = "OpenSSH config / agent"
             print(f"  Auth: {auth_method}")
 
             servers_to_test = [(server.host, server.port) for server in servers]

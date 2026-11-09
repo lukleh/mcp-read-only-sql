@@ -24,6 +24,7 @@ from mcp_read_only_sql.errors import ConnectorError
 from mcp_read_only_sql.utils.ssh_tunnel_cli import (
     CLISSHTunnel,
     HostKeySurvey,
+    _ssh_resolved_config,
     known_hosts_name,
 )
 from tests.conftest import make_connection
@@ -203,6 +204,18 @@ class TestSurvey:
         with pytest.raises(ConnectorError, match="cannot resolve host-key settings"):
             CLISSHTunnel(_config(port=2222), "db", 1)._survey([], "bastion.example.com")
 
+    @pytest.mark.parametrize("port", [None, "invalid"])
+    def test_fails_closed_without_a_resolved_port(self, monkeypatch, port):
+        resolved = {"hostname": "bastion.example.com"}
+        if port is not None:
+            resolved["port"] = port
+        monkeypatch.setattr(
+            "mcp_read_only_sql.utils.ssh_tunnel_cli._ssh_resolved_config",
+            lambda options, destination: resolved,
+        )
+        with pytest.raises(ConnectorError, match="cannot resolve host-key port"):
+            CLISSHTunnel(_config(port=None), "db", 1)._survey([], "bastion.example.com")
+
 
 async def _cli_ssh_args(
     monkeypatch, config: SSHTunnelConfig, *, pinned: bool = True
@@ -256,6 +269,58 @@ def _option(args: list[str], name: str) -> str | None:
 
 
 class TestCLIOptions:
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("user", [None, "explicit-user"])
+    @pytest.mark.parametrize("port", [None, 22, 2200])
+    @pytest.mark.parametrize("host_key_alias", [None, "bastion-key"])
+    async def test_alias_inheritance_and_explicit_overrides(
+        self, monkeypatch, tmp_path, user, port, host_key_alias
+    ):
+        """Resolve the generated command and host-key lookup with real OpenSSH."""
+        ssh_config = tmp_path / "config"
+        ssh_config.write_text(
+            "Host production-bastion\n"
+            "    HostName bastion.example.invalid\n"
+            "    User alias-user\n"
+            "    Port 2222\n"
+            + (f"    HostKeyAlias {host_key_alias}\n" if host_key_alias else "")
+        )
+        expected_port = port if port is not None else 2222
+        expected_name = host_key_alias or known_hosts_name("bastion.example.invalid", expected_port)
+        known_hosts = tmp_path / "known_hosts"
+        known_hosts.write_text(f"{expected_name} {_public_key_line(tmp_path)}\n")
+        lookups = []
+
+        def resolve(options, destination):
+            resolved = _ssh_resolved_config(["-F", str(ssh_config), *options], destination)
+            lookups.append((options, destination, resolved))
+            return resolved
+
+        monkeypatch.setattr(
+            "mcp_read_only_sql.utils.ssh_tunnel_cli._ssh_resolved_config", resolve
+        )
+        config = _config(
+            host="production-bastion", user=user, port=port,
+            host_key_checking="accept-new", known_hosts_file=str(known_hosts),
+        )
+        args = await _cli_ssh_args(monkeypatch, config, pinned=False)
+
+        assert args[-1] == (f"{user}@production-bastion" if user else "production-bastion")
+        assert len(lookups) == 1, "the resolved host-key entry was already pinned"
+        lookup_options, destination, lookup_config = lookups[0]
+        assert destination == args[-1]
+        for options in (lookup_options, args):
+            if port is None:
+                assert "-p" not in options
+            else:
+                assert options[options.index("-p") + 1] == str(port)
+        effective = _ssh_resolved_config(["-F", str(ssh_config), *args[1:-1]], args[-1])
+        for resolved in (lookup_config, effective):
+            assert resolved["hostname"] == "bastion.example.invalid"
+            assert resolved["user"] == (user or "alias-user")
+            assert resolved["port"] == str(expected_port)
+        assert _option(args, "StrictHostKeyChecking") == "accept-new"
+
     @pytest.mark.anyio
     async def test_default_is_strict_with_ssh_default_file(self, monkeypatch):
         args = await _cli_ssh_args(monkeypatch, _config())
@@ -490,6 +555,44 @@ def _tunnelled_connector(implementation: str, **ssh_extra):
 @pytest.mark.parametrize("implementation", ["cli", "python"])
 class TestAgainstBastion:
     """Both implementations go through ssh, so both see the same behaviour."""
+
+    async def test_host_alias_supplies_user_port_and_identity(
+        self, implementation, tmp_path, monkeypatch
+    ):
+        ssh_config = tmp_path / "config"
+        ssh_config.write_text(
+            "Host production-bastion\n"
+            f"    HostName {docker_test_ssh_host()}\n"
+            "    User tunnel\n"
+            f"    Port {docker_test_ssh_port()}\n"
+            "    IdentityFile /tmp/docker_test_key\n"
+        )
+        spawn = asyncio.create_subprocess_exec
+
+        async def spawn_with_config(*args, **kwargs):
+            if args[0] != "ssh":
+                return await spawn(*args, **kwargs)
+            assert "-p" not in args and "-i" not in args
+            assert args[-1] == "production-bastion"
+            return await spawn(args[0], "-F", str(ssh_config), *args[1:], **kwargs)
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn_with_config)
+        monkeypatch.setattr(
+            "mcp_read_only_sql.utils.ssh_tunnel_cli._ssh_resolved_config",
+            lambda options, destination: _ssh_resolved_config(
+                ["-F", str(ssh_config), *options], destination
+            ),
+        )
+        known_hosts = tmp_path / "known_hosts"
+        connector = _tunnelled_connector(
+            implementation, host="production-bastion", user=None, port=None,
+            private_key=None, known_hosts_file=str(known_hosts),
+        )
+
+        result = await connector.execute_query("SELECT 1 AS one")
+
+        assert result.split("\n")[1] == "1"
+        assert _recorded(known_hosts, _bastion_name())
 
     async def test_first_use_records_the_bastion(self, implementation, tmp_path):
         known_hosts = tmp_path / "known_hosts"
