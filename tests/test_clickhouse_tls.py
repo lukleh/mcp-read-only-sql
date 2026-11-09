@@ -42,5 +42,8 @@ async def test_cli_tls_follows_original_endpoint(port, tunneled, monkeypatch):
     assert await connector.execute_query("SELECT 1 AS x") == "x\n1"
     command = commands[0]
     assert ("--secure" in command) == (port in (8443, 9440))
+    assert ("--tls-sni-override" in command) == (tunneled and port in (8443, 9440))
+    if "--tls-sni-override" in command:
+        assert command[command.index("--tls-sni-override") + 1] == "database.example"
     expected_port = 45678 if tunneled else {8123: 9000, 8443: 9440}.get(port, port)
     assert command[command.index("--port") + 1] == str(expected_port)
