@@ -328,3 +328,216 @@ def test_subset_cluster_settings_change_requires_full_import(tmp_path, monkeypat
         assert node2["password"] == "shared-secret"
     else:
         assert updated[0]["implementation"] == "cli"
+
+
+@pytest.mark.parametrize("selected", ["node 1", "node 2"])
+def test_partial_cluster_preserves_custom_ssh_options_and_default_port(tmp_path, monkeypatch, selected):
+    handlers = {"ssh_tunnel": {"enabled": True, "properties": {
+        "host": "bastion", "userName": "tunnel", "authType": "PASSWORD",
+    }}}
+    workspace = _write_dbeaver_workspace(tmp_path, [
+        {"id": "c1", "name": "node 1", "configuration": {"host": "node1.example", "handlers": handlers}},
+        {"id": "c2", "name": "node 2", "configuration": {"host": "node2.example", "handlers": handlers}},
+    ])
+    monkeypatch.setattr(DBeaverImporter, "_decrypt_credentials", lambda self: (
+        {key: {"user": "reader", "password": "database-secret"} for key in ("c1", "c2")},
+        {key: {"user": "tunnel", "password": "ssh-secret"} for key in ("c1", "c2")},
+    ))
+    output = tmp_path / "connections.yaml"
+    _run_import(monkeypatch, [str(workspace), "--output", str(output)])
+    previous = yaml.safe_load(output.read_text())
+    previous[0]["ssh_tunnel"].update({
+        "port": 22, "host_key_checking": "accept-new",
+        "known_hosts_file": str(tmp_path / "known_hosts"), "ssh_timeout": 45,
+    })
+    output.write_text(yaml.safe_dump(previous, sort_keys=False))
+    original = output.read_bytes()
+    _run_import(monkeypatch, [str(workspace), "--only", selected, "--output", str(output)])
+    assert yaml.safe_load(output.read_text()) == previous
+    assert output.read_bytes() == original
+
+
+def test_partial_nonleading_member_updates_unique_existing_cluster(tmp_path, monkeypatch):
+    workspace = _write_dbeaver_workspace(tmp_path, [
+        {"id": "c1", "name": "node 1", "configuration": {"host": "node1.example"}},
+        {"id": "c2", "name": "node 2", "configuration": {"host": "node2.example"}},
+    ])
+    monkeypatch.setattr(DBeaverImporter, "_decrypt_credentials", lambda self: (
+        {key: {"user": "reader", "password": "shared-secret"} for key in ("c1", "c2")}, {},
+    ))
+    output = tmp_path / "connections.yaml"
+    _run_import(monkeypatch, [str(workspace), "--output", str(output)])
+    previous = yaml.safe_load(output.read_text())
+    _run_import(monkeypatch, [str(workspace), "--only", "node 2", "--output", str(output)])
+    assert yaml.safe_load(output.read_text()) == previous
+    assert len(previous[0]["servers"]) == 2
+
+
+def test_partial_endpoint_match_refuses_multiple_existing_owners(tmp_path, monkeypatch, capsys):
+    workspace = _write_dbeaver_workspace(tmp_path, [{"id": "c2", "name": "node 2", "configuration": {"host": "node2.example"}}])
+    monkeypatch.setattr(DBeaverImporter, "_decrypt_credentials", lambda self: ({"c2": {"user": "reader"}}, {}))
+    output = tmp_path / "connections.yaml"
+    output.write_text(yaml.safe_dump([
+        {"connection_name": name, "type": "clickhouse", "servers": ["node1.example:8123", "node2.example:8123"], "db": "default", "username": "reader"}
+        for name in ("first", "second")
+    ], sort_keys=False))
+    original = output.read_bytes()
+    with pytest.raises(SystemExit) as error:
+        _run_import(monkeypatch, [str(workspace), "--only", "node 2", "--output", str(output)])
+    assert error.value.code == 1
+    assert "Ambiguous partial import" in capsys.readouterr().out
+    assert output.read_bytes() == original
+    assert not list(tmp_path.glob("*.bak.*"))
+
+
+@pytest.mark.parametrize("difference", ["database", "username", "unavailable_username", "ssh_route", "implementation"])
+def test_partial_endpoint_does_not_replace_a_different_or_unknown_identity(tmp_path, monkeypatch, capsys, difference):
+    workspace = _write_dbeaver_workspace(tmp_path, [{
+        "id": "c1", "name": "new name", "configuration": {"host": "shared.example", "database": "analytics"},
+    }])
+    creds = {} if difference == "unavailable_username" else {"c1": {"user": "reader", "password": "new-secret"}}
+    monkeypatch.setattr(DBeaverImporter, "_decrypt_credentials", lambda self: (creds, {}))
+    previous = {"connection_name": "existing", "type": "clickhouse", "servers": ["shared.example:8123"],
+                "db": "other" if difference == "database" else "analytics",
+                "username": "another" if difference == "username" else "reader", "password": "known-secret"}
+    if difference == "ssh_route":
+        previous["ssh_tunnel"] = {"host": "bastion", "user": "tunnel"}
+    if difference == "implementation":
+        previous["implementation"] = "python"
+    output = tmp_path / "connections.yaml"
+    output.write_text(yaml.safe_dump([previous], sort_keys=False))
+    original = output.read_bytes()
+    if difference == "unavailable_username":
+        with pytest.raises(SystemExit) as error:
+            _run_import(monkeypatch, [str(workspace), "--only", "new name", "--output", str(output)])
+        assert error.value.code == 1
+        assert "Cannot identify existing endpoint owner" in capsys.readouterr().out
+        assert output.read_bytes() == original
+        assert not list(tmp_path.glob("*.bak.*"))
+    else:
+        _run_import(monkeypatch, [str(workspace), "--only", "new name", "--output", str(output)])
+        by_name = {conn["connection_name"]: conn for conn in yaml.safe_load(output.read_text())}
+        assert by_name["existing"] == previous
+        assert by_name["new_name"]["db"] == "analytics"
+        assert by_name["new_name"]["username"] == "reader"
+
+
+def test_partial_new_name_does_not_replace_single_manual_profile(tmp_path, monkeypatch):
+    workspace = _write_dbeaver_workspace(tmp_path, [{"id": "c2", "name": "node 2", "configuration": {"host": "node2.example"}}])
+    monkeypatch.setattr(DBeaverImporter, "_decrypt_credentials", lambda self: ({"c2": {"user": "reader"}}, {}))
+    previous = {"connection_name": "manual_profile", "type": "clickhouse", "servers": ["node2.example:8123"],
+                "db": "default", "username": "reader", "query_timeout": 60}
+    output = tmp_path / "connections.yaml"
+    output.write_text(yaml.safe_dump([previous], sort_keys=False))
+    _run_import(monkeypatch, [str(workspace), "--only", "node 2", "--output", str(output)])
+    result = yaml.safe_load(output.read_text())
+    assert result[0] == previous
+    assert result[1]["connection_name"] == "node_2"
+
+
+@pytest.mark.parametrize("selected", ["node 1", "node 2"])
+def test_partial_cluster_keeps_unmanaged_connection_options(tmp_path, monkeypatch, selected):
+    workspace = _write_dbeaver_workspace(tmp_path, [
+        {"id": "c1", "name": "node 1", "configuration": {"host": "node1.example"}},
+        {"id": "c2", "name": "node 2", "configuration": {"host": "node2.example"}},
+    ])
+    monkeypatch.setattr(DBeaverImporter, "_decrypt_credentials", lambda self: (
+        {key: {"user": "reader"} for key in ("c1", "c2")}, {},
+    ))
+    output = tmp_path / "connections.yaml"
+    _run_import(monkeypatch, [str(workspace), "--output", str(output)])
+    previous = yaml.safe_load(output.read_text())
+    previous[0].update({"query_timeout": 60, "connection_timeout": 15,
+                        "allowed_databases": ["default", "analytics"]})
+    output.write_text(yaml.safe_dump(previous, sort_keys=False))
+    _run_import(monkeypatch, [str(workspace), "--only", selected, "--output", str(output)])
+    assert yaml.safe_load(output.read_text()) == previous
+
+
+@pytest.mark.parametrize("explicit_empty", [False, True])
+def test_partial_single_server_preserves_unavailable_password_but_allows_explicit_clear(tmp_path, monkeypatch, explicit_empty):
+    workspace = _write_dbeaver_workspace(tmp_path, [{"id": "c1", "name": "node 1", "configuration": {"host": "node1.example"}}])
+    available = {"c1": {"user": "reader", "password": "known-secret"}}
+    monkeypatch.setattr(DBeaverImporter, "_decrypt_credentials", lambda self: (available, {}))
+    output = tmp_path / "connections.yaml"
+    _run_import(monkeypatch, [str(workspace), "--output", str(output)])
+    available.clear()
+    if explicit_empty:
+        available["c1"] = {"password": ""}
+    _run_import(monkeypatch, [str(workspace), "--only", "node 1", "--output", str(output)])
+    saved = yaml.safe_load(output.read_text())[0]
+    assert saved["username"] == "reader"
+    assert saved["password"] == ("" if explicit_empty else "known-secret")
+
+
+def test_partial_import_refuses_unreadable_existing_yaml_without_overwriting(tmp_path, monkeypatch, capsys):
+    workspace = _write_dbeaver_workspace(tmp_path, [{"id": "c1", "name": "node 1"}])
+    output = tmp_path / "connections.yaml"
+    output.write_text("invalid: [\n")
+    original = output.read_bytes()
+    with pytest.raises(SystemExit) as error:
+        _run_import(monkeypatch, [str(workspace), "--only", "node 1", "--output", str(output)])
+    assert error.value.code == 1
+    assert "Cannot read existing" in capsys.readouterr().out
+    assert output.read_bytes() == original
+
+
+@pytest.mark.parametrize("changed", ["database_host", "database_name", "database_user", "ssh_host", "ssh_user", "ssh_key"])
+def test_partial_missing_credentials_never_move_to_changed_identity(tmp_path, monkeypatch, capsys, changed):
+    props = {"host": "old-bastion", "userName": "old-login", "authType": "PASSWORD"}
+    workspace = _write_dbeaver_workspace(tmp_path, [{"id": "c1", "name": "profile", "configuration": {
+        "host": "old-database", "database": "analytics", "handlers": {"ssh_tunnel": {"enabled": True, "properties": props}},
+    }}])
+    credentials = {"c1": {"user": "alice", "password": "old-database-secret"}}
+    ssh_credentials = {"c1": {"user": "old-login", "password": "old-ssh-secret"}}
+    monkeypatch.setattr(DBeaverImporter, "_decrypt_credentials", lambda self: (credentials, ssh_credentials))
+    output = tmp_path / "connections.yaml"
+    _run_import(monkeypatch, [str(workspace), "--output", str(output)])
+    original = output.read_bytes()
+    data = json.loads((workspace / "data-sources.json").read_text())
+    config = data["connections"]["c1"]["configuration"]
+    if changed == "database_host":
+        config["host"] = "new-database"
+    elif changed == "database_name":
+        config["database"] = "new-database-name"
+    elif changed == "database_user":
+        credentials["c1"]["user"] = "bob"
+    elif changed == "ssh_host":
+        config["handlers"]["ssh_tunnel"]["properties"]["host"] = "new-bastion"
+    elif changed == "ssh_user":
+        ssh_credentials["c1"]["user"] = "new-login"
+    else:
+        config["handlers"]["ssh_tunnel"]["properties"]["keyPath"] = "/new-key"
+    credentials["c1"].pop("password")
+    ssh_credentials["c1"].pop("password")
+    (workspace / "data-sources.json").write_text(json.dumps(data))
+    with pytest.raises(SystemExit) as error:
+        _run_import(monkeypatch, [str(workspace), "--only", "profile", "--output", str(output)])
+    assert error.value.code == 1
+    assert "Cannot preserve unavailable" in capsys.readouterr().out
+    assert output.read_bytes() == original
+    assert not list(tmp_path.glob("*.bak.*"))
+
+
+def test_partial_missing_ssh_password_is_not_reused_on_new_bastion(tmp_path, monkeypatch, capsys):
+    workspace = _write_dbeaver_workspace(tmp_path, [{"id": "c1", "name": "profile", "configuration": {
+        "host": "database", "handlers": {"ssh_tunnel": {"enabled": True, "properties": {
+            "host": "old-bastion", "userName": "tunnel", "authType": "PASSWORD",
+        }}},
+    }}])
+    ssh = {"c1": {"user": "tunnel", "password": "old-ssh-secret"}}
+    monkeypatch.setattr(DBeaverImporter, "_decrypt_credentials", lambda self: (
+        {"c1": {"user": "reader", "password": "available-database-secret"}}, ssh,
+    ))
+    output = tmp_path / "connections.yaml"
+    _run_import(monkeypatch, [str(workspace), "--output", str(output)])
+    original = output.read_bytes()
+    data = json.loads((workspace / "data-sources.json").read_text())
+    data["connections"]["c1"]["configuration"]["handlers"]["ssh_tunnel"]["properties"]["host"] = "new-bastion"
+    (workspace / "data-sources.json").write_text(json.dumps(data))
+    ssh["c1"].pop("password")
+    with pytest.raises(SystemExit) as error:
+        _run_import(monkeypatch, [str(workspace), "--only", "profile", "--output", str(output)])
+    assert error.value.code == 1
+    assert "Cannot preserve unavailable SSH password" in capsys.readouterr().out
+    assert output.read_bytes() == original
