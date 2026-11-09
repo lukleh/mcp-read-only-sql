@@ -103,3 +103,38 @@ def test_import_refuses_symlink_before_chmod_or_backup(tmp_path, monkeypatch, un
     assert target.read_bytes() == original
     assert stat.S_IMODE(target.stat().st_mode) == 0o644
     assert not list(tmp_path.glob("*.bak.*"))
+
+
+def test_repeated_imports_in_one_second_keep_each_backup(tmp_path, monkeypatch):
+    from datetime import UTC, datetime
+
+    from tests.test_dbeaver_import import _run_import, _write_dbeaver_workspace
+
+    workspace = _write_dbeaver_workspace(tmp_path, [{
+        "id": "c1", "name": "Analytics", "configuration": {"host": "ch1", "port": "8123"},
+    }])
+    credentials = {"c1": {"user": "reader", "password": "first-secret"}}
+    monkeypatch.setattr(dbeaver_import.DBeaverImporter, "_decrypt_credentials", lambda self: (credentials, {}))
+    timestamps = iter([
+        datetime(2026, 11, 9, 12, 0, 0, 100000, tzinfo=UTC),
+        datetime(2026, 11, 9, 12, 0, 0, 200000, tzinfo=UTC),
+    ])
+
+    class Clock:
+        @staticmethod
+        def now():
+            return next(timestamps)
+
+    monkeypatch.setattr("datetime.datetime", Clock)
+    output = tmp_path / "connections.yaml"
+    initial = b"password: original-secret\n"
+    output.write_bytes(initial)
+    _run_import(monkeypatch, [str(workspace), "--output", str(output)])
+    first = output.read_bytes()
+    credentials["c1"]["password"] = "second-secret"
+    _run_import(monkeypatch, [str(workspace), "--output", str(output)])
+
+    backups = list(tmp_path.glob("connections.yaml.bak.*"))
+    assert len(backups) == 2
+    assert {path.read_bytes() for path in backups} == {initial, first}
+    assert all(stat.S_IMODE(path.stat().st_mode) == 0o600 for path in backups)

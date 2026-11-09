@@ -687,8 +687,8 @@ def main() -> None:
                 if existing_yaml is not None:
                     # Local wall-clock is intentional: the backup filename should
                     # match the user's clock, not UTC.
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")  # noqa: DTZ005
-                    # Create backup filename: connections.yaml.bak.20241230_143022
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")  # noqa: DTZ005
+                    # Include microseconds so rapid repeated imports retain both backups.
                     backup_name = f"{output_path.stem}.yaml.bak.{timestamp}"
                     backup_path = output_path.parent / backup_name
                     _write_text_file_secure(backup_path, existing_yaml)
