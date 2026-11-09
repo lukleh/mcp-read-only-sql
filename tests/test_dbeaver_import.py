@@ -515,6 +515,7 @@ def test_partial_missing_credentials_never_move_to_changed_identity(tmp_path, mo
         ssh_credentials["c1"]["user"] = "new-login"
     else:
         config["handlers"]["ssh_tunnel"]["properties"]["keyPath"] = "/new-key"
+        config["handlers"]["ssh_tunnel"]["properties"]["authType"] = "PUBLIC_KEY"
     credentials["c1"].pop("password")
     ssh_credentials["c1"].pop("password")
     if empty_password:
