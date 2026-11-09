@@ -32,6 +32,11 @@ All write operations (INSERT, UPDATE, DELETE, etc.) are blocked at the database 
 
 The shared connector base also applies hard timeouts, giving the MCP server deterministic behaviour even if the database misbehaves.
 
+ClickHouse queries must omit explicit output `FORMAT` clauses, including on
+`SHOW` and `EXPLAIN`; the connector selects the managed TSV format. Unsupported
+syntax involving `FORMAT` is refused with guidance to remove the output clause
+or quote an identifier named `FORMAT`.
+
 Because bare names resolve through `search_path`, the guard also asks the server, right before the query, whether any bare function or operator it uses has a definition outside `pg_catalog` in a schema the session can see, and refuses the query if so. This matches on name only, so a visible `public.length(integer)` refuses `length('abc')` even though PostgreSQL would pick the catalog function; the error says to qualify the call as `pg_catalog.length(...)` or list the function. Resolving overloads client-side would mean reimplementing PostgreSQL's function resolution, so the guard stays conservative. The guard is still a filter, not a privilege boundary. It cannot see inside views, user-defined types or casts that already exist in the database, and it does not reduce what the configured login is allowed to do. Log in with a role that can only read (for PostgreSQL 14+, `pg_read_all_data`); a superuser login stays a superuser login.
 
 See [READ_ONLY_ENFORCEMENT_MATRIX.md](READ_ONLY_ENFORCEMENT_MATRIX.md) for a statement-by-statement view of every write-capable command and the tests that enforce it.
