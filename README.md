@@ -37,6 +37,10 @@ ClickHouse queries must omit explicit output `FORMAT` clauses, including on
 syntax involving `FORMAT` is refused with guidance to remove the output clause
 or quote an identifier named `FORMAT`.
 
+The current parser also refuses queries that combine an unquoted `format`
+identifier with hex or binary literals such as `x'41'` or `b'01000001'`.
+Quote the identifier, for example `WHERE "format" = x'41'`, as a workaround.
+
 Because bare names resolve through `search_path`, the guard also asks the server, right before the query, whether any bare function or operator it uses has a definition outside `pg_catalog` in a schema the session can see, and refuses the query if so. This matches on name only, so a visible `public.length(integer)` refuses `length('abc')` even though PostgreSQL would pick the catalog function; the error says to qualify the call as `pg_catalog.length(...)` or list the function. Resolving overloads client-side would mean reimplementing PostgreSQL's function resolution, so the guard stays conservative. The guard is still a filter, not a privilege boundary. It cannot see inside views, user-defined types or casts that already exist in the database, and it does not reduce what the configured login is allowed to do. Log in with a role that can only read (for PostgreSQL 14+, `pg_read_all_data`); a superuser login stays a superuser login.
 
 See [READ_ONLY_ENFORCEMENT_MATRIX.md](READ_ONLY_ENFORCEMENT_MATRIX.md) for a statement-by-statement view of every write-capable command and the tests that enforce it.
