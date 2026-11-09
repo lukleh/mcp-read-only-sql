@@ -106,12 +106,22 @@ class TestSSHTunnelConfig:
                 {"user": "tunneluser", "private_key": "~/.ssh/id_rsa"}
             )
 
-    def test_ssh_tunnel_missing_user(self):
-        """Test SSH tunnel validation catches missing user"""
-        with pytest.raises(ValueError, match="missing required field 'user'"):
-            SSHTunnelConfig.from_dict(
-                {"host": "bastion.example.com", "private_key": "~/.ssh/id_rsa"}
-            )
+    @pytest.mark.parametrize("overrides", [{}, {"user": None, "port": None}])
+    def test_ssh_tunnel_inherits_user_and_port(self, overrides):
+        config = SSHTunnelConfig.from_dict({"host": "production-bastion", **overrides})
+        assert config is not None
+        assert config.user is None
+        assert config.port is None
+
+    @pytest.mark.parametrize("value", ["", "   ", True, 123, []])
+    def test_ssh_tunnel_rejects_invalid_explicit_user(self, value):
+        with pytest.raises(ValueError, match="'user' must be a non-empty string"):
+            SSHTunnelConfig.from_dict({"host": "bastion", "user": value})
+
+    @pytest.mark.parametrize("value", [True, False, "22", 22.5, 0, -1, 65536])
+    def test_ssh_tunnel_rejects_invalid_explicit_port(self, value):
+        with pytest.raises(ValueError, match="port must be an integer between"):
+            SSHTunnelConfig.from_dict({"host": "bastion", "port": value})
 
     def test_ssh_tunnel_agent_only_auth(self):
         """SSH tunnel may omit credentials to fall back to ssh-agent identities"""

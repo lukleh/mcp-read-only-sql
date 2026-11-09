@@ -703,8 +703,25 @@ def test_import_reads_ssh_and_database_credentials_from_both_formats(tmp_path, m
     assert result[0]["username"] == "reader"
     assert result[0]["password"] == "database-secret"
     assert result[0]["ssh_tunnel"] == {
-        "host": "bastion.example", "user": "tunnel", "password": "ssh-secret",
+        "host": "bastion.example", "user": "tunnel", "port": 22, "password": "ssh-secret",
     }
+
+
+@pytest.mark.parametrize("properties,expected", [
+    ({}, 22),
+    ({"port": None}, 22),
+    ({"port": 22}, 22),
+    ({"port": "22"}, 22),
+    ({"port": "2222"}, 2222),
+])
+def test_import_keeps_dbeaver_ssh_port_explicit(properties, expected):
+    result = DBeaverImporter("/unused")._convert_connection("c1", {
+        "name": "database", "provider": "clickhouse", "configuration": {"handlers": {"ssh_tunnel": {
+            "enabled": True, "properties": {"host": "bastion", "userName": "tunnel", **properties},
+        }}},
+    })
+    assert result["ssh_tunnel"]["port"] == expected
+    assert type(result["ssh_tunnel"]["port"]) is int
 
 
 def test_plaintext_credentials_do_not_require_openssl(tmp_path, monkeypatch):
@@ -802,7 +819,7 @@ def test_partial_previous_empty_password_is_not_a_secret_to_preserve(tmp_path, m
     assert saved["db"] == database_name
     assert saved["username"] == database_user
     assert saved["implementation"] == "python"
-    assert saved["ssh_tunnel"] == {"host": ssh_host, "user": ssh_user}
+    assert saved["ssh_tunnel"] == {"host": ssh_host, "user": ssh_user, "port": 22}
     assert "password" not in saved
 
 
@@ -820,10 +837,70 @@ def test_partial_cluster_normalizes_existing_empty_passwords(tmp_path, monkeypat
     output.write_text(yaml.safe_dump([{
         "connection_name": "node_1", "type": "clickhouse", "servers": ["node1.example:8123", "node2.example:8123"],
         "db": "default", "username": "reader", "password": empty_password,
-        "ssh_tunnel": {"host": "bastion", "user": "tunnel", "password": empty_password},
+        "ssh_tunnel": {"host": "bastion", "user": "tunnel", "port": 22, "password": empty_password},
     }], sort_keys=False))
     _run_import(monkeypatch, [str(workspace), "--only", "node 1", "--output", str(output)])
     saved = yaml.safe_load(output.read_text())[0]
     assert saved["servers"] == ["node1.example:8123", "node2.example:8123"]
     assert "password" not in saved
     assert "password" not in saved["ssh_tunnel"]
+
+
+@pytest.mark.parametrize("inherited_port", [{}, {"port": None}])
+def test_cluster_grouping_separates_inherited_and_explicit_ssh_ports(inherited_port):
+    connections = [{
+        "connection_name": name, "type": "clickhouse", "servers": [f"{name}.example:8123"],
+        "db": "analytics", "username": "reader",
+        "ssh_tunnel": {"host": "bastion", "user": "tunnel", **port},
+    } for name, port in (("node1", inherited_port), ("node2", {"port": 22}))]
+    result = DBeaverImporter("/unused")._merge_cluster_connections(connections)
+    assert len(result) == 2
+    assert result[0]["servers"] == ["node1.example:8123"]
+    assert result[1]["servers"] == ["node2.example:8123"]
+
+
+@pytest.mark.parametrize("inherited_port", [{}, {"port": None}])
+def test_partial_endpoint_match_separates_inherited_and_explicit_ssh_ports(inherited_port):
+    previous = {
+        "connection_name": "cluster", "type": "clickhouse", "servers": ["node1.example:8123", "node2.example:8123"],
+        "db": "analytics", "username": "reader",
+        "ssh_tunnel": {"host": "bastion", "user": "tunnel", **inherited_port},
+    }
+    incoming = {
+        **previous, "connection_name": "node2", "servers": ["node2.example:8123"],
+        "ssh_tunnel": {"host": "bastion", "user": "tunnel", "port": 22},
+    }
+    result = DBeaverImporter("/unused")._merge_partial_connections([previous], [incoming])
+    assert result == [previous, incoming]
+
+
+@pytest.mark.parametrize("inherited_port", [{}, {"port": None}])
+@pytest.mark.parametrize("unavailable", ["database", "ssh"])
+def test_partial_import_never_reuses_credentials_when_inherited_ssh_port_becomes_explicit(
+    tmp_path, monkeypatch, capsys, inherited_port, unavailable,
+):
+    workspace = _write_dbeaver_workspace(tmp_path, [{"id": "c1", "name": "profile", "configuration": {
+        "host": "database", "database": "analytics", "handlers": {"ssh_tunnel": {
+            "enabled": True, "properties": {"host": "bastion", "userName": "tunnel", "authType": "PASSWORD"},
+        }},
+    }}])
+    credentials = {"user": "reader", "password": "database-secret"}
+    ssh_credentials = {"user": "tunnel", "password": "ssh-secret"}
+    (credentials if unavailable == "database" else ssh_credentials).pop("password")
+    monkeypatch.setattr(DBeaverImporter, "_decrypt_credentials", lambda self: (
+        {"c1": credentials}, {"c1": ssh_credentials},
+    ))
+    output = tmp_path / "connections.yaml"
+    output.write_text(yaml.safe_dump([{
+        "connection_name": "profile", "type": "clickhouse", "servers": ["database:8123"],
+        "db": "analytics", "username": "reader", "password": "database-secret",
+        "ssh_tunnel": {"host": "bastion", "user": "tunnel", "password": "ssh-secret", **inherited_port},
+    }], sort_keys=False))
+    original = output.read_bytes()
+    assert original[-1:] == b"\n" and original[-2:-1] != b"\n"
+    with pytest.raises(SystemExit) as failure:
+        _run_import(monkeypatch, [str(workspace), "--only", "profile", "--output", str(output)])
+    assert failure.value.code == 1
+    assert "Cannot preserve unavailable" in capsys.readouterr().out
+    assert output.read_bytes() == original
+    assert not list(tmp_path.glob("connections.yaml.bak.*"))

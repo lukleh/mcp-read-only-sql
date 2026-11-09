@@ -293,10 +293,9 @@ class DBeaverImporter:
                 "user": ssh_user,
             }
 
-            # Add SSH port if non-standard
-            ssh_port = ssh_props.get("port", 22)
-            if ssh_port and str(ssh_port) != "22":
-                connection["ssh_tunnel"]["port"] = int(float(ssh_port))
+            # Keep DBeaver's default explicit: an omitted port inherits ~/.ssh/config.
+            ssh_port = ssh_props.get("port") or 22
+            connection["ssh_tunnel"]["port"] = int(float(ssh_port))
 
             # Add private key if specified
             key_path = ssh_props.get("keyPath", "")  # DBeaver uses 'keyPath'
@@ -369,7 +368,7 @@ class DBeaverImporter:
         """Connection-wide settings that must stay separate across servers."""
         ssh_tunnel = dict(conn.get("ssh_tunnel") or {})
         if ssh_tunnel:
-            ssh_tunnel.setdefault("port", 22)
+            ssh_tunnel.setdefault("port", None)
             if not ssh_tunnel.get("password"):
                 ssh_tunnel.pop("password", None)
         ssh_serialized = json.dumps(ssh_tunnel, sort_keys=True)
@@ -409,7 +408,7 @@ class DBeaverImporter:
         same_route = not old_ssh and not new_ssh
         if isinstance(old_ssh, dict) and isinstance(new_ssh, dict):
             same_route = all(old_ssh.get(key, default) == new_ssh.get(key, default) for key, default in (
-                ("host", None), ("port", 22), ("user", None), ("private_key", None),
+                ("host", None), ("port", None), ("user", None), ("private_key", None),
             ))
         needs_database_credentials = any(field not in imported and previous.get(field) for field in ("username", "password"))
         if needs_database_credentials:
@@ -446,7 +445,7 @@ class DBeaverImporter:
         if isinstance(old_ssh, dict) and isinstance(new_ssh, dict):
             ssh = dict(old_ssh)
             for field in ("host", "port", "private_key"):
-                if field not in new_ssh and not (field == "port" and old_ssh.get("port") == 22):
+                if field not in new_ssh:
                     ssh.pop(field, None)
             if new_ssh.get("private_key") and "password" not in new_ssh:
                 ssh.pop("password", None)
@@ -475,7 +474,7 @@ class DBeaverImporter:
         if not isinstance(old_ssh, dict) or not isinstance(new_ssh, dict):
             return False
         return all(old_ssh.get(key, default) == new_ssh.get(key, default) for key, default in (
-            ("host", None), ("port", 22), ("user", None), ("private_key", None),
+            ("host", None), ("port", None), ("user", None), ("private_key", None),
         ))
 
     def _merge_partial_connections(
