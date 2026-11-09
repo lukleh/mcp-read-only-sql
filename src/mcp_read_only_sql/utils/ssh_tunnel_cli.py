@@ -10,7 +10,7 @@ import shutil
 import signal
 import socket
 import subprocess
-from contextlib import closing
+from contextlib import closing, suppress
 from dataclasses import dataclass
 
 from ..errors import ConnectorError
@@ -166,6 +166,8 @@ class CLISSHTunnel:
         self.ssh_timeout = ssh_config.ssh_timeout or self.DEFAULT_SSH_TIMEOUT
         self.ssh_process = None
         self.local_port = None
+        self._stop_task: asyncio.Task[None] | None = None
+        self._stop_urgent = asyncio.Event()
 
     def _user_known_hosts_files(self) -> tuple[str, ...]:
         if self.ssh_config.known_hosts_file is not None:
@@ -209,14 +211,33 @@ class CLISSHTunnel:
         if self.ssh_process:
             raise RuntimeError("SSH tunnel already running")
 
+        startup = asyncio.create_task(self._start_tunnel())
         try:
             return await asyncio.wait_for(
-                self._start_tunnel(), timeout=self.ssh_timeout
+                startup, timeout=self.ssh_timeout
             )
         except TimeoutError:
             # Clean up if timeout occurs
             await self.stop()
             raise TimeoutError(f"SSH: Connection timeout after {self.ssh_timeout}s")
+        except asyncio.CancelledError:
+            # Python 3.11's wait_for can stop awaiting its child's cleanup
+            # after another cancellation without forwarding it to that child.
+            # Keep startup owned and interrupt its graceful stop explicitly.
+            startup.cancel()
+            while not startup.done():
+                try:
+                    await asyncio.shield(startup)
+                except asyncio.CancelledError:
+                    startup.cancel()
+                except Exception:
+                    break
+            # Cancellation wins over a startup failure delivered in the same
+            # turn, but retrieving its result still observes that exception.
+            with suppress(asyncio.CancelledError, Exception):
+                startup.result()
+            await self.stop(urgent=True)
+            raise
 
     async def _start_tunnel(self) -> int:
         """Actually start the SSH tunnel"""
@@ -336,13 +357,29 @@ class CLISSHTunnel:
 
         try:
             # Start SSH process
-            self.ssh_process = await asyncio.create_subprocess_exec(
+            creation = asyncio.create_task(asyncio.create_subprocess_exec(
                 *ssh_cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
                 preexec_fn=os.setsid,  # Create new process group for cleanup
-            )
+            ))
+            try:
+                self.ssh_process = await asyncio.shield(creation)
+            except asyncio.CancelledError:
+                # CPython's cancelled construction kills only the direct child.
+                # sshpass starts ssh in another session, so retain construction
+                # and let our cleanup send TERM through sshpass to that child.
+                while not creation.done():
+                    try:
+                        await asyncio.shield(creation)
+                    except asyncio.CancelledError:
+                        continue
+                    except Exception:
+                        break
+                with suppress(asyncio.CancelledError, Exception):
+                    self.ssh_process = creation.result()
+                raise
 
             # Poll the local forwarded port until ssh has finished
             # authenticating and the listener is actually accepting
@@ -388,33 +425,73 @@ class CLISSHTunnel:
             await self.stop()
             logger.error(f"Failed to establish SSH tunnel: {e}")
             raise ConnectorError(f"SSH: {e}") from e
-        except Exception:
-            # Clean up, then let ConnectorError and unexpected errors propagate
-            await self.stop()
+        except BaseException as exc:
+            # Caller cancellation also owns the child once startup has spawned it.
+            await self.stop(urgent=isinstance(exc, asyncio.CancelledError))
             raise
 
-    async def stop(self):
-        """Stop SSH tunnel"""
-        if self.ssh_process:
-            try:
-                # Kill the entire process group
-                if self.ssh_process.pid:
-                    os.killpg(os.getpgid(self.ssh_process.pid), signal.SIGTERM)
-
-                # Wait for process to terminate
+    async def stop(self, *, urgent: bool = False):
+        """Keep ownership until reaping, even when cleanup is cancelled again."""
+        process = self.ssh_process
+        if process is None:
+            return
+        # A connector's finally block may enter cleanup after cancellation was
+        # already delivered to its query body, without another cancel at await.
+        caller = asyncio.current_task()
+        urgent = urgent or (caller is not None and caller.cancelling() > 0)
+        if self._stop_task is None or self._stop_task.done():
+            self._stop_urgent.clear()
+            self._stop_task = asyncio.create_task(self._stop_process(process))
+        if urgent:
+            self._stop_urgent.set()
+        cleanup = self._stop_task
+        try:
+            await asyncio.shield(cleanup)
+        except asyncio.CancelledError:
+            # Keep a short TERM allowance even under repeated cancellation:
+            # sshpass must forward it before its own process can be killed.
+            self._stop_urgent.set()
+            while not cleanup.done():
                 try:
-                    await asyncio.wait_for(self.ssh_process.wait(), timeout=5.0)
-                except TimeoutError:
-                    # Force kill if it doesn't terminate
-                    os.killpg(os.getpgid(self.ssh_process.pid), signal.SIGKILL)
-                    await self.ssh_process.wait()
+                    await asyncio.shield(cleanup)
+                except asyncio.CancelledError:
+                    continue
+            cleanup.result()
+            raise
+        finally:
+            if cleanup.done() and self._stop_task is cleanup:
+                self._stop_task = None
 
-                logger.debug(f"SSH tunnel stopped (local port {self.local_port})")
-            except ProcessLookupError:
-                # Process already terminated
-                pass
-            except Exception as e:
-                logger.error(f"Error stopping SSH tunnel: {e}")
-            finally:
+    @staticmethod
+    def _signal_process(process, sig: int) -> None:
+        if process.returncode is None and process.pid:
+            with suppress(ProcessLookupError):
+                os.killpg(os.getpgid(process.pid), sig)
+
+    async def _stop_process(self, process) -> None:
+        reaped = False
+        urgent = asyncio.create_task(self._stop_urgent.wait())
+        try:
+            self._signal_process(process, signal.SIGTERM)
+            waited = asyncio.create_task(process.wait())
+            done, _ = await asyncio.wait(
+                (waited, urgent), timeout=5.0, return_when=asyncio.FIRST_COMPLETED
+            )
+            if waited not in done and urgent in done:
+                # Cancellation/deadlines get bounded cleanup, while an ordinary
+                # context exit retains the five-second graceful-stop allowance.
+                await asyncio.wait((waited,), timeout=0.25)
+            if not waited.done():
+                self._signal_process(process, signal.SIGKILL)
+            await waited
+            reaped = True
+            logger.debug(f"SSH tunnel stopped (local port {self.local_port})")
+        except Exception as exc:
+            logger.error(f"Error stopping SSH tunnel: {exc}")
+        finally:
+            urgent.cancel()
+            with suppress(asyncio.CancelledError):
+                await urgent
+            if reaped and self.ssh_process is process:
                 self.ssh_process = None
                 self.local_port = None
