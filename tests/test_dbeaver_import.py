@@ -603,6 +603,49 @@ def test_identically_named_cluster_members_merge_in_cli(tmp_path, monkeypatch, o
     assert result[0]["servers"] == ["ch-1.example:8123", "ch-2.example:8123"]
 
 
+@pytest.mark.parametrize("only", [[], ["--only", "prod.db,prod_db"]])
+def test_colliding_names_merge_when_both_records_are_imported(tmp_path, monkeypatch, only):
+    workspace = _write_dbeaver_workspace(tmp_path, [
+        {"id": "c1", "name": "prod.db", "configuration": {"host": "ch-1.example", "port": "8123"}},
+        {"id": "c2", "name": "prod_db", "configuration": {"host": "ch-2.example", "port": "8123"}},
+    ])
+    output = tmp_path / "connections.yaml"
+    _run_import(monkeypatch, [str(workspace), "--output", str(output), *only])
+    result = yaml.safe_load(output.read_text())
+    assert len(result) == 1
+    assert result[0]["connection_name"] == "prod_db"
+    assert result[0]["servers"] == ["ch-1.example:8123", "ch-2.example:8123"]
+
+
+@pytest.mark.parametrize("selected_first", [False, True])
+def test_partial_same_group_collision_never_replaces_existing_profile(
+    tmp_path, monkeypatch, capsys, selected_first
+):
+    workspace = _write_dbeaver_workspace(tmp_path, [{
+        "id": "c2", "name": "prod_db", "configuration": {"host": "ch-2.example", "port": "8123"},
+    }])
+    output = tmp_path / "connections.yaml"
+    _run_import(monkeypatch, [str(workspace), "--only", "prod_db", "--output", str(output)])
+    original = output.read_bytes()
+    assert yaml.safe_load(original)[0]["servers"] == ["ch-2.example:8123"]
+    data = json.loads((workspace / "data-sources.json").read_text())
+    selected = {"c1": {
+        "name": "prod.db", "provider": "clickhouse",
+        "configuration": {"host": "ch-1.example", "port": "8123"},
+    }}
+    previous = data["connections"]
+    data["connections"] = selected | previous if selected_first else previous | selected
+    (workspace / "data-sources.json").write_text(json.dumps(data))
+
+    with pytest.raises(SystemExit) as error:
+        _run_import(monkeypatch, [str(workspace), "--only", "prod.db", "--output", str(output)])
+
+    assert error.value.code == 1
+    assert "both map to connection_name" in capsys.readouterr().out
+    assert output.read_bytes() == original
+    assert not list(tmp_path.glob("connections.yaml.bak.*"))
+
+
 def test_no_merge_refuses_identical_names_and_reports_display_names(tmp_path, monkeypatch, capsys):
     workspace = _write_dbeaver_workspace(tmp_path, [
         {"id": "c1", "name": "Analytics", "configuration": {"host": "ch-1.example", "port": "8123"}},

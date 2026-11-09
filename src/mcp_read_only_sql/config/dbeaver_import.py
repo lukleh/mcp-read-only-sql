@@ -154,7 +154,7 @@ class DBeaverImporter:
         connections: list[dict[str, Any]] = []
         imported_names: list[str] = []
         seen_names: list[str] = []
-        source_names: dict[str, tuple[str, str, tuple]] = {}
+        source_names: dict[str, tuple[str, str, tuple, bool]] = {}
         connections_data = data_sources.get("connections", {})
         if not isinstance(connections_data, dict):
             connections_data = {}
@@ -181,14 +181,16 @@ class DBeaverImporter:
                 continue
             key = self._group_key(converted)
             previous = source_names.get(name)
-            if previous is not None and (not merge_clusters or previous[2] != key):
-                previous_name, previous_id, _ = previous
+            if previous is not None and (
+                not merge_clusters or previous[2] != key or not (selected and previous[3])
+            ):
+                previous_name, previous_id, _, _ = previous
                 raise ValueError(
                     f"DBeaver connections '{previous_name}' ({previous_id}) and "
                     f"'{original_name}' ({conn_id}) both map to connection_name '{name}'; "
                     "rename one before importing"
                 )
-            source_names[name] = (original_name, conn_id, key)
+            source_names[name] = (original_name, conn_id, key, selected)
             if selected:
                 if only_set:
                     seen_names.append(original_name)
