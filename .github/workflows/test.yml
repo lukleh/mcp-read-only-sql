@@ -4,7 +4,6 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
   workflow_dispatch:
   schedule:
     # Weekly run so drift in unpinned dependencies surfaces without a push.
@@ -48,6 +47,10 @@ jobs:
     - name: Run linter
       run: |
         uv run ruff check .
+
+    - name: Run type checker
+      run: |
+        uv run ty check
 
     - name: Install system dependencies for CLI connectors
       run: |

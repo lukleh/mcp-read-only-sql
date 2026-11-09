@@ -8,7 +8,7 @@ import logging
 import os
 import re
 import sys
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager, suppress
 from datetime import UTC, datetime
 from hashlib import blake2b
@@ -91,7 +91,7 @@ def _display_hosts_for_connector(connector: BaseConnector) -> list[str]:
 
 
 @contextmanager
-def _surface_tool_errors() -> Iterator[None]:
+def _surface_tool_errors() -> Generator[None, None, None]:
     """Report an anticipated tool failure to the caller with its message.
 
     Since mcp 2.x the SDK treats any exception other than ``ToolError`` (or a
