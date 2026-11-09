@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import cast
 
 import clickhouse_connect
+from clickhouse_connect.driver import httpclient
 from clickhouse_connect.driver.client import Client
 from clickhouse_connect.driver.exceptions import ClickHouseError
 
@@ -203,6 +204,11 @@ class ClickHousePythonConnector(BaseConnector):
         interface, resolved_port = self._resolve_client_endpoint(
             port, original_port, is_ssh_tunnel
         )
+        # Drivers without URI host formatting require IPv6 brackets here.
+        # Drivers with native support need the bare host for
+        # NO_PROXY matching, so only adapt drivers missing that capability.
+        if ":" in host and not host.startswith("[") and not hasattr(httpclient, "format_uri_host"):
+            host = f"[{host}]"
         return clickhouse_connect.get_client(
             interface=interface,
             host=host,

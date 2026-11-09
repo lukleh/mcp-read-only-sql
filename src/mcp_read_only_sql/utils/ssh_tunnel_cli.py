@@ -277,10 +277,13 @@ class CLISSHTunnel:
             elif not before.pinned:
                 must_record = True
 
+        remote_host = self.remote_host
+        if ":" in remote_host and not remote_host.startswith("["):
+            remote_host = f"[{remote_host}]"
         ssh_options = [
             "-N",  # No command execution
             "-L",
-            f"{self.local_port}:{self.remote_host}:{self.remote_port}",
+            f"{self.local_port}:{remote_host}:{self.remote_port}",
             "-o",
             f"StrictHostKeyChecking={host_key_checking}",
             "-o",
