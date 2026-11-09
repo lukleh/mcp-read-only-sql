@@ -195,6 +195,8 @@ class ClickHousePythonConnector(BaseConnector):
         database: str,
         original_port: int | None,
         is_ssh_tunnel: bool,
+        *,
+        server_host_name: str | None = None,
     ):
         """Create a configured clickhouse-connect client for this endpoint.
 
@@ -217,6 +219,7 @@ class ClickHousePythonConnector(BaseConnector):
             username=self.username,
             password=self.password,
             connect_timeout=self.connection_timeout,
+            server_host_name=server_host_name if interface == "https" else None,
             query_limit=0,  # No limit on query result size (we handle it ourselves)
         )
 
@@ -240,7 +243,12 @@ class ClickHousePythonConnector(BaseConnector):
         at 0 is refused. Returns the client and the settings to send with
         each query (possibly empty).
         """
-        client = self._create_client(host, port, database, original_port, is_ssh_tunnel)
+        client_options = {}
+        if is_ssh_tunnel and server_key is not None and original_port in (8443, 9440):
+            client_options["server_host_name"] = server_key[0]
+        client = self._create_client(
+            host, port, database, original_port, is_ssh_tunnel, **client_options
+        )
         settings = self._decided_settings.get(server_key)
         if settings is not None and "readonly" in settings:
             return client, settings

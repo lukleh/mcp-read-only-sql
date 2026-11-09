@@ -390,6 +390,8 @@ CSV parser rather than splitting it into physical lines.
 **Important Notes:**
 - **ClickHouse CLI** (`clickhouse-client`) uses native protocol ports (9000, 9440)
 - **ClickHouse Python** (using `clickhouse-connect`) uses HTTP/HTTPS ports (8123, 8443)
+- **TLS through SSH** preserves the configured remote database hostname for TLS identity checks while connecting through a local forwarded port. The CLI retains the native client's OpenSSL trust and verification settings; configure strict certificate verification there to require certificate and hostname checks. It requires `clickhouse-client` 26.1 or newer for `--tls-sni-override`; older clients report an upgrade error. The Python path verifies certificates by default with the packaged driver.
+- **Custom TLS ports are not supported by the current port heuristic.** Ports 8443 and 9440 select TLS; other custom ports select plaintext. Use a supported TLS port rather than pointing a TLS endpoint at a custom port.
 - Port mismatches are automatically handled - see below
 
 **Automatic Port Handling (Bidirectional):**
