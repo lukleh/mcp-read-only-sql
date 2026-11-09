@@ -331,14 +331,20 @@ class _ReadOnlyPolicy(visitors.Visitor):
     def visit_FuncCall(self, ancestors, node):
         parts = [str(part.sval) for part in node.funcname]
         qualified = ".".join(parts)
+        name = _strip_pg_catalog(parts)
+        if name in _EXCLUDED_FUNCTIONS:
+            raise ReadOnlyQueryError(
+                f"Function {qualified}() is excluded by the PostgreSQL read-only policy"
+            )
         if tuple(parts) in self._extra_qualified:
             return
-        name = _strip_pg_catalog(parts)
         if name is None:
             raise ReadOnlyQueryError(_function_message(qualified))
         if name in self._extra_bare:
             return
-        if name not in PG_CATALOG_ALLOWED_FUNCTIONS and name not in self._pinned:
+        if name not in PG_CATALOG_ALLOWED_FUNCTIONS and not (
+            len(parts) == 1 and name in self._pinned
+        ):
             raise ReadOnlyQueryError(_function_message(qualified))
         if len(parts) == 1:
             self.bare_functions.add(name)

@@ -177,6 +177,7 @@ PostgreSQL connections refuse function calls outside the built-in allow-list. If
 Entries match catalog spelling exactly, including case. PostgreSQL folds unquoted
 SQL names to lower case, so use `public.helper` for `public.helper()` and
 `Public.Helper` only for an actual quoted `"Public"."Helper"()` function.
+Explicitly excluded catalog functions cannot be re-enabled through this setting.
 
 ```yaml
 - connection_name: analytics
