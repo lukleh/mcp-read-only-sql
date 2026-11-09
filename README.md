@@ -40,6 +40,12 @@ certificates and authentication options continue to work. Explicit connection,
 output-format, and read-only flags take precedence; review the remaining client
 settings as part of the connection configuration.
 
+`connection_timeout` uses positive whole seconds for both database types and
+implementations. An integer-valued float such as `10.0` is normalized to `10`;
+fractions such as `0.5` are rejected rather than truncated by a client. PostgreSQL
+limits this setting to 2,147,483,647 seconds. `query_timeout` may use positive
+fractional seconds for the application deadline.
+
 Because bare names resolve through `search_path`, the guard also asks the server, right before the query, whether any bare function or operator it uses has a definition outside `pg_catalog` in a schema the session can see, and refuses the query if so. This matches on name only, so a visible `public.length(integer)` refuses `length('abc')` even though PostgreSQL would pick the catalog function; qualify explicit function calls as `pg_catalog.length(...)` or allow trusted functions through `allowed_functions`. Explicit operators can use `OPERATOR(pg_catalog.<operator>)`. Implicit comparisons in `BETWEEN`, `IN`, `CASE`, and `JOIN USING`/`NATURAL JOIN` have no operator to qualify; configure the PostgreSQL login role `search_path` without the reported schema instead. Resolving overloads client-side would mean reimplementing PostgreSQL's function resolution, so the guard stays conservative. The guard is still a filter, not a privilege boundary. It cannot see inside views, user-defined types or casts that already exist in the database, and it does not reduce what the configured login is allowed to do. Log in with a role that can only read (for PostgreSQL 14+, `pg_read_all_data`); a superuser login stays a superuser login.
 
 See [READ_ONLY_ENFORCEMENT_MATRIX.md](READ_ONLY_ENFORCEMENT_MATRIX.md) for a statement-by-statement view of every write-capable command and the tests that enforce it.

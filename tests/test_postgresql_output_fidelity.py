@@ -16,7 +16,7 @@ import pytest
 from mcp_read_only_sql.connectors.postgresql.cli import PostgreSQLCLIConnector
 from mcp_read_only_sql.connectors.postgresql.python import PostgreSQLPythonConnector
 from mcp_read_only_sql.utils.tsv_formatter import format_tsv_field
-from tests.conftest import FakeCLIProcess
+from tests.conftest import FakeCLIProcess, make_connection
 
 # Values that the old psql output filter mistook for psql chatter.
 CHATTER_LOOKALIKE_ROWS = ["SET", "DO", "BEGIN", "COMMIT", "ROLLBACK", "(1 row)", ""]
@@ -120,6 +120,31 @@ async def test_real_rows_are_returned_verbatim(
     """Both implementations return the same bytes for the same row."""
     result = await _connector(implementation, postgres_config).execute_query(query)
     assert result == expected
+
+
+@pytest.mark.docker
+@pytest.mark.usefixtures("docker_check")
+@pytest.mark.anyio
+@pytest.mark.parametrize("implementation", ["cli", "python"])
+async def test_integer_valued_float_connection_timeout_connects(
+    postgres_config, implementation
+):
+    config = make_connection(
+        {
+            "connection_name": "float_timeout",
+            "type": "postgresql",
+            "servers": [
+                {"host": server.host, "port": server.port}
+                for server in postgres_config.servers
+            ],
+            "db": postgres_config.database,
+            "username": postgres_config.username,
+            "password": postgres_config.password,
+            "connection_timeout": 10.0,
+        }
+    )
+
+    assert await _connector(implementation, config).execute_query("SELECT 1 AS x") == "x\n1"
 
 
 @pytest.mark.docker
