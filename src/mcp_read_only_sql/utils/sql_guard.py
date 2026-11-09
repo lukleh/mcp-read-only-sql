@@ -43,8 +43,10 @@ __all__ = [
 # to something outside pg_catalog; the CLI connector recognizes it in stderr.
 SHADOW_GUARD_PREFIX = "Read-only guard:"
 SHADOW_GUARD_SUFFIX = (
-    "shadow a name this query uses through search_path; qualify the call as "
-    "pg_catalog.<name>(...) or list the function in allowed_functions"
+    "shadow a name this query uses through search_path; qualify explicit functions as "
+    "pg_catalog.<name>(...) or operators as OPERATOR(pg_catalog.<operator>), "
+    "or list trusted functions in allowed_functions. For implicit comparisons "
+    "(BETWEEN, IN, CASE, JOIN USING/NATURAL), configure search_path without the reported schema"
 )
 
 
@@ -212,7 +214,8 @@ def postgresql_shadow_query(
     bare name refuses the query, even one PostgreSQL would not pick for the
     given argument types. That is deliberate; resolving overloads client-side
     would mean reimplementing PostgreSQL's function resolution. The error
-    says how to proceed (qualify the call, or list the function).
+    explains qualification for explicit calls and operators, or search_path
+    changes for syntax that introduces implicit comparisons.
 
     ``allowed_functions`` entries are treated by spelling. A bare entry means
     "whatever this name resolves to" and is exempt. A ``schema.name`` entry
