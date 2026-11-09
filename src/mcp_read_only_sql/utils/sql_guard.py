@@ -24,7 +24,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 
-from pglast import ast, parser, visitors
+from pglast import ast, enums, parser, visitors
 
 from .pg_catalog_functions import PG_CATALOG_NON_VOLATILE_FUNCTIONS
 
@@ -43,8 +43,11 @@ __all__ = [
 # to something outside pg_catalog; the CLI connector recognizes it in stderr.
 SHADOW_GUARD_PREFIX = "Read-only guard:"
 SHADOW_GUARD_SUFFIX = (
-    "shadow a name this query uses through search_path; qualify the call as "
-    "pg_catalog.<name>(...) or list the function in allowed_functions"
+    "shadow a name this query uses through search_path; qualify explicit functions as "
+    "pg_catalog.<name>(...) or operators as OPERATOR(pg_catalog.<operator>), "
+    "or list trusted functions in allowed_functions. For implicit comparisons "
+    "(BETWEEN, IN, CASE, JOIN USING/NATURAL), configure the login role search_path "
+    "without the reported schema"
 )
 
 
@@ -128,6 +131,15 @@ _ALLOWED_TABLESAMPLE_METHODS = frozenset({"system", "bernoulli"})
 
 _OPERATOR_NAME = re.compile(r"^[-+*/<>=~!@#%^&|`?]+$")
 
+# PostgreSQL inserts these comparisons while transforming the raw parse tree.
+# They therefore have no operator identifier for visit_A_Expr to inspect.
+_BETWEEN_OPERATORS = {
+    enums.A_Expr_Kind.AEXPR_BETWEEN: (">=", "<="),
+    enums.A_Expr_Kind.AEXPR_BETWEEN_SYM: (">=", "<="),
+    enums.A_Expr_Kind.AEXPR_NOT_BETWEEN: ("<", ">"),
+    enums.A_Expr_Kind.AEXPR_NOT_BETWEEN_SYM: ("<", ">"),
+}
+
 _STATEMENT_LABELS = {
     "CallStmt": "CALL",
     "CopyStmt": "COPY",
@@ -203,7 +215,8 @@ def postgresql_shadow_query(
     bare name refuses the query, even one PostgreSQL would not pick for the
     given argument types. That is deliberate; resolving overloads client-side
     would mean reimplementing PostgreSQL's function resolution. The error
-    says how to proceed (qualify the call, or list the function).
+    explains qualification for explicit calls and operators, or search_path
+    changes for syntax that introduces implicit comparisons.
 
     ``allowed_functions`` entries are treated by spelling. A bare entry means
     "whatever this name resolves to" and is exempt. A ``schema.name`` entry
@@ -378,7 +391,23 @@ class _ReadOnlyPolicy(visitors.Visitor):
                 self.pinned_schemas.add((name, schema))
 
     def visit_A_Expr(self, ancestors, node):
+        self.bare_operators.update(_BETWEEN_OPERATORS.get(node.kind, ()))
         self._check_operator([str(part.sval) for part in node.name or ()])
+
+    def visit_JoinExpr(self, ancestors, node):
+        if node.usingClause or node.isNatural:
+            self.bare_operators.add("=")
+
+    def visit_CaseExpr(self, ancestors, node):
+        if node.arg is not None:
+            self.bare_operators.add("=")
+
+    def visit_SubLink(self, ancestors, node):
+        if node.operName:
+            self._check_operator([str(part.sval) for part in node.operName])
+        elif node.subLinkType == enums.SubLinkType.ANY_SUBLINK:
+            # IN (SELECT ...) is an ANY sublink with an implicit equals sign.
+            self.bare_operators.add("=")
 
     def visit_SortBy(self, ancestors, node):
         # ORDER BY ... USING <op> sorts through the operator's btree opclass,

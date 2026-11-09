@@ -1,8 +1,11 @@
 """Read-only enforcement tests executed against real Docker databases."""
 
 import shutil
+from uuid import uuid4
 
+import psycopg2
 import pytest
+from psycopg2 import sql
 
 from mcp_read_only_sql.connectors.clickhouse.cli import ClickHouseCLIConnector
 from mcp_read_only_sql.connectors.clickhouse.python import ClickHousePythonConnector
@@ -277,3 +280,130 @@ async def test_clickhouse_real_allows_selects_with_keywords(implementation, quer
 
     result = await connector.execute_query(query)
     assert "INSERT" in result, "Keyword inside literal should be preserved"
+
+
+@pytest.fixture(scope="module")
+def operator_shadow_config():
+    """A private login sees harmless comparison overloads before pg_catalog."""
+    endpoint = POSTGRES_BASE_CONFIG["servers"][0]
+    admin = psycopg2.connect(
+        host=endpoint["host"],
+        port=endpoint["port"],
+        dbname=POSTGRES_BASE_CONFIG["db"],
+        user=POSTGRES_BASE_CONFIG["username"],
+        password=POSTGRES_BASE_CONFIG["password"],
+    )
+    admin.autocommit = True
+    suffix = uuid4().hex
+    schema = "mcp_ops_" + suffix
+    role = "mcp_role_" + suffix
+    role_created = False
+    try:
+        with admin.cursor() as cursor:
+            cursor.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
+            cursor.execute(
+                sql.SQL("CREATE ROLE {} LOGIN PASSWORD %s").format(sql.Identifier(role)),
+                ("testpass",),
+            )
+            role_created = True
+            cursor.execute(
+                sql.SQL("GRANT USAGE ON SCHEMA {} TO {}").format(
+                    sql.Identifier(schema), sql.Identifier(role)
+                )
+            )
+            cursor.execute(
+                sql.SQL("ALTER ROLE {} SET search_path = {}, pg_catalog").format(
+                    sql.Identifier(role), sql.Identifier(schema)
+                )
+            )
+            for operator, function in [
+                ("<=", "le"), (">=", "ge"), ("<", "lt"), (">", "gt"), ("=", "eq")
+            ]:
+                cursor.execute(
+                    sql.SQL(
+                        "CREATE FUNCTION {}.{}(integer, integer) RETURNS boolean "
+                        "LANGUAGE sql AS 'SELECT $1 OPERATOR(pg_catalog.{}) $2'"
+                    ).format(
+                        sql.Identifier(schema), sql.Identifier(function), sql.SQL(operator)
+                    )
+                )
+                cursor.execute(
+                    sql.SQL(
+                        "CREATE OPERATOR {}.{} (LEFTARG = integer, RIGHTARG = integer, "
+                        "FUNCTION = {}.{})"
+                    ).format(
+                        sql.Identifier(schema),
+                        sql.SQL(operator),
+                        sql.Identifier(schema),
+                        sql.Identifier(function),
+                    )
+                )
+        yield {**POSTGRES_BASE_CONFIG, "username": role, "password": "testpass"}
+    finally:
+        with admin.cursor() as cursor:
+            cursor.execute(
+                sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(schema))
+            )
+            if role_created:
+                cursor.execute(sql.SQL("DROP OWNED BY {}").format(sql.Identifier(role)))
+                cursor.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(role)))
+        admin.close()
+
+
+@pytest.mark.anyio
+@pytest.mark.security
+@pytest.mark.docker
+@pytest.mark.parametrize("implementation", ["python", "cli"])
+@pytest.mark.parametrize(
+    "query",
+    [
+        "SELECT 5 BETWEEN 1 AND 10",
+        "SELECT 5 NOT BETWEEN 1 AND 10",
+        "SELECT 5 BETWEEN SYMMETRIC 1 AND 10",
+        "SELECT 5 NOT BETWEEN SYMMETRIC 1 AND 10",
+        "SELECT * FROM (VALUES (1)) a(id) JOIN (VALUES (1)) b(id) USING (id)",
+        "SELECT * FROM (VALUES (1)) a(id) NATURAL JOIN (VALUES (1)) b(id)",
+        "SELECT CASE 1 WHEN 2 THEN true ELSE false END",
+        "SELECT 1 IN (SELECT 2)",
+        "SELECT 1 NOT IN (SELECT 2)",
+        "SELECT 1 <= ALL (SELECT 2)",
+        "SELECT 1 >= ANY (SELECT 2)",
+    ],
+)
+async def test_postgres_refuses_shadowed_implicit_comparisons(
+    operator_shadow_config, implementation, query
+):
+    config = make_connection(operator_shadow_config)
+    connector = (
+        PostgreSQLCLIConnector(config)
+        if implementation == "cli"
+        else PostgreSQLPythonConnector(config)
+    )
+    assert await connector.execute_query(
+        "SELECT (5 OPERATOR(pg_catalog.<=) 10)::text AS ok"
+    ) == "ok\ntrue"
+    with pytest.raises(ReadOnlyQueryError, match="Read-only guard"):
+        await connector.execute_query(query)
+
+
+@pytest.mark.anyio
+@pytest.mark.security
+@pytest.mark.docker
+@pytest.mark.parametrize("implementation", ["python", "cli"])
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        ("SELECT (5 BETWEEN 1 AND 10)::text AS ok", "ok\ntrue"),
+        ("SELECT CASE 1 WHEN 1 THEN 'yes' ELSE 'no' END AS ok", "ok\nyes"),
+        ("SELECT (1 IN (SELECT 1))::text AS ok", "ok\ntrue"),
+        (
+            "SELECT * FROM (VALUES (1)) a(id) JOIN (VALUES (1)) b(id) USING (id)",
+            "id\n1",
+        ),
+    ],
+)
+async def test_postgres_unshadowed_implicit_comparisons_still_work(
+    implementation, query, expected
+):
+    connector = _build_postgres_connector(implementation)
+    assert await connector.execute_query(query) == expected
