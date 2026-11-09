@@ -100,6 +100,7 @@ class PostgreSQLCLIConnector(BaseCLIConnector):
             # when they contain a tab, a quote or a line break (psql 12+).
             cmd = [
                 self._resolve_binary("psql"),
+                "--no-psqlrc",  # Startup files must not override output or error handling.
                 "--single-transaction",
                 "-v",
                 "ON_ERROR_STOP=1",

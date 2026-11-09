@@ -42,6 +42,21 @@ async def test_psql_stdout_lines_are_all_data(postgres_config, monkeypatch):
 
 
 @pytest.mark.anyio
+async def test_psql_disables_startup_files(postgres_config, monkeypatch):
+    commands = []
+
+    async def fake_exec(*cmd, **kwargs):
+        commands.append(cmd)
+        return FakeCLIProcess(["x\n", "1\n"])
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+
+    await PostgreSQLCLIConnector(postgres_config).execute_query("SELECT 1 AS x")
+
+    assert "--no-psqlrc" in commands[0]
+
+
+@pytest.mark.anyio
 async def test_psql_quoted_field_spanning_lines_is_kept_intact(
     postgres_config, monkeypatch
 ):
@@ -105,3 +120,20 @@ async def test_real_rows_are_returned_verbatim(
     """Both implementations return the same bytes for the same row."""
     result = await _connector(implementation, postgres_config).execute_query(query)
     assert result == expected
+
+
+@pytest.mark.docker
+@pytest.mark.usefixtures("docker_check")
+@pytest.mark.anyio
+async def test_psql_startup_settings_cannot_change_result_format(
+    postgres_config, monkeypatch, tmp_path
+):
+    startup = tmp_path / "psqlrc"
+    startup.write_text("\\pset format aligned\n\\pset null NULL\n", encoding="utf-8")
+    monkeypatch.setenv("PSQLRC", str(startup))
+
+    result = await PostgreSQLCLIConnector(postgres_config).execute_query(
+        "SELECT NULL AS a, 42 AS b"
+    )
+
+    assert result == "a\tb\n\t42"
