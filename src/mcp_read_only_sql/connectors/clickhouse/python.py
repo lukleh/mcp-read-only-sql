@@ -12,6 +12,7 @@ from typing import cast
 import clickhouse_connect
 from clickhouse_connect.driver.client import Client
 from clickhouse_connect.driver.exceptions import ClickHouseError
+from urllib3.exceptions import HTTPError
 
 from ...config import Connection
 from ...errors import ConnectorError
@@ -243,10 +244,17 @@ class ClickHousePythonConnector(BaseConnector):
         # Let other exceptions (programming errors) propagate unchanged
 
     def _stop_worker(self, cancellation: _QueryCancellation, future: asyncio.Future) -> None:
-        """Request cleanup without extending a timeout or cancellation deadline."""
+        """Request cleanup; blocked reads remain bounded by the receive timeout."""
         cancellation.cancel()
         future.add_done_callback(_consume_outcome)
-        close_future = asyncio.get_running_loop().run_in_executor(None, cancellation.close_resources)
+        try:
+            close_future = asyncio.get_running_loop().run_in_executor(None, cancellation.close_resources)
+        except RuntimeError:
+            # Executor shutdown must not replace caller cancellation. The
+            # running worker still closes its response, client and output in
+            # finally blocks; resources arriving after cancel close in watch().
+            logger.debug("ClickHouse: cleanup deferred to worker during executor shutdown")
+            return
         close_future.add_done_callback(_consume_outcome)
 
     def _resolve_client_endpoint(
@@ -499,7 +507,12 @@ class ClickHousePythonConnector(BaseConnector):
                 while True:
                     if cancellation is not None:
                         cancellation.check()
-                    chunk = stream.read(64 * 1024)
+                    try:
+                        chunk = stream.read(64 * 1024)
+                    except (HTTPError, OSError) as exc:
+                        # raw_stream() returns a response whose later reads
+                        # bypass the driver's ClickHouseError translation.
+                        raise ConnectorError(f"ClickHouse: response stream failed: {exc}") from exc
                     if not chunk:
                         break
                     if isinstance(chunk, str):
