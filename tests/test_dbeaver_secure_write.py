@@ -66,12 +66,40 @@ def test_failed_atomic_write_preserves_previous_credentials(tmp_path, monkeypatc
     assert list(tmp_path.iterdir()) == [path]
 
 
-def test_atomic_write_replaces_symlink_without_following_it(tmp_path):
+@pytest.mark.parametrize("filename", ["connections.yaml", "connections.yaml.bak.20261108_120000"])
+def test_atomic_write_refuses_symlink_without_changing_target(tmp_path, filename):
     target = tmp_path / "target"
     target.write_text("unchanged\n")
-    path = tmp_path / "connections.yaml"
+    target.chmod(0o644)
+    path = tmp_path / filename
     path.symlink_to(target)
-    dbeaver_import._write_text_file_secure(path, "password: synthetic-secret\n")
-    assert not path.is_symlink()
+    with pytest.raises(ValueError, match="Refusing symlinked output"):
+        dbeaver_import._write_text_file_secure(path, "password: synthetic-secret\n")
+    assert path.is_symlink()
     assert target.read_text() == "unchanged\n"
-    assert path.read_bytes() == b"password: synthetic-secret\n"
+    assert stat.S_IMODE(target.stat().st_mode) == 0o644
+
+
+@pytest.mark.parametrize("unchanged", [False, True])
+def test_import_refuses_symlink_before_chmod_or_backup(tmp_path, monkeypatch, unchanged):
+    from tests.test_dbeaver_import import _run_import, _write_dbeaver_workspace
+
+    workspace = _write_dbeaver_workspace(tmp_path, [{
+        "id": "c1", "name": "Analytics", "configuration": {"host": "ch1", "port": "8123"},
+    }])
+    monkeypatch.setattr(dbeaver_import.DBeaverImporter, "_decrypt_credentials", lambda self: ({}, {}))
+    target = tmp_path / "target.yaml"
+    _run_import(monkeypatch, [str(workspace), "--output", str(target)])
+    if not unchanged:
+        target.write_text("[]\n")
+    original = target.read_bytes()
+    target.chmod(0o644)
+    output = tmp_path / "connections.yaml"
+    output.symlink_to(target)
+    with pytest.raises(SystemExit) as error:
+        _run_import(monkeypatch, [str(workspace), "--output", str(output)])
+    assert error.value.code == 1
+    assert output.is_symlink()
+    assert target.read_bytes() == original
+    assert stat.S_IMODE(target.stat().st_mode) == 0o644
+    assert not list(tmp_path.glob("*.bak.*"))

@@ -16,8 +16,15 @@ from ..utils.connection_utils import get_connection_target
 logger = logging.getLogger(__name__)
 
 
+def _refuse_symlink(path: Path) -> None:
+    """Keep imports from following or replacing a user-managed symlink."""
+    if path.is_symlink():
+        raise ValueError(f"Refusing symlinked output '{path}'; use its explicit target path")
+
+
 def _write_text_file_secure(path: Path, content: str) -> None:
     """Replace a file atomically with content private from its first byte."""
+    _refuse_symlink(path)
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     try:
@@ -568,6 +575,7 @@ def main() -> None:
         print("Dry run: no files will be written\n")
 
     try:
+        _refuse_symlink(output_path)
         importer = DBeaverImporter(dbeaver_path)
         # Always import raw connections first so we can report on merges clearly.
         raw_connections = importer.import_connections(
