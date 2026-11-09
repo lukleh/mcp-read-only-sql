@@ -2,7 +2,9 @@ import json
 import stat
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
+import pytest
 import yaml
 
 from mcp_read_only_sql.config.dbeaver_import import DBeaverImporter, main
@@ -210,3 +212,81 @@ def test_merge_clusters_keeps_distinct_password_groups():
         ("clickhouse-1.example.com:8123",),
         ("clickhouse-2.example.com:8123",),
     }
+
+
+@pytest.mark.parametrize("encrypted", [False, True])
+@pytest.mark.parametrize("stale_key_path", [False, True])
+def test_import_reads_ssh_and_database_credentials_from_both_formats(tmp_path, monkeypatch, encrypted, stale_key_path):
+    workspace = _write_dbeaver_workspace(tmp_path, [{
+        "id": "c1", "name": "database", "configuration": {
+            "host": "database.internal", "handlers": {"ssh_tunnel": {
+                "enabled": True, "properties": {
+                    "host": "bastion.example", "userName": "fallback", "authType": "PASSWORD",
+                    "keyPath": "/unused-key" if stale_key_path else "",
+                },
+            }},
+        },
+    }])
+    credentials = {
+        "c1": {
+            "#connection": {"user": "reader", "password": "database-secret"},
+            "network/ssh_tunnel": {"user": "tunnel", "password": "ssh-secret"},
+        },
+        "invalid": None,
+        "invalid-sections": {"#connection": [], "network/ssh_tunnel": "invalid"},
+    }
+    content = json.dumps(credentials).encode()
+    (workspace / "credentials-config.json").write_bytes(content)
+    if encrypted:
+        monkeypatch.setattr(
+            "mcp_read_only_sql.config.dbeaver_import.subprocess.run",
+            lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout=b"0" * 16 + content),
+        )
+    result = DBeaverImporter(str(workspace)).import_connections()
+    assert result[0]["username"] == "reader"
+    assert result[0]["password"] == "database-secret"
+    assert result[0]["ssh_tunnel"] == {
+        "host": "bastion.example", "user": "tunnel", "password": "ssh-secret",
+    }
+
+
+def test_plaintext_credentials_do_not_require_openssl(tmp_path, monkeypatch):
+    workspace = _write_dbeaver_workspace(tmp_path, [{"id": "c1", "name": "database"}])
+    (workspace / "credentials-config.json").write_text(json.dumps({
+        "c1": {"#connection": {"user": "reader", "password": "database-secret"}},
+    }))
+    def unavailable(*args, **kwargs):
+        raise FileNotFoundError("openssl")
+    monkeypatch.setattr("mcp_read_only_sql.config.dbeaver_import.subprocess.run", unavailable)
+    result = DBeaverImporter(str(workspace)).import_connections()
+    assert result[0]["username"] == "reader"
+    assert result[0]["password"] == "database-secret"
+
+
+def test_ssh_only_encrypted_credentials_do_not_attempt_plaintext_fallback(tmp_path, monkeypatch, caplog):
+    workspace = _write_dbeaver_workspace(tmp_path, [{
+        "id": "c1", "name": "database", "configuration": {"handlers": {"ssh_tunnel": {
+            "enabled": True, "properties": {"host": "bastion", "authType": "PASSWORD"},
+        }}},
+    }])
+    (workspace / "credentials-config.json").write_bytes(b"not plaintext JSON")
+    content = json.dumps({"c1": {"network/ssh_tunnel": {"user": "tunnel", "password": "ssh-secret"}}}).encode()
+    monkeypatch.setattr("mcp_read_only_sql.config.dbeaver_import.subprocess.run", lambda *a, **kw: SimpleNamespace(returncode=0, stdout=b"0" * 16 + content))
+    result = DBeaverImporter(str(workspace)).import_connections()
+    assert result[0]["ssh_tunnel"]["password"] == "ssh-secret"
+    assert "Usernames will need" not in caplog.text
+
+
+@pytest.mark.parametrize("key_path", ["/key", ""])
+def test_key_passphrase_is_not_mislabeled_as_account_password(capsys, key_path):
+    importer = DBeaverImporter("/unused")
+    result = importer._convert_connection("c1", {
+        "name": "database", "provider": "clickhouse", "configuration": {"handlers": {"ssh_tunnel": {
+            "enabled": True, "properties": {"host": "bastion", "authType": "PUBLIC_KEY", "keyPath": key_path},
+        }}},
+    }, ssh_creds={"user": "tunnel", "password": "private-key-secret"})
+    assert result["ssh_tunnel"].get("private_key", "") == key_path
+    assert "password" not in result["ssh_tunnel"]
+    output = capsys.readouterr().out
+    assert ("key passphrase was not imported" in output) == bool(key_path)
+    assert "private-key-secret" not in output
