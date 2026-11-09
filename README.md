@@ -197,7 +197,16 @@ PostgreSQL connections refuse function calls outside the built-in allow-list. If
 
 ### 4. Validate and Test Connections
 
-The package includes management subcommands for connection validation and dry-run testing:
+The package includes management subcommands for connection validation and dry-run testing.
+
+Runtime loading and `validate-config` use the same structural rules. Server and
+SSH ports must be integer YAML values, usernames and SSH hosts must be nonempty
+strings, and obsolete credential fields must be removed even from disabled SSH
+tunnels. Older configurations that loaded despite validator errors need these
+corrections before upgrading. Validation reports the first structural error per
+connection; environment checks run after the complete configuration loads.
+
+Run the management commands with:
 
 ```bash
 uvx --from . mcp-read-only-sql validate-config
