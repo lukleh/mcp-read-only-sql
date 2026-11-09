@@ -126,7 +126,7 @@ class ReadOnlySQLServer:
         """Create a collision-safe result path under the managed state directory."""
         safe_name = (
             RESULT_FILE_NAME_RE.sub("-", connection_name)
-            .strip("._-")[:RESULT_DIR_PREFIX_MAX_LENGTH]
+            .strip("._-")[:RESULT_DIR_PREFIX_MAX_LENGTH].rstrip("._-")
             or "query"
         )
         digest = blake2b(

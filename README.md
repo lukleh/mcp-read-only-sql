@@ -253,6 +253,10 @@ state directory, typically `~/.local/state/lukleh/mcp-read-only-sql/results/`.
 Successful query results are persisted with `0600` permissions and are no
 longer returned inline on success.
 
+Result directory names use at most the first 100 sanitized ASCII
+characters plus a digest of the full name. A previously returned absolute result
+path remains readable after this naming rule changes.
+
 The file holds a header line and one line per row, tab-separated. For
 PostgreSQL both implementations follow the quoting rules of `psql --csv`:
 NULL and the empty string are empty, and a value containing a tab, a double
