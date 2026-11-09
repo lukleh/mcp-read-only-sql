@@ -153,6 +153,13 @@ uvx --from . mcp-read-only-sql import-dbeaver \
 
 That writes `connections.yaml` with any decrypted passwords stored directly in the file. The importer writes user-only permissions and keeps timestamped backups when it overwrites an existing file.
 
+The importer refuses symlinked output and backup paths, including unchanged
+imports. For a dotfiles-managed configuration, pass its real target explicitly
+with `--output`. Writes flush a private sibling temporary file before atomic
+replacement; this guarantees private, complete replacement, not durability through
+power loss. The final configuration directory is created privately; intermediate
+parent directories retain normal umask behavior.
+
 Plaintext DBeaver credential files can be imported even when OpenSSL is unavailable.
 Encrypted SSH private-key passphrases are not imported as account passwords: the
 importer warns and leaves the passphrase out of `connections.yaml`. Unlock those

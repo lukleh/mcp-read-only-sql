@@ -4,6 +4,8 @@ import logging
 import os
 import re
 import subprocess
+import tempfile
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
@@ -14,12 +16,26 @@ from ..utils.connection_utils import get_connection_target
 logger = logging.getLogger(__name__)
 
 
+def _refuse_symlink(path: Path) -> None:
+    """Keep imports from following or replacing a user-managed symlink."""
+    if path.is_symlink():
+        raise ValueError(f"Refusing symlinked output '{path}'; use its explicit target path")
+
+
 def _write_text_file_secure(path: Path, content: str) -> None:
-    """Write a text file and restrict it to user-only permissions."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as handle:
-        handle.write(content)
-    os.chmod(path, 0o600)
+    """Replace a file atomically with content private from its first byte."""
+    _refuse_symlink(path)
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        with suppress(FileNotFoundError):
+            os.unlink(temporary)
 
 
 def _extract_credentials(
@@ -570,6 +586,7 @@ def main() -> None:
         print("Dry run: no files will be written\n")
 
     try:
+        _refuse_symlink(output_path)
         importer = DBeaverImporter(dbeaver_path)
         # Always import raw connections first so we can report on merges clearly.
         raw_connections = importer.import_connections(
@@ -681,8 +698,8 @@ def main() -> None:
                 if existing_yaml is not None:
                     # Local wall-clock is intentional: the backup filename should
                     # match the user's clock, not UTC.
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")  # noqa: DTZ005
-                    # Create backup filename: connections.yaml.bak.20241230_143022
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")  # noqa: DTZ005
+                    # Include microseconds so rapid repeated imports retain both backups.
                     backup_name = f"{output_path.stem}.yaml.bak.{timestamp}"
                     backup_path = output_path.parent / backup_name
                     _write_text_file_secure(backup_path, existing_yaml)
