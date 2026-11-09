@@ -45,7 +45,8 @@ dev = [
     # ruff pinned to one minor so a new release cannot change lint behavior
     # under CI silently. Bumping the pin is a deliberate, separate change.
     "ruff>=0.16,<0.17",
-    "ty>=0.0.28",
+    # Pre-1.0 patch releases can change diagnostics; keep the required gate stable.
+    "ty==0.0.99",
     "vulture>=2.16",
 ]
 

@@ -24,7 +24,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 
-from pglast import ast, parser, visitors
+from pglast import ast, enums, parser, visitors
 
 from .pg_catalog_functions import PG_CATALOG_NON_VOLATILE_FUNCTIONS
 
@@ -43,8 +43,11 @@ __all__ = [
 # to something outside pg_catalog; the CLI connector recognizes it in stderr.
 SHADOW_GUARD_PREFIX = "Read-only guard:"
 SHADOW_GUARD_SUFFIX = (
-    "shadow a name this query uses through search_path; qualify the call as "
-    "pg_catalog.<name>(...) or list the function in allowed_functions"
+    "shadow a name this query uses through search_path; qualify explicit functions as "
+    "pg_catalog.<name>(...) or operators as OPERATOR(pg_catalog.<operator>), "
+    "or list trusted functions in allowed_functions. For implicit comparisons "
+    "(BETWEEN, IN, CASE, JOIN USING/NATURAL), configure the login role search_path "
+    "without the reported schema"
 )
 
 
@@ -128,6 +131,15 @@ _ALLOWED_TABLESAMPLE_METHODS = frozenset({"system", "bernoulli"})
 
 _OPERATOR_NAME = re.compile(r"^[-+*/<>=~!@#%^&|`?]+$")
 
+# PostgreSQL inserts these comparisons while transforming the raw parse tree.
+# They therefore have no operator identifier for visit_A_Expr to inspect.
+_BETWEEN_OPERATORS = {
+    enums.A_Expr_Kind.AEXPR_BETWEEN: (">=", "<="),
+    enums.A_Expr_Kind.AEXPR_BETWEEN_SYM: (">=", "<="),
+    enums.A_Expr_Kind.AEXPR_NOT_BETWEEN: ("<", ">"),
+    enums.A_Expr_Kind.AEXPR_NOT_BETWEEN_SYM: ("<", ">"),
+}
+
 _STATEMENT_LABELS = {
     "CallStmt": "CALL",
     "CopyStmt": "COPY",
@@ -183,8 +195,8 @@ def postgresql_statement_is_select(query: str) -> bool:
     and SHOW cannot, and their output is small enough to fetch at once.
     """
 
-    statements = parser.parse_sql(sanitize_read_only_sql(query))
-    return isinstance(statements[0].stmt, ast.SelectStmt)
+    _, statement = _parse_postgresql_statement(query)
+    return isinstance(statement, ast.SelectStmt)
 
 
 def postgresql_shadow_query(
@@ -203,7 +215,8 @@ def postgresql_shadow_query(
     bare name refuses the query, even one PostgreSQL would not pick for the
     given argument types. That is deliberate; resolving overloads client-side
     would mean reimplementing PostgreSQL's function resolution. The error
-    says how to proceed (qualify the call, or list the function).
+    explains qualification for explicit calls and operators, or search_path
+    changes for syntax that introduces implicit comparisons.
 
     ``allowed_functions`` entries are treated by spelling. A bare entry means
     "whatever this name resolves to" and is exempt. A ``schema.name`` entry
@@ -268,20 +281,45 @@ def postgresql_shadow_guard_block(shadow_query: str) -> str:
 def _analyze(
     query: str, allowed_functions: Iterable[str]
 ) -> tuple[str, _ReadOnlyPolicy]:
-    stripped = sanitize_read_only_sql(query)
+    stripped, statement = _parse_postgresql_statement(query)
+    policy = _ReadOnlyPolicy(frozenset(allowed_functions))
+    policy(statement)
+    return stripped, policy
+
+
+def _parse_postgresql_statement(query: str) -> tuple[str, ast.Node]:
+    """Use PostgreSQL's grammar and lexer for every PostgreSQL input path."""
+    if query is None:
+        raise ReadOnlyQueryError("Query must not be None")
+    stripped = query.strip()
+    if not stripped:
+        raise ReadOnlyQueryError("Query must not be empty")
+    if "\x00" in stripped:
+        raise ReadOnlyQueryError("SQL must not contain NUL bytes")
     try:
         statements = parser.parse_sql(stripped)
+        tokens = [
+            token
+            for token in parser.scan(stripped)
+            if token.name not in {"C_COMMENT", "SQL_COMMENT"}
+        ]
+        semicolons = sum(token.name == "ASCII_59" for token in tokens)
     except parser.ParseError as exc:
         raise ReadOnlyQueryError(
             f"SQL could not be parsed, so it cannot be validated for read-only mode: {exc}"
         ) from exc
-    if len(statements) != 1:
+    if (
+        len(statements) != 1
+        or semicolons > 1
+        or (semicolons and tokens[-1].name != "ASCII_59")
+    ):
         raise ReadOnlyQueryError(
             "Multiple SQL statements are not allowed in read-only mode"
         )
-    policy = _ReadOnlyPolicy(frozenset(allowed_functions))
-    policy(statements[0].stmt)
-    return stripped, policy
+    statement = statements[0].stmt
+    if statement is None:
+        raise ReadOnlyQueryError("Query must contain a SQL statement")
+    return stripped, statement
 
 
 def _literal(value: str) -> str:
@@ -298,16 +336,18 @@ class _ReadOnlyPolicy(visitors.Visitor):
 
     def __init__(self, extra_functions: frozenset[str]):
         super().__init__()
+        self.visit = self._visit_node
         # A configured ``schema.name`` permits both the qualified call and the
         # bare ``name(...)``, which is how such a function is normally invoked
         # with its schema on search_path; the shadow check then pins the bare
         # call to that schema. A bare entry permits the bare call and
         # ``pg_catalog.name`` and trusts whatever it resolves to.
-        self._extra_qualified = frozenset(f for f in extra_functions if "." in f)
+        self._extra_qualified = frozenset(
+            tuple(f.rsplit(".", 1)) for f in extra_functions if "." in f
+        )
         self._extra_bare = frozenset(f for f in extra_functions if "." not in f)
         self._pinned: dict[str, set[str]] = {}
-        for entry in self._extra_qualified:
-            schema, name = entry.rsplit(".", 1)
+        for schema, name in self._extra_qualified:
             self._pinned.setdefault(name, set()).add(schema)
         # Unqualified names the query relies on search_path to resolve, and
         # the (name, schema) pairs allowed_functions pins them to.
@@ -315,7 +355,7 @@ class _ReadOnlyPolicy(visitors.Visitor):
         self.bare_operators: set[str] = set()
         self.pinned_schemas: set[tuple[str, str]] = set()
 
-    def visit(self, ancestors, node):
+    def _visit_node(self, ancestors, node):
         if isinstance(node, ast.Node) and type(node).__name__.endswith("Stmt"):
             self._check_statement(node)
 
@@ -330,14 +370,20 @@ class _ReadOnlyPolicy(visitors.Visitor):
     def visit_FuncCall(self, ancestors, node):
         parts = [str(part.sval) for part in node.funcname]
         qualified = ".".join(parts)
-        if qualified in self._extra_qualified:
-            return
         name = _strip_pg_catalog(parts)
+        if name in _EXCLUDED_FUNCTIONS:
+            raise ReadOnlyQueryError(
+                f"Function {qualified}() is excluded by the PostgreSQL read-only policy"
+            )
+        if tuple(parts) in self._extra_qualified:
+            return
         if name is None:
             raise ReadOnlyQueryError(_function_message(qualified))
         if name in self._extra_bare:
             return
-        if name not in PG_CATALOG_ALLOWED_FUNCTIONS and name not in self._pinned:
+        if name not in PG_CATALOG_ALLOWED_FUNCTIONS and not (
+            len(parts) == 1 and name in self._pinned
+        ):
             raise ReadOnlyQueryError(_function_message(qualified))
         if len(parts) == 1:
             self.bare_functions.add(name)
@@ -345,7 +391,23 @@ class _ReadOnlyPolicy(visitors.Visitor):
                 self.pinned_schemas.add((name, schema))
 
     def visit_A_Expr(self, ancestors, node):
+        self.bare_operators.update(_BETWEEN_OPERATORS.get(node.kind, ()))
         self._check_operator([str(part.sval) for part in node.name or ()])
+
+    def visit_JoinExpr(self, ancestors, node):
+        if node.usingClause or node.isNatural:
+            self.bare_operators.add("=")
+
+    def visit_CaseExpr(self, ancestors, node):
+        if node.arg is not None:
+            self.bare_operators.add("=")
+
+    def visit_SubLink(self, ancestors, node):
+        if node.operName:
+            self._check_operator([str(part.sval) for part in node.operName])
+        elif node.subLinkType == enums.SubLinkType.ANY_SUBLINK:
+            # IN (SELECT ...) is an ANY sublink with an implicit equals sign.
+            self.bare_operators.add("=")
 
     def visit_SortBy(self, ancestors, node):
         # ORDER BY ... USING <op> sorts through the operator's btree opclass,
@@ -374,6 +436,11 @@ class _ReadOnlyPolicy(visitors.Visitor):
             return
         class_name = type(node).__name__
         label = _STATEMENT_LABELS.get(class_name, class_name.removesuffix("Stmt"))
+        if isinstance(node, ast.VariableSetStmt) and node.name in {
+            "TRANSACTION",
+            "SESSION CHARACTERISTICS",
+        }:
+            label = "transaction control"
         raise ReadOnlyQueryError(
             f"{label} statements are not allowed in read-only mode "
             "(only SELECT, EXPLAIN and SHOW are accepted)"

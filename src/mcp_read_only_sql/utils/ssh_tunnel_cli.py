@@ -92,7 +92,16 @@ def _ssh_keygen_find(name: str, path: str) -> list[str]:
 
 def _key_parses(line: str) -> bool:
     """Whether ssh can read the key on a known_hosts line (``ssh-keygen -l``)."""
-    entry = line.split(" ", 1)[1] if line.startswith("@") and " " in line else line
+    fields = line.split()
+    if not fields:
+        return False
+    if fields[0].startswith("@"):
+        if fields[0] not in {"@cert-authority", "@revoked"}:
+            return False
+        fields = fields[1:]
+    # ssh-keygen's fingerprint reader is stricter about repeated whitespace
+    # than its known_hosts matcher. The match above remains authoritative.
+    entry = " ".join(fields)
     try:
         checked = subprocess.run(
             ["ssh-keygen", "-l", "-f", "-"],
@@ -184,8 +193,8 @@ class CLISSHTunnel:
         return HostKeySurvey(
             name=name,
             record_file=user_files[0],
-            pinned=any(not line.startswith("@") for line in matches),
-            certified=any(line.startswith("@cert-authority") for line in matches),
+            pinned=any(not line.split()[0].startswith("@") for line in matches),
+            certified=any(line.split()[0] == "@cert-authority" for line in matches),
         )
 
     def _find_free_port(self) -> int:
