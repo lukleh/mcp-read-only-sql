@@ -47,6 +47,7 @@ class DBeaverImporter:
         self.data_sources_path = self.dbeaver_path / "data-sources.json"
         self.credentials_path = self.dbeaver_path / "credentials-config.json"
         self.last_seen_names: list[str] = []
+        self._credentials_decrypted = False
 
     def _decrypt_credentials(
         self,
@@ -84,6 +85,7 @@ class DBeaverImporter:
             # Skip the first 16 bytes (padding) and parse JSON
             decrypted = result.stdout[16:]
             credentials_data = json.loads(decrypted)
+            self._credentials_decrypted = True
 
             credentials, ssh_credentials = _extract_credentials(credentials_data)
 
@@ -92,7 +94,7 @@ class DBeaverImporter:
             )
             return credentials, ssh_credentials
 
-        except (subprocess.SubprocessError, json.JSONDecodeError) as e:
+        except (OSError, subprocess.SubprocessError, json.JSONDecodeError) as e:
             logger.warning(f"Could not decrypt credentials file: {e}")
             return {}, {}
 
@@ -109,9 +111,10 @@ class DBeaverImporter:
             data_sources = json.load(handle)
 
         # Try to decrypt credentials
+        self._credentials_decrypted = False
         credentials, ssh_credentials = self._decrypt_credentials()
 
-        if not credentials and self.credentials_path.exists():
+        if not (self._credentials_decrypted or credentials or ssh_credentials) and self.credentials_path.exists():
             # Fallback: try to read as plaintext JSON (some DBeaver versions don't encrypt)
             try:
                 with self.credentials_path.open("r", encoding="utf-8") as handle:
@@ -249,11 +252,6 @@ class DBeaverImporter:
                 "user": ssh_user,
             }
 
-            # Store SSH password if available
-            if ssh_creds and "password" in ssh_creds:
-                connection["ssh_tunnel"]["password"] = ssh_creds["password"]
-                print("    SSH Password: ******** (stored in connections.yaml)")
-
             # Add SSH port if non-standard
             ssh_port = ssh_props.get("port", 22)
             if ssh_port and str(ssh_port) != "22":
@@ -262,6 +260,14 @@ class DBeaverImporter:
             # Add private key if specified
             key_path = ssh_props.get("keyPath", "")  # DBeaver uses 'keyPath'
             auth_type = ssh_props.get("authType", "")
+
+            if ssh_creds and "password" in ssh_creds:
+                if key_path or auth_type == "PUBLIC_KEY":
+                    if ssh_creds["password"]:
+                        print("    Warning: SSH key passphrase was not imported; unlock the key with ssh-agent")
+                else:
+                    connection["ssh_tunnel"]["password"] = ssh_creds["password"]
+                    print("    SSH Password: ******** (stored in connections.yaml)")
 
             if key_path:
                 connection["ssh_tunnel"]["private_key"] = key_path
