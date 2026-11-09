@@ -155,6 +155,7 @@ That writes `connections.yaml` with any decrypted passwords stored directly in t
 
 Connections that normalize to the same name are accepted only when cluster
 merging combines them into one output connection with matching shared settings.
+With `--only`, both colliding records must be selected for that exemption.
 Distinct output connections must have unique names. With `--no-merge`, duplicate
 names are refused even for otherwise matching cluster members. Collision errors
 include both DBeaver display names and internal IDs so the entries can be renamed.
