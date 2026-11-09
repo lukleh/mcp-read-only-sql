@@ -78,3 +78,17 @@ def test_validator_keeps_private_key_file_diagnostics(tmp_path, capsys):
     assert load_connections(path)
     assert not validate_config(path)
     assert "SSH private key not found" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+def test_validator_keeps_inferred_database_warning(tmp_path, capsys, explicit):
+    config = {key: value for key, value in BASE.items() if key != "db"}
+    config["allowed_databases"] = ["analytics", "archive"]
+    if explicit:
+        config["default_database"] = "analytics"
+    path = write_config(tmp_path, [config])
+    connection = load_connections(path)["database"]
+    assert connection.default_database_inferred is not explicit
+    assert validate_config(path)
+    output = capsys.readouterr().out
+    assert ("No default database specified" in output) is not explicit

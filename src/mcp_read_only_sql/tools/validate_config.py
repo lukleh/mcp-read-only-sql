@@ -22,6 +22,8 @@ def validate_config(config_path: str | Path) -> bool:
             errors: list[str] = []
             warnings: list[str] = []
             infos: list[str] = []
+            if conn.default_database_inferred:
+                warnings.append("No default database specified (will use first allowed)")
             if conn.password:
                 infos.append("ℹ️  Database password is configured in connections.yaml")
             else:

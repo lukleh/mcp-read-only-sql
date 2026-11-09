@@ -384,6 +384,7 @@ class Connection:
         self._db_type = db_type
         self._servers = servers
         self._database = default_db
+        self._default_database_inferred = not bool(config.get("default_database") or db_field)
         self._allowed_databases = allowed_databases
         self._username = config["username"]
         self._password = password
@@ -426,6 +427,11 @@ class Connection:
     def database(self) -> str:
         """Default database name"""
         return self._database
+
+    @property
+    def default_database_inferred(self) -> bool:
+        """Whether the first allowlisted database supplied the default."""
+        return self._default_database_inferred
 
     @property
     def allowed_databases(self) -> list[str]:
