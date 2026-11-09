@@ -72,12 +72,27 @@ async def stream_cli_process(
         # This covers cancellation, password/pipe errors, decoder or output-sink
         # failures, and timeouts. A normal EOF alone does not prove child exit.
         if not completed:
-            with suppress(ProcessLookupError):
-                process.kill()
-            with suppress(TimeoutError):
-                await asyncio.wait_for(process.wait(), timeout=1.0)
-        if stderr_task is not None and not stderr_task.done():
-            stderr_task.cancel()
-        if stderr_task is not None:
-            with suppress(Exception, asyncio.CancelledError):
-                await stderr_task
+            async def cleanup():
+                with suppress(ProcessLookupError):
+                    process.kill()
+                with suppress(TimeoutError):
+                    await asyncio.wait_for(process.wait(), timeout=1.0)
+                if stderr_task is not None:
+                    if not stderr_task.done():
+                        stderr_task.cancel()
+                    with suppress(Exception, asyncio.CancelledError):
+                        await stderr_task
+
+            # Retain the cleanup task through further caller cancellation, as
+            # tunnel cleanup does, until the child and stderr reader finish.
+            cleanup_task = asyncio.create_task(cleanup())
+            try:
+                await asyncio.shield(cleanup_task)
+            except asyncio.CancelledError:
+                while not cleanup_task.done():
+                    try:
+                        await asyncio.shield(cleanup_task)
+                    except asyncio.CancelledError:
+                        continue
+                cleanup_task.result()
+                raise

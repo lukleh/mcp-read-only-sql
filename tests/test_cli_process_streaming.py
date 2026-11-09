@@ -82,6 +82,65 @@ async def test_every_failure_reaps_real_child(failure, monkeypatch):
     assert processes[0].returncode is not None
 
 
+@pytest.mark.anyio
+@pytest.mark.parametrize("initial_failure", ["cancel", "timeout"])
+async def test_repeated_cancellation_retains_real_child_cleanup(initial_failure, monkeypatch):
+    processes = []
+    tasks = []
+    ready = asyncio.Event()
+    reaping = asyncio.Event()
+    release = asyncio.Event()
+    spawn = asyncio.create_subprocess_exec
+    create_task = asyncio.create_task
+
+    async def recording_spawn(*args, **kwargs):
+        process = await spawn(*args, **kwargs)
+        processes.append(process)
+        wait = process.wait
+
+        async def delayed_wait():
+            reaping.set()
+            await release.wait()
+            return await wait()
+
+        monkeypatch.setattr(process, "wait", delayed_wait)
+        return process
+
+    def recording_task(coro, *args, **kwargs):
+        task = create_task(coro, *args, **kwargs)
+        tasks.append(task)
+        return task
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", recording_spawn)
+    monkeypatch.setattr(asyncio, "create_task", recording_task)
+    code = (
+        "import signal,sys,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+        "sys.stdout.write('ready\\nrow\\n'); sys.stdout.flush(); time.sleep(10)"
+    )
+    caller = create_task(stream_cli_process(
+        [sys.executable, "-c", code], env=dict(os.environ),
+        timeout=0.1 if initial_failure == "timeout" else 5,
+        label="test-client", emit=lambda text: ready.set(),
+    ))
+    try:
+        await asyncio.wait_for(ready.wait(), timeout=2)
+        if initial_failure == "cancel":
+            caller.cancel()
+        await asyncio.wait_for(reaping.wait(), timeout=2)
+        caller.cancel()
+        await asyncio.sleep(0)
+        caller.cancel()
+        await asyncio.sleep(0)
+        assert not caller.done()
+    finally:
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(caller, timeout=2)
+    assert len(processes) == 1
+    assert processes[0].returncode is not None
+    assert tasks and all(task.done() for task in tasks)
+
+
 @pytest.mark.docker
 @pytest.mark.usefixtures("docker_check")
 @pytest.mark.anyio
