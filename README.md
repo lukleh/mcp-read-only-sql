@@ -272,6 +272,9 @@ List all available database connections.
 while `databases` lists the allowlisted databases (comma-separated). The `servers`
 column lists comma-separated hostnames after resolving SSH/VPN tunnels, so entries
 reflect the endpoints the agent should reference.
+Fields containing tabs, quotes, or line breaks use CSV quoting with a tab
+separator, like PostgreSQL result files. Read the response with a TSV-aware
+CSV parser rather than splitting it into physical lines.
 
 ## Implementation Matrix
 
