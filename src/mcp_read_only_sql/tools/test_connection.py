@@ -76,7 +76,8 @@ async def test_connection(
                 if server is None:
                     display_labels.append("default")
                     continue
-                canonical = f"{server.host}:{server.port}"
+                host = f"[{server.host}]" if ":" in server.host else server.host
+                canonical = f"{host}:{server.port}"
                 if display_host == server.host:
                     display_labels.append(canonical)
                 else:

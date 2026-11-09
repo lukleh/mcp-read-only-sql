@@ -1,14 +1,19 @@
 import asyncio
 import functools
 import logging
-from contextlib import asynccontextmanager, closing
+import math
+import os
+from contextlib import asynccontextmanager, closing, suppress
 from io import IOBase
 from pathlib import Path
+from threading import Event, Lock
 from typing import cast
 
 import clickhouse_connect
+from clickhouse_connect.driver import httpclient
 from clickhouse_connect.driver.client import Client
 from clickhouse_connect.driver.exceptions import ClickHouseError
+from urllib3.exceptions import HTTPError, ReadTimeoutError
 
 from ...config import Connection
 from ...errors import ConnectorError
@@ -19,6 +24,64 @@ from .settings import PROBE_QUERY, decide_client_settings, refuses_sent_setting
 from .sql import sanitize_clickhouse_read_only_sql
 
 logger = logging.getLogger(__name__)
+
+
+class _QueryCancellation:
+    """Own output and response resources across cancellation of an executor job."""
+
+    def __init__(self, output: IOBase | None = None):
+        self._cancelled = Event()
+        self._lock = Lock()
+        self._started = False
+        self._output = output
+        self._resources: list = []
+
+    def start(self) -> None:
+        with self._lock:
+            self.check()
+            self._started = True
+
+    def check(self) -> None:
+        if self._cancelled.is_set():
+            raise TimeoutError("ClickHouse: query cancelled")
+
+    def watch(self, resource) -> None:
+        with self._lock:
+            self._resources.append(resource)
+        if self._cancelled.is_set():
+            with suppress(Exception):
+                resource.close()
+            self.check()
+
+    def cancel(self) -> None:
+        with self._lock:
+            self._cancelled.set()
+            # A queued job cannot be using this handle. Running workers retain
+            # their own handle until finally, so cancellation cannot cause fd reuse.
+            if not self._started and self._output is not None:
+                self._output.close()
+
+    def close_resources(self) -> None:
+        with self._lock:
+            resources = list(reversed(self._resources))
+        for resource in resources:
+            with suppress(Exception):
+                resource.close()
+
+
+def _consume_outcome(future: asyncio.Future) -> None:
+    if not future.cancelled():
+        future.exception()
+
+
+def _open_result_output(path: str) -> IOBase:
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+        return os.fdopen(fd, "wb")
+    except BaseException:
+        os.close(fd)
+        raise
 
 
 class ClickHousePythonConnector(BaseConnector):
@@ -131,19 +194,45 @@ class ClickHousePythonConnector(BaseConnector):
                 ]
                 if output_path is not None:
                     worker_args.append(output_path)
+                output = None
+                if output_path is not None:
+                    output = _open_result_output(output_path)
+                cancellation = _QueryCancellation(output)
                 job = functools.partial(
                     worker,
                     *worker_args,
                     server_key=(selected_server.host, selected_server.port),
-                )
-                return await asyncio.wait_for(
-                    loop.run_in_executor(None, job),
-                    timeout=total_timeout,
+                    cancellation=cancellation,
+                    output_handle=output,
                 )
 
+                def run_job():
+                    try:
+                        cancellation.start()
+                        return job()
+                    finally:
+                        if output is not None:
+                            output.close()
+
+                try:
+                    future = loop.run_in_executor(None, run_job)
+                except BaseException:
+                    if output is not None:
+                        output.close()
+                    raise
+                try:
+                    done, _ = await asyncio.wait({future}, timeout=total_timeout)
+                    if done:
+                        return await future
+                    self._stop_worker(cancellation, future)
+                    raise TimeoutError
+                except asyncio.CancelledError:
+                    self._stop_worker(cancellation, future)
+                    raise
+
         except TimeoutError as e:
-            # Re-raise SSH timeout as-is
-            if "SSH:" in str(e):
+            # Preserve specific SSH and response-read timeout diagnostics.
+            if "SSH:" in str(e) or "ClickHouse:" in str(e):
                 raise
             # Otherwise it's a query timeout from asyncio.wait_for
             raise TimeoutError(
@@ -154,6 +243,20 @@ class ClickHousePythonConnector(BaseConnector):
             logger.error(f"ClickHouse database error: {e}")
             raise ConnectorError(f"ClickHouse: {e}")
         # Let other exceptions (programming errors) propagate unchanged
+
+    def _stop_worker(self, cancellation: _QueryCancellation, future: asyncio.Future) -> None:
+        """Request cleanup; blocked reads remain bounded by the receive timeout."""
+        cancellation.cancel()
+        future.add_done_callback(_consume_outcome)
+        try:
+            close_future = asyncio.get_running_loop().run_in_executor(None, cancellation.close_resources)
+        except RuntimeError:
+            # Executor shutdown must not replace caller cancellation. The
+            # running worker still closes its response, client and output in
+            # finally blocks; resources arriving after cancel close in watch().
+            logger.debug("ClickHouse: cleanup deferred to worker during executor shutdown")
+            return
+        close_future.add_done_callback(_consume_outcome)
 
     def _resolve_client_endpoint(
         self, port: int, original_port: int | None, is_ssh_tunnel: bool
@@ -194,6 +297,8 @@ class ClickHousePythonConnector(BaseConnector):
         database: str,
         original_port: int | None,
         is_ssh_tunnel: bool,
+        *,
+        server_host_name: str | None = None,
     ):
         """Create a configured clickhouse-connect client for this endpoint.
 
@@ -203,6 +308,11 @@ class ClickHousePythonConnector(BaseConnector):
         interface, resolved_port = self._resolve_client_endpoint(
             port, original_port, is_ssh_tunnel
         )
+        # Drivers without URI host formatting require IPv6 brackets here.
+        # Drivers with native support need the bare host for
+        # NO_PROXY matching, so only adapt drivers missing that capability.
+        if ":" in host and not host.startswith("[") and not hasattr(httpclient, "format_uri_host"):
+            host = f"[{host}]"
         return clickhouse_connect.get_client(
             interface=interface,
             host=host,
@@ -211,6 +321,8 @@ class ClickHousePythonConnector(BaseConnector):
             username=self.username,
             password=self.password,
             connect_timeout=self.connection_timeout,
+            send_receive_timeout=max(1, math.ceil(min(self.query_timeout, self.hard_timeout))),
+            server_host_name=server_host_name if interface == "https" else None,
             query_limit=0,  # No limit on query result size (we handle it ourselves)
         )
 
@@ -222,6 +334,7 @@ class ClickHousePythonConnector(BaseConnector):
         original_port: int | None,
         is_ssh_tunnel: bool,
         server_key: tuple[str, int] | None,
+        cancellation: _QueryCancellation | None = None,
     ) -> tuple[Client, dict[str, object]]:
         """Create the client and decide the settings to send on this server.
 
@@ -234,7 +347,14 @@ class ClickHousePythonConnector(BaseConnector):
         at 0 is refused. Returns the client and the settings to send with
         each query (possibly empty).
         """
-        client = self._create_client(host, port, database, original_port, is_ssh_tunnel)
+        client_options = {}
+        if is_ssh_tunnel and server_key is not None and original_port in (8443, 9440):
+            client_options["server_host_name"] = server_key[0]
+        client = self._create_client(
+            host, port, database, original_port, is_ssh_tunnel, **client_options
+        )
+        if cancellation is not None:
+            cancellation.watch(client)
         settings = self._decided_settings.get(server_key)
         if settings is not None and "readonly" in settings:
             return client, settings
@@ -277,6 +397,8 @@ class ClickHousePythonConnector(BaseConnector):
         output_path: str | None = None,
         *,
         server_key: tuple[str, int] | None = None,
+        cancellation: _QueryCancellation | None = None,
+        output_handle: IOBase | None = None,
     ) -> str:
         """Execute query synchronously and return TSV output."""
         if output_path is not None:
@@ -289,14 +411,20 @@ class ClickHousePythonConnector(BaseConnector):
                 is_ssh_tunnel,
                 output_path,
                 server_key=server_key,
+                cancellation=cancellation,
+                output_handle=output_handle,
             )
             return ""
 
         client = None
         try:
+            if cancellation is not None:
+                cancellation.check()
             client, settings = self._open_client(
-                host, port, database, original_port, is_ssh_tunnel, server_key
+                host, port, database, original_port, is_ssh_tunnel, server_key, cancellation
             )
+            if cancellation is not None:
+                cancellation.check()
 
             # Execute query and get result
             try:
@@ -306,6 +434,9 @@ class ClickHousePythonConnector(BaseConnector):
             except ClickHouseError as exc:
                 self._forget_if_refused(server_key, settings, exc)
                 raise
+
+            if cancellation is not None:
+                cancellation.check()
 
             # Get column names and data
             columns = (
@@ -319,6 +450,8 @@ class ClickHousePythonConnector(BaseConnector):
                 lines.append(format_tsv_line(columns))
 
             for row in data:
+                if cancellation is not None:
+                    cancellation.check()
                 if columns and isinstance(row, dict):
                     values = [row.get(col) for col in columns]
                 elif isinstance(row, (list, tuple)):
@@ -350,13 +483,19 @@ class ClickHousePythonConnector(BaseConnector):
         output_path: str = "",
         *,
         server_key: tuple[str, int] | None = None,
+        cancellation: _QueryCancellation | None = None,
+        output_handle: IOBase | None = None,
     ) -> None:
         """Execute query synchronously and stream raw TSV output to a file."""
         client = None
         try:
+            if cancellation is not None:
+                cancellation.check()
             client, settings = self._open_client(
-                host, port, database, original_port, is_ssh_tunnel, server_key
+                host, port, database, original_port, is_ssh_tunnel, server_key, cancellation
             )
+            if cancellation is not None:
+                cancellation.check()
 
             # The HTTP client returns a file-like response; cast for closing().
             try:
@@ -369,13 +508,33 @@ class ClickHousePythonConnector(BaseConnector):
             except ClickHouseError as exc:
                 self._forget_if_refused(server_key, settings, exc)
                 raise
-            with Path(output_path).open("wb") as handle, closing(raw_stream) as stream:
+            if cancellation is not None:
+                cancellation.watch(raw_stream)
+                cancellation.check()
+            # The async boundary opens the managed file before dispatch. A late
+            # worker can only write its existing descriptor, never recreate a path
+            # the server has already unlinked after a failed call.
+            handle = output_handle
+            if handle is None:
+                handle = _open_result_output(output_path)
+            with closing(handle), closing(raw_stream) as stream:
                 while True:
-                    chunk = stream.read(64 * 1024)
+                    if cancellation is not None:
+                        cancellation.check()
+                    try:
+                        chunk = stream.read(64 * 1024)
+                    except ReadTimeoutError as exc:
+                        raise TimeoutError("ClickHouse: response stream timed out") from exc
+                    except (HTTPError, OSError) as exc:
+                        # raw_stream() returns a response whose later reads
+                        # bypass the driver's ClickHouseError translation.
+                        raise ConnectorError(f"ClickHouse: response stream failed: {exc}") from exc
                     if not chunk:
                         break
                     if isinstance(chunk, str):
                         chunk = chunk.encode("utf-8")
+                    if cancellation is not None:
+                        cancellation.check()
                     handle.write(chunk)
         finally:
             if client:

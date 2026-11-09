@@ -32,6 +32,20 @@ All write operations (INSERT, UPDATE, DELETE, etc.) are blocked at the database 
 
 The shared connector base also applies hard timeouts, giving the MCP server deterministic behaviour even if the database misbehaves.
 
+The PostgreSQL CLI ignores psql startup files. Other libpq environment and service
+configuration can still supply connection defaults, including startup options;
+the explicit read-only transaction and statement policy remain enforced for every
+query. ClickHouse CLI retains its normal client configuration so configured CA
+certificates and authentication options continue to work. Explicit connection,
+output-format, and read-only flags take precedence; review the remaining client
+settings as part of the connection configuration.
+
+`connection_timeout` uses positive whole seconds for both database types and
+implementations. An integer-valued float such as `10.0` is normalized to `10`;
+fractions such as `0.5` are rejected rather than truncated by a client. PostgreSQL
+limits this setting to 2,147,483,647 seconds. `query_timeout` may use positive
+fractional seconds for the application deadline.
+
 ClickHouse queries must omit explicit output `FORMAT` clauses, including on
 `SHOW` and `EXPLAIN`; the connector selects the managed TSV format. Unsupported
 syntax involving `FORMAT` is refused with guidance to remove the output clause
@@ -44,7 +58,7 @@ When unquoted `FORMAT` is present, Unicode quote delimiters and ClickHouse-only
 whitespace are also refused because the parser tokenizes them differently. Use
 ASCII syntax or quote an identifier named `FORMAT`.
 
-Because bare names resolve through `search_path`, the guard also asks the server, right before the query, whether any bare function or operator it uses has a definition outside `pg_catalog` in a schema the session can see, and refuses the query if so. This matches on name only, so a visible `public.length(integer)` refuses `length('abc')` even though PostgreSQL would pick the catalog function; the error says to qualify the call as `pg_catalog.length(...)` or list the function. Resolving overloads client-side would mean reimplementing PostgreSQL's function resolution, so the guard stays conservative. The guard is still a filter, not a privilege boundary. It cannot see inside views, user-defined types or casts that already exist in the database, and it does not reduce what the configured login is allowed to do. Log in with a role that can only read (for PostgreSQL 14+, `pg_read_all_data`); a superuser login stays a superuser login.
+Because bare names resolve through `search_path`, the guard also asks the server, right before the query, whether any bare function or operator it uses has a definition outside `pg_catalog` in a schema the session can see, and refuses the query if so. This matches on name only, so a visible `public.length(integer)` refuses `length('abc')` even though PostgreSQL would pick the catalog function; qualify explicit function calls as `pg_catalog.length(...)` or allow trusted functions through `allowed_functions`. Explicit operators can use `OPERATOR(pg_catalog.<operator>)`. Implicit comparisons in `BETWEEN`, `IN`, `CASE`, and `JOIN USING`/`NATURAL JOIN` have no operator to qualify; configure the PostgreSQL login role `search_path` without the reported schema instead. Resolving overloads client-side would mean reimplementing PostgreSQL's function resolution, so the guard stays conservative. The guard is still a filter, not a privilege boundary. It cannot see inside views, user-defined types or casts that already exist in the database, and it does not reduce what the configured login is allowed to do. Log in with a role that can only read (for PostgreSQL 14+, `pg_read_all_data`); a superuser login stays a superuser login.
 
 See [READ_ONLY_ENFORCEMENT_MATRIX.md](READ_ONLY_ENFORCEMENT_MATRIX.md) for a statement-by-statement view of every write-capable command and the tests that enforce it.
 
@@ -156,7 +170,17 @@ Use CLI mode when you want the behavior of `psql` or `clickhouse-client`, or whe
 
 ### 3. Import or Edit `connections.yaml`
 
-You can edit the generated sample directly, or import a DBeaver workspace:
+You can edit the generated sample directly, or import a DBeaver workspace.
+
+IPv6 server strings with an explicit port use `[2001:db8::1]:5432`. Use
+`[2001:db8::1]` for the database's default port, or a mapping such as
+`{host: "2001:db8::1", port: 5432}`. Unambiguous bare literals such as `::1`
+also use the default port. Strings such as `2001:db8::1:5432` are rejected:
+they can mean either one address or an address plus a port. Older versions
+split those strings at the final colon, so bracket legacy endpoints explicitly
+when upgrading rather than allowing a silent destination change.
+
+Import a DBeaver workspace with:
 
 ```bash
 uvx --from . mcp-read-only-sql import-dbeaver \
@@ -164,6 +188,48 @@ uvx --from . mcp-read-only-sql import-dbeaver \
 ```
 
 That writes `connections.yaml` with any decrypted passwords stored directly in the file. The importer writes user-only permissions and keeps timestamped backups when it overwrites an existing file.
+When `--only` updates an entry containing multiple cluster servers, existing
+servers are retained so an unselected member cannot disappear. Use a full import
+to remove obsolete cluster endpoints.
+Partial updates that change shared login, database, or SSH
+settings are refused; run a full import so affected servers can be regrouped.
+An imported cluster member whose name differs from the stored cluster name is
+matched only when its endpoint has one compatible existing multi-server cluster;
+single-server manual profiles are not renamed or replaced. Ambiguous matches are
+refused. Database, available login and SSH route must also match;
+a shared network endpoint alone never identifies an existing connection.
+An explicit different login or database remains a separate connection; when
+credentials are unavailable and endpoint ownership is unclear, the import refuses
+to guess which stored entry to update.
+Partial imports preserve the existing implementation, connection options not
+managed by DBeaver and SSH options such as
+`known_hosts_file`, `host_key_checking`, and `ssh_timeout`, and retain stored
+credentials when DBeaver cannot supply them and their destination and login are
+unchanged. Missing credentials for a changed database or SSH identity cause a safe
+refusal, so a stored secret cannot be sent to a different host or account.
+Empty or missing imported passwords do not clear stored credentials during a
+partial import. Edit the configuration directly to clear them. A full import is
+authoritative and can remove manually added settings, so review its dry-run
+preview before using it to regroup connections.
+
+Connections that normalize to the same name are accepted only when cluster
+merging combines them into one output connection with matching shared settings.
+With `--only`, both colliding records must be selected for that exemption.
+Distinct output connections must have unique names. With `--no-merge`, duplicate
+names are refused even for otherwise matching cluster members. Collision errors
+include both DBeaver display names and internal IDs so the entries can be renamed.
+
+The importer refuses symlinked output and backup paths, including unchanged
+imports. For a dotfiles-managed configuration, pass its real target explicitly
+with `--output`. Writes flush a private sibling temporary file before atomic
+replacement; this guarantees private, complete replacement, not durability through
+power loss. The final configuration directory is created privately; intermediate
+parent directories retain normal umask behavior.
+
+Plaintext DBeaver credential files can be imported even when OpenSSL is unavailable.
+Encrypted SSH private-key passphrases are not imported as account passwords: the
+importer warns and leaves the passphrase out of `connections.yaml`. Unlock those
+keys through `ssh-agent` before connecting.
 
 > `connections.yaml` contains credentials. Keep it private, do not commit it, and restart the MCP process after editing it so changes take effect.
 
@@ -186,6 +252,11 @@ If you only set `db`, that single database is implicitly the allowlist.
 
 PostgreSQL connections refuse function calls outside the built-in allow-list. If a query legitimately needs another function, list it under `allowed_functions`, spelled as the catalog spells it. A `schema.name` entry permits both `schema.name(...)` and the bare `name(...)`, and pins the bare call to that schema: if another visible schema also defines the name, the query is refused. A bare entry permits only the bare call and trusts whatever it resolves to:
 
+Entries match catalog spelling exactly, including case. PostgreSQL folds unquoted
+SQL names to lower case, so use `public.helper` for `public.helper()` and
+`Public.Helper` only for an actual quoted `"Public"."Helper"()` function.
+Explicitly excluded catalog functions cannot be re-enabled through this setting.
+
 ```yaml
 - connection_name: analytics
   type: postgresql
@@ -201,7 +272,16 @@ PostgreSQL connections refuse function calls outside the built-in allow-list. If
 
 ### 4. Validate and Test Connections
 
-The package includes management subcommands for connection validation and dry-run testing:
+The package includes management subcommands for connection validation and dry-run testing.
+
+Runtime loading and `validate-config` use the same structural rules. Server and
+SSH ports must be integer YAML values, usernames and SSH hosts must be nonempty
+strings, and obsolete credential fields must be removed even from disabled SSH
+tunnels. Older configurations that loaded despite validator errors need these
+corrections before upgrading. Validation reports the first structural error per
+connection; environment checks run after the complete configuration loads.
+
+Run the management commands with:
 
 ```bash
 uvx --from . mcp-read-only-sql validate-config
@@ -265,6 +345,10 @@ state directory, typically `~/.local/state/lukleh/mcp-read-only-sql/results/`.
 Successful query results are persisted with `0600` permissions and are no
 longer returned inline on success.
 
+Result directory names use at most the first 100 sanitized ASCII
+characters plus a digest of the full name. A previously returned absolute result
+path remains readable after this naming rule changes.
+
 The file holds a header line and one line per row, tab-separated. For
 PostgreSQL both implementations follow the quoting rules of `psql --csv`:
 NULL and the empty string are empty, and a value containing a tab, a double
@@ -284,6 +368,9 @@ List all available database connections.
 while `databases` lists the allowlisted databases (comma-separated). The `servers`
 column lists comma-separated hostnames after resolving SSH/VPN tunnels, so entries
 reflect the endpoints the agent should reference.
+Fields containing tabs, quotes, or line breaks use CSV quoting with a tab
+separator, like PostgreSQL result files. Read the response with a TSV-aware
+CSV parser rather than splitting it into physical lines.
 
 ## Implementation Matrix
 
@@ -315,6 +402,8 @@ reflect the endpoints the agent should reference.
 **Important Notes:**
 - **ClickHouse CLI** (`clickhouse-client`) uses native protocol ports (9000, 9440)
 - **ClickHouse Python** (using `clickhouse-connect`) uses HTTP/HTTPS ports (8123, 8443)
+- **TLS through SSH** preserves the configured remote database hostname for TLS identity checks while connecting through a local forwarded port. The CLI retains the native client's OpenSSL trust and verification settings; configure strict certificate verification there to require certificate and hostname checks. It requires `clickhouse-client` 26.1 or newer for `--tls-sni-override`; older clients report an upgrade error. The Python path verifies certificates by default with the packaged driver.
+- **Custom TLS ports are not supported by the current port heuristic.** Ports 8443 and 9440 select TLS; other custom ports select plaintext. Use a supported TLS port rather than pointing a TLS endpoint at a custom port.
 - Port mismatches are automatically handled - see below
 
 **Automatic Port Handling (Bidirectional):**

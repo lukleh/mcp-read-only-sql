@@ -10,13 +10,15 @@ and the Python formatter follows psql's quoting rules.
 """
 
 import asyncio
+import csv
+import io
 
 import pytest
 
 from mcp_read_only_sql.connectors.postgresql.cli import PostgreSQLCLIConnector
 from mcp_read_only_sql.connectors.postgresql.python import PostgreSQLPythonConnector
 from mcp_read_only_sql.utils.tsv_formatter import format_tsv_field
-from tests.conftest import FakeCLIProcess
+from tests.conftest import FakeCLIProcess, make_connection
 
 # Values that the old psql output filter mistook for psql chatter.
 CHATTER_LOOKALIKE_ROWS = ["SET", "DO", "BEGIN", "COMMIT", "ROLLBACK", "(1 row)", ""]
@@ -39,6 +41,21 @@ async def test_psql_stdout_lines_are_all_data(postgres_config, monkeypatch):
     )
 
     assert result.split("\n") == ["x", *CHATTER_LOOKALIKE_ROWS]
+
+
+@pytest.mark.anyio
+async def test_psql_disables_startup_files(postgres_config, monkeypatch):
+    commands = []
+
+    async def fake_exec(*cmd, **kwargs):
+        commands.append(cmd)
+        return FakeCLIProcess(["x\n", "1\n"])
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+
+    await PostgreSQLCLIConnector(postgres_config).execute_query("SELECT 1 AS x")
+
+    assert "--no-psqlrc" in commands[0]
 
 
 @pytest.mark.anyio
@@ -93,6 +110,7 @@ def _connector(implementation: str, config):
         ("SELECT E'l1\\nl2' AS v", 'v\n"l1\nl2"'),
         ("SELECT E'abc\\r' AS v", 'v\n"abc\r"'),
         ("SELECT 'q\"q' AS v", 'v\n"q""q"'),
+        (r"SELECT E'it\'s;ok' AS v", "v\nit's;ok"),
         ("SELECT '' AS x", "x\n"),
         ("SELECT NULL AS x", "x\n"),
         ("SELECT v FROM (VALUES ('a'), (NULL)) AS t(v) ORDER BY v NULLS LAST", "v\na\n"),
@@ -104,3 +122,108 @@ async def test_real_rows_are_returned_verbatim(
     """Both implementations return the same bytes for the same row."""
     result = await _connector(implementation, postgres_config).execute_query(query)
     assert result == expected
+
+
+@pytest.mark.docker
+@pytest.mark.usefixtures("docker_check")
+@pytest.mark.anyio
+@pytest.mark.parametrize("to_file", [False, True], ids=["inline", "file"])
+async def test_python_preserves_postgresql_text_for_every_value_type(
+    postgres_config, tmp_path, to_file
+):
+    query = """
+        SELECT decode('000102ff', 'hex') AS bytes,
+               '{"a":true,"b":null,"a":false}'::json AS json,
+               'infinity'::date AS pos_inf,
+               '-infinity'::timestamptz AS neg_inf,
+               ARRAY[1,2,NULL] AS array,
+               ARRAY['a,b', 'q"q', NULL] AS strings,
+               true AS boolean,
+               0.00000::numeric AS decimal,
+               interval '1 year 2 months 3 days' AS span,
+               date '12000-01-01' AS far_date
+    """
+    cli = PostgreSQLCLIConnector(postgres_config)
+    python = PostgreSQLPythonConnector(postgres_config)
+    expected = await cli.execute_query(query)
+    if to_file:
+        output = tmp_path / "raw-values.tsv"
+        await python.execute_query_to_file(query, output)
+        actual = output.read_text(encoding="utf-8")
+    else:
+        actual = await python.execute_query(query)
+
+    assert actual == expected
+    _, values = list(csv.reader(io.StringIO(actual), delimiter="\t"))
+    assert values[:5] == [
+        r"\x000102ff",
+        '{"a":true,"b":null,"a":false}',
+        "infinity",
+        "-infinity",
+        "{1,2,NULL}",
+    ]
+    assert values[6:] == ["t", "0.00000", "1 year 2 mons 3 days", "12000-01-01"]
+
+
+@pytest.mark.docker
+@pytest.mark.usefixtures("docker_check")
+@pytest.mark.anyio
+@pytest.mark.parametrize("implementation", ["cli", "python"])
+async def test_integer_valued_float_connection_timeout_connects(
+    postgres_config, implementation
+):
+    config = make_connection(
+        {
+            "connection_name": "float_timeout",
+            "type": "postgresql",
+            "servers": [
+                {"host": server.host, "port": server.port}
+                for server in postgres_config.servers
+            ],
+            "db": postgres_config.database,
+            "username": postgres_config.username,
+            "password": postgres_config.password,
+            "connection_timeout": 10.0,
+        }
+    )
+
+    assert await _connector(implementation, config).execute_query("SELECT 1 AS x") == "x\n1"
+
+
+@pytest.mark.docker
+@pytest.mark.usefixtures("docker_check")
+@pytest.mark.anyio
+async def test_text_typecasting_does_not_change_other_database_cursors(postgres_config):
+    import psycopg2
+
+    await PostgreSQLPythonConnector(postgres_config).execute_query("SELECT true")
+    conn = psycopg2.connect(
+        host=postgres_config.servers[0].host,
+        port=postgres_config.servers[0].port,
+        dbname=postgres_config.database,
+        user=postgres_config.username,
+        password=postgres_config.password,
+    )
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT true, 1, ARRAY[1,2]")
+            assert cursor.fetchone() == (True, 1, [1, 2])
+    finally:
+        conn.close()
+
+
+@pytest.mark.docker
+@pytest.mark.usefixtures("docker_check")
+@pytest.mark.anyio
+async def test_psql_startup_settings_cannot_change_result_format(
+    postgres_config, monkeypatch, tmp_path
+):
+    startup = tmp_path / "psqlrc"
+    startup.write_text("\\pset format aligned\n\\pset null NULL\n", encoding="utf-8")
+    monkeypatch.setenv("PSQLRC", str(startup))
+
+    result = await PostgreSQLCLIConnector(postgres_config).execute_query(
+        "SELECT NULL AS a, 42 AS b"
+    )
+
+    assert result == "a\tb\n\t42"
